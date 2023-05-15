@@ -6,6 +6,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from typing import Union, Tuple, List, Optional, Dict, Any, Callable
+from cudants.types import ItemOrList
 
 @torch.jit.script
 def gaussian_1d(
@@ -114,7 +115,7 @@ def _separable_filtering_conv(
     return input_
 
 @torch.jit.script
-def separable_filtering(x: torch.Tensor, kernels: List[torch.Tensor], mode: str = "zeros") -> torch.Tensor:
+def separable_filtering(x: torch.Tensor, kernels: ItemOrList[torch.Tensor], mode: str = "zeros") -> torch.Tensor:
     """
     Apply 1-D convolutions along each spatial dimension of `x`.
     Args:

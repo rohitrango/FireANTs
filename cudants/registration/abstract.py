@@ -37,6 +37,9 @@ class AbstractRegistration(ABC):
         self.max_tolerance_iters = max_tolerance_iters
         self.tolerance_mode = tolerance_mode
 
+        self.device = fixed_images.device
+        self.dims = self.fixed_images.dims
+
         # initialize losses
         if loss_type == 'mi':
             self.loss_fn = GlobalMutualInformationLoss(kernel_type=mi_kernel_type)

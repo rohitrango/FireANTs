@@ -1,6 +1,7 @@
 ''' Collection of all types here '''
-import typing
+from typing import Union, List, TypeVar
 import torch
+T = TypeVar("T")
 
-
-devicetype = typing.Union[str, torch.device]
+devicetype = Union[str, torch.device]
+ItemOrList = Union[T, List[T]]

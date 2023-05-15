@@ -5,9 +5,11 @@ from torch import nn
 from cudants.io.image import BatchedImages
 from torch.optim import SGD, Adam
 from torch.nn import functional as F
-from cudants.utils.globals import MIN_IMG_SIZE
 from tqdm import tqdm
 import numpy as np
+from cudants.losses.cc import gaussian_1d, separable_filtering
+from cudants.utils.imageutils import downsample
+from cudants.utils.globals import MIN_IMG_SIZE
 
 class RigidRegistration(AbstractRegistration):
 
@@ -19,7 +21,9 @@ class RigidRegistration(AbstractRegistration):
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, tolerance_mode: str = 'atol',
                 init_translation: Optional[torch.Tensor] = None,
-                custom_loss: nn.Module = None) -> None:
+                custom_loss: nn.Module = None, 
+                blur: bool = True,
+                ) -> None:
         super().__init__(scales, iterations, fixed_images, moving_images, loss_type, mi_kernel_type, cc_kernel_type, custom_loss,
                          tolerance, max_tolerance_iters, tolerance_mode)
         # initialize transform
@@ -27,6 +31,7 @@ class RigidRegistration(AbstractRegistration):
         self.dims = dims = self.moving_images.dims
         self.rotation_dims = rotation_dims = dims * (dims - 1) // 2
         self.rotation = nn.Parameter(torch.zeros((fixed_images.size(), rotation_dims), device=device))  # [N, Rd]
+        self.blur = blur
         # first three params are so(n) variables, last three are translation
         if init_translation is not None:
             transl = init_translation
@@ -89,7 +94,16 @@ class RigidRegistration(AbstractRegistration):
             prev_loss = np.inf
             # downsample fixed array and retrieve coords
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
-            fixed_image_down = F.interpolate(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True)
+            # downsample
+            if self.blur and scale > 1:
+                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device)
+                gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
+                fixed_image_down = downsample(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
+                moving_image_blur = separable_filtering(moving_arrays, gaussians)
+            else:
+                fixed_image_down = F.interpolate(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True)
+                moving_image_blur = moving_arrays
+
             fixed_image_coords = F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)  # [N, H, W, [D], dims+1]
             fixed_image_coords_homo = torch.cat([fixed_image_coords, torch.ones(list(fixed_image_coords.shape[:-1]) + [1], device=fixed_image_coords.device)], dim=-1)
             fixed_image_coords_homo = torch.einsum('ntd, n...d->n...t', fixed_t2p, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]  
@@ -99,17 +113,12 @@ class RigidRegistration(AbstractRegistration):
             for i in pbar:
                 self.optimizer.zero_grad()
                 rigid_matrix = self.get_rigid_matrix()
-                # print(rigid_matrix)
                 coords = torch.einsum('ntd, n...d->n...t', rigid_matrix, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]
                 coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
-                # print(moving_p2t, fixed_t2p)
-                # print(coords[..., :-1].reshape(-1, self.dims).min(0).values, coords[..., :-1].reshape(-1, self.dims).max(0).values)
-                # input()
                 # sample from these coords
-                moved_image = F.grid_sample(moving_arrays, coords[..., :-1], mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+                moved_image = F.grid_sample(moving_image_blur, coords[..., :-1], mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
                 loss = self.loss_fn(moved_image, fixed_image_down) 
                 loss.backward()
-                # print(self.transl.grad, self.rotation.grad)
                 self.optimizer.step()
                 # check for convergence
                 cur_loss = loss.item()
@@ -142,6 +151,6 @@ if __name__ == '__main__':
     img2 = Image.load_file('/data/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t1.nii.gz')
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2,])
-    transform = RigidRegistration([8, 4, 2, 1], [1000, 500, 250, 100], fixed, moving, loss_type='cc', optimizer='SGD', optimizer_lr=1e-1)
+    transform = RigidRegistration([8, 4, 2, 1], [1000, 500, 250, 100], fixed, moving, loss_type='cc', optimizer='SGD', optimizer_lr=5e-3)
     transform.optimize()
     print(transform.rotation.data.cpu().numpy(), transform.transl.data.cpu().numpy())

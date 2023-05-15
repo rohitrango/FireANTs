@@ -8,6 +8,8 @@ from torch.nn import functional as F
 from cudants.utils.globals import MIN_IMG_SIZE
 from tqdm import tqdm
 import numpy as np
+from cudants.losses.cc import gaussian_1d, separable_filtering
+from cudants.utils.imageutils import downsample
 
 class AffineRegistration(AbstractRegistration):
 
@@ -19,17 +21,20 @@ class AffineRegistration(AbstractRegistration):
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, tolerance_mode: str = 'atol',
                 init_rigid: Optional[torch.Tensor] = None,
-                custom_loss: nn.Module = None) -> None:
+                custom_loss: nn.Module = None,
+                blur: bool = True,
+                ) -> None:
+
         super().__init__(scales, iterations, fixed_images, moving_images, loss_type, mi_kernel_type, cc_kernel_type, custom_loss,
                          tolerance, max_tolerance_iters, tolerance_mode)
-        # initialize transform
-        device = fixed_images.device
-        self.dims = dims = self.moving_images.dims
+        device = self.device
+        dims = self.dims
+        self.blur = blur
         # first three params are so(n) variables, last three are translation
         if init_rigid is not None:
             affine = init_rigid
         else:
-            affine = torch.eye(dims, dims+1).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D]
+            affine = torch.eye(dims, dims+1).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D, D+1]
         self.affine = nn.Parameter(affine.to(device))  # [N, D]
         self.row = torch.zeros((fixed_images.size(), 1, dims+1)).to(device)   # keep this to append to affine matrix
         self.row[:, 0, -1] = 1.0
@@ -62,7 +67,17 @@ class AffineRegistration(AbstractRegistration):
             prev_loss = np.inf
             # downsample fixed array and retrieve coords
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
-            fixed_image_down = F.interpolate(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True)
+
+            ## create fixed downsampled image, and blurred moving image
+            if self.blur and scale > 1:
+                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device)
+                gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
+                fixed_image_down = downsample(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
+                moving_image_blur = separable_filtering(moving_arrays, gaussians)
+            else:
+                fixed_image_down = F.interpolate(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True)
+                moving_image_blur = moving_arrays
+
             fixed_image_coords = F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)  # [N, H, W, [D], dims+1]
             fixed_image_coords_homo = torch.cat([fixed_image_coords, torch.ones(list(fixed_image_coords.shape[:-1]) + [1], device=fixed_image_coords.device)], dim=-1)
             fixed_image_coords_homo = torch.einsum('ntd, n...d->n...t', fixed_t2p, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]  
@@ -74,11 +89,8 @@ class AffineRegistration(AbstractRegistration):
                 affinemat = self.get_affine_matrix()
                 coords = torch.einsum('ntd, n...d->n...t', affinemat, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]
                 coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
-                # print(moving_p2t, fixed_t2p)
-                # print(coords[..., :-1].reshape(-1, self.dims).min(0).values, coords[..., :-1].reshape(-1, self.dims).max(0).values)
-                # input()
                 # sample from these coords
-                moved_image = F.grid_sample(moving_arrays, coords[..., :-1], mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+                moved_image = F.grid_sample(moving_image_blur, coords[..., :-1], mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
                 loss = self.loss_fn(moved_image, fixed_image_down) 
                 loss.backward()
                 # print(self.transl.grad, self.rotation.grad)
@@ -114,6 +126,6 @@ if __name__ == '__main__':
     img2 = Image.load_file('/data/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t1.nii.gz')
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2,])
-    transform = AffineRegistration([8, 4, 2, 1], [1000, 500, 250, 100], fixed, moving, loss_type='cc', optimizer='SGD', optimizer_lr=1e-1, tolerance=0)
+    transform = AffineRegistration([8, 4, 2, 1], [1000, 500, 250, 100], fixed, moving, loss_type='cc', optimizer='SGD', optimizer_lr=1e-3, tolerance=0)
     transform.optimize()
     print(np.around(transform.affine.data.cpu().numpy(), 4))

@@ -154,7 +154,6 @@ class GlobalMutualInformationLoss(nn.Module):
         Raises:
             ValueError: When ``self.reduction`` is not one of ["mean", "sum", "none"].
         """
-        print(pred.min(), pred.max(), target.min(), target.max())   
         maxval = max(pred.max(), target.max())
         pred = pred / maxval
         target = target / maxval

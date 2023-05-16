@@ -5,6 +5,60 @@ from typing import Optional, List
 from cudants.losses.cc import gaussian_1d, separable_filtering
 from cudants.types import ItemOrList
 
+def lie_bracket(u: torch.Tensor, v: torch.Tensor):
+    if len(u.shape) == 4:
+        return lie_bracket_2d(u, v)
+    elif len(u.shape) == 5:
+        return lie_bracket_3d(u, v)
+    else:
+        raise ValueError(f"lie_bracket not implemented for tensors of shape {u.shape}")
+
+def lie_bracket_2d(u: torch.Tensor, v: torch.Tensor):
+    '''
+    u: displacement vector of size [N, H, W, 2]
+    v: displacement vector of size [N, H, W, 2]
+    '''
+    B, H, W,  _ = u.shape
+    newshape = [B, 2, H, W, 3]
+    # Initialize Jacobian tensors
+    J_u = torch.empty(newshape, dtype=u.dtype, device=u.device)
+    J_v = torch.empty(newshape, dtype=u.dtype, device=u.device)
+    # Compute Jacobian of u and v using image_gradient_singlechannel function
+    for i in range(2):
+        J_u[..., i] = image_gradient_singlechannel(u[..., i].reshape(B, 1, H, W))
+        J_v[..., i] = image_gradient_singlechannel(v[..., i].reshape(B, 1, H, W))
+
+    # Compute the dot product of the Jacobians with v and u respectively
+    J_u_v = torch.einsum('bjhwi,bhwi->bhwj', J_u, v)
+    J_v_u = torch.einsum('bjhwi,bhwi->bhwj', J_v, u)
+    lie_bracket = J_u_v - J_v_u
+    return lie_bracket
+
+
+def lie_bracket_3d(u: torch.Tensor, v: torch.Tensor):
+    '''
+    u: displacement vector of size [N, H, W, [D], dims]
+    v: displacement vector of size [N, H, W, [D], dims]
+    '''
+    B, H, W, D, _ = u.shape
+    newshape = [B, 3, H, W, D, 3]
+    # Initialize Jacobian tensors
+    J_u = torch.empty(newshape, dtype=u.dtype, device=u.device)
+    J_v = torch.empty(newshape, dtype=u.dtype, device=u.device)
+    # Compute Jacobian of u and v using image_gradient_singlechannel function
+    for i in range(3):
+        J_u[..., i] = image_gradient_singlechannel(u[..., i].reshape(B, 1, H, W, D))
+        J_v[..., i] = image_gradient_singlechannel(v[..., i].reshape(B, 1, H, W, D))
+
+    # Compute the dot product of the Jacobians with v and u respectively
+    J_u_v = torch.einsum('bjhwdi,bhwdi->bhwdj', J_u, v)
+    J_v_u = torch.einsum('bjhwdi,bhwdi->bhwdj', J_v, u)
+
+    # Compute Lie bracket as [u,v] = J_u*v - J_v*u
+    lie_bracket = J_u_v - J_v_u
+    return lie_bracket
+
+
 def downsample(image: ItemOrList[torch.Tensor], size: List[int], mode: str, sigma: Optional[torch.Tensor]=None,
                gaussians: Optional[torch.Tensor] = None) -> torch.Tensor:
     ''' 
@@ -44,13 +98,12 @@ def scaling_and_squaring(u, grid, n = 6):
     :returns: Output displacement field, v, PyTorch tensor of shape [B, D, H, W, dims] or [B, H, W, dims]
     """
     dims = u.shape[-1]
+    v = (1.0/2**n) * u
     if dims == 3:
-        v = (1.0/2**n) * u
         for i in range(n):
             vimg = v.permute(0, 4, 1, 2, 3)          # [1, 3, D, H, W]
             v = v + F.grid_sample(vimg, v + grid, align_corners=True).permute(0, 2, 3, 4, 1)
     elif dims == 2:
-        v = (1.0/2**n) * u
         for i in range(n):
             vimg = v.permute(0, 3, 1, 2)
             v = v + F.grid_sample(vimg, v + grid, align_corners=True).permute(0, 2, 3, 1)
@@ -71,16 +124,20 @@ def image_gradient_singlechannel(image):
     grad = None
     if dims == 2:
         B, C, H, W = image.shape
-        k = torch.cuda.FloatTensor([[-1.0, 0, 1]], device=device)[None, None]
-        gradx = F.conv2d(image, k, padding=(0, 1))
-        grady = F.conv2d(image, k.permute(0, 1, 3, 2), padding=(1, 0))
+        facx, facy = 1, 1
+        # facx, facy = W/2, H/2
+        k = torch.cuda.FloatTensor([[-1.0, 0.0, 1.0]], device=device)[None, None] / 2
+        gradx = F.conv2d(image, facx * k, padding=(0, 1))
+        grady = F.conv2d(image, facy * k.permute(0, 1, 3, 2), padding=(1, 0))
         grad = torch.cat([gradx, grady], dim=1)
     elif dims == 3:
         B, C, D, H, W = image.shape
-        k = torch.cuda.FloatTensor([[[-1.0, 0, 1]]], device=device)[None, None]
-        gradx = F.conv3d(image, k, padding=(0, 0, 1))
-        grady = F.conv3d(image, k.permute(0, 1, 2, 4, 3), padding=(0, 1, 0))
-        gradz = F.conv3d(image, k.permute(0, 1, 4, 2, 3), padding=(1, 0, 0))
+        facx, facy, facz = 1, 1, 1
+        # facx, facy, facz = W/2, H/2, D/2
+        k = torch.cuda.FloatTensor([[[-1.0, 0.0, 1.0]]], device=device)[None, None] / 2
+        gradx = F.conv3d(image, facx * k, padding=(0, 0, 1))
+        grady = F.conv3d(image, facy * k.permute(0, 1, 2, 4, 3), padding=(0, 1, 0))
+        gradz = F.conv3d(image, facz * k.permute(0, 1, 4, 2, 3), padding=(1, 0, 0))
         grad = torch.cat([gradx, grady, gradz], dim=1)
     else:
         raise ValueError('Invalid dimension: {}'.format(dims))

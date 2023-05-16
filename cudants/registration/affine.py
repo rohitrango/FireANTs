@@ -36,7 +36,7 @@ class AffineRegistration(AbstractRegistration):
         else:
             affine = torch.eye(dims, dims+1).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D, D+1]
         self.affine = nn.Parameter(affine.to(device))  # [N, D]
-        self.row = torch.zeros((fixed_images.size(), 1, dims+1)).to(device)   # keep this to append to affine matrix
+        self.row = torch.zeros((fixed_images.size(), 1, dims+1), device=device)   # keep this to append to affine matrix
         self.row[:, 0, -1] = 1.0
         # optimizer
         if optimizer == 'SGD':
@@ -122,8 +122,8 @@ class AffineRegistration(AbstractRegistration):
 
 if __name__ == '__main__':
     from cudants.io.image import Image, BatchedImages
-    img1 = Image.load_file('/data/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
-    img2 = Image.load_file('/data/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t1.nii.gz')
+    img1 = Image.load_file('/data/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t2.nii.gz')
+    img2 = Image.load_file('/data/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t2.nii.gz')
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2,])
     transform = AffineRegistration([8, 4, 2, 1], [1000, 500, 250, 100], fixed, moving, loss_type='cc', optimizer='SGD', optimizer_lr=1e-3, tolerance=0)

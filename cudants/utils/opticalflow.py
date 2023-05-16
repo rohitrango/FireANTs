@@ -13,7 +13,7 @@ class OpticalFlow(nn.Module):
     sigma: in pixels
     TODO fill this out
     '''
-    def __init__(self, method: str = 'thirions', 
+    def __init__(self, method: str = 'gauss-newton', 
                  sigma: float = 2.0, no_grad=True, 
                  eps: float = 1e-3,
                  device: devicetype = 'cuda') -> None:
@@ -21,6 +21,12 @@ class OpticalFlow(nn.Module):
         self._method_name = method
         if method == 'thirions':
             self._method = self._thirions 
+        elif method == 'esm':
+            self._method = self._esm
+        elif method == 'gauss-newton':
+            self._method = self._gaussnewton
+        elif method == 'grad-msd':
+            self._method = self._grad_msd
         else:
             raise ValueError(f"Optical flow method {method} not supported yet.")
         # initialize smoothing and gradients
@@ -32,23 +38,49 @@ class OpticalFlow(nn.Module):
     
     def __str__(self) -> str:
         return "OpticalFlow: using {} backend with gaussian kernel of size {}".format(self._method_name, self.gaussian_kernel.shape)
+
+    def _grad_msd(self, I: torch.Tensor, J: torch.Tensor):
+        Jp = self.gradient_kernel(J)
+        Jpnorm_squared = 1 - (I - J)**2
+        return Jp, Jpnorm_squared
     
     def _thirions(self, I: torch.Tensor, J:torch.Tensor):
         ''' thirions formula for optical flow 
-        I is considered the fixed image, J is the moving image
+        I is considered the fixed image, J is the moving image (current iteration)
         '''
-        gradJ = self.gradient_kernel(J) 
-        gradJnorm_squared = (gradJ**2).sum(dim=1, keepdim=True)
-        diff = I - J
-        denom = gradJnorm_squared + diff**2
-        # flow = torch.where(denom > self.eps, diff * gradJ / denom, 0) 
-        flow = diff * gradJ / denom * (denom > self.eps).float()
-        flow = separable_filtering(flow, self.gaussian_kernel)
-        return flow
+        Jp = self.gradient_kernel(I)
+        Jpnorm_squared = (Jp**2).sum(dim=1, keepdim=True)
+        return Jp, Jpnorm_squared
+    
+    def _esm(self, I: torch.Tensor, J: torch.Tensor):
+        ''' Efficient second order minimization (ESM) method for optical flow '''
+        Jp = 0.5*(self.gradient_kernel(J) + self.gradient_kernel(I))
+        Jpnorm_squared = (Jp**2).sum(dim=1, keepdim=True)
+        return Jp, Jpnorm_squared
+    
+    def _gaussnewton(self, I: torch.Tensor, J: torch.Tensor):
+        ''' Gauss-Newton method for optical flow '''
+        Jp = self.gradient_kernel(J)
+        Jpnorm_squared = (Jp**2).sum(dim=1, keepdim=True)
+        return Jp, Jpnorm_squared
     
     def forward(self, I: torch.Tensor, J: torch.Tensor):
+        ''' 
+        I: fixed image, J: moving image of size [N, 1, ...] 
+        returns flow of size [N, dims, ...]
+        '''
         with self.grad_context:
-            return self._method(I, J)
+            diff = I - J
+            # refer to https://www.insight-journal.org/browse/publication/644 for different methods
+            Jp, Jpnorm_squared = self._method(I, J)
+            denom = Jpnorm_squared + diff**2
+            flow = torch.where(denom >= self.eps, diff * Jp / denom, 0)
+            # print("flow here", flow.midn(), flow.max())
+            # flow2 = diff * Jp / (denom + 1e-8)
+            # print(flow2.min(), flow2.max(), 'flow2')
+            # print(diff.min(), diff.max(), Jp.min(), Jp.max(), denom.min(), denom.max(), 'diff, Jp, denom')
+            flow = separable_filtering(flow, self.gaussian_kernel)
+            return flow
 
 
 if __name__ == '__main__':

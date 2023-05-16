@@ -10,7 +10,7 @@ from cudants.types import ItemOrList
 
 @torch.jit.script
 def gaussian_1d(
-    sigma: torch.Tensor, truncated: float = 4.0, approx: str = "erf", normalize: bool = False
+    sigma: torch.Tensor, truncated: float = 4.0, approx: str = "erf", normalize: bool = True
 ) -> torch.Tensor:
     """
     one dimensional Gaussian kernel.

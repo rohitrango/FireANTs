@@ -35,6 +35,7 @@ class LogDemonsRegistration(AbstractRegistration):
                 update_sigma: float = 0.25,
                 eps_prime: float = 0.5,
                 use_lie_bracket: bool = False,
+                symmetric: bool = False,
                 ) -> None:
         # initialize abstract registration
         super().__init__(scales, iterations, fixed_images, moving_images, loss_type, mi_kernel_type, cc_kernel_type, custom_loss,
@@ -47,12 +48,64 @@ class LogDemonsRegistration(AbstractRegistration):
             self.affine = torch.eye(self.dims + 1, device=self.device, dtype=torch.float32).repeat(fixed_images.size(), 1, 1)
         else:
             self.affine = init_affine
+        self.symmetric = symmetric
+        self._get_velocity_field_fn = self._get_forward_velocity if not symmetric else self._get_symmetric_velocity
         # check for lie bracket
         self.lie_bracket_fn = lie_bracket if use_lie_bracket else lambda *args: 0
         # no optimizer needed for this class
         self.optical_flow = OpticalFlow(optical_flow_method, sigma=optical_flow_sigma, no_grad=True, eps=optical_flow_eps, device=self.device)
         self.eps_prime = eps_prime
         self.update_gaussian = gaussian_1d(torch.tensor(update_sigma, device=self.device), truncated=2, approx='sampled')
+        self.velocity_fields = []
+
+    def _get_symmetric_velocity(self,
+                              velocity_field, fixed_image_vgrid, fixed_image_affinecoords, 
+                              fixed_image_down, moving_image_down, affine_map_inverse, affine_map_forward, permute_idx, scale_factor):
+        '''
+        Get forward and backward velocities between the fixed and moving images, and average them out
+        '''
+        # forward velocity
+        displacement_field = scaling_and_squaring(velocity_field, fixed_image_vgrid, n=6)
+        total_displacement_coords = fixed_image_affinecoords + displacement_field
+        moved_image = F.grid_sample(moving_image_down, total_displacement_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+        v1 = self.optical_flow(fixed_image_down, moved_image)  # [N, dims, H, W, D]
+        v1 = torch.einsum('nij,nj...->ni...', affine_map_inverse, v1)  # [N, dims, H, W, D]
+        norm = v1.abs().flatten(1).max(1).values.reshape(-1, 1, *([1]*self.dims)) + 1e-20
+        v1 = v1 / norm * scale_factor
+
+        # backward velocity (compute M(Ax + b), F(x - \phi(x)) and compute optical flow)
+        moved_image_aff = F.grid_sample(moving_image_down, fixed_image_affinecoords, mode='bilinear', align_corners=True)
+        displacement_field_bwd = scaling_and_squaring(-torch.einsum('nij,n...j->n...i', affine_map_forward, velocity_field), fixed_image_vgrid, n=6)
+        fixed_image_warp = F.grid_sample(fixed_image_down, fixed_image_vgrid + displacement_field_bwd, mode='bilinear', align_corners=True)
+        v2 = -self.optical_flow(moved_image_aff, fixed_image_warp)
+        v2 = torch.einsum('nij,nj...->ni...', affine_map_inverse, v2)  # [N, dims, H, W, D]
+        norm = v2.abs().flatten(1).max(1).values.reshape(-1, *([1]*(self.dims + 1))) + 1e-20
+        v2 = v2 / norm * scale_factor
+
+        v = 0.5*(v1 + v2).permute(*permute_idx)
+        cur_loss = F.mse_loss(moved_image, fixed_image_down)
+        return v, cur_loss, moved_image
+        
+    
+    def _get_forward_velocity(self, 
+                              velocity_field, fixed_image_vgrid, fixed_image_affinecoords, 
+                              fixed_image_down, moving_image_down, affine_map_inverse, affine_map_forward, permute_idx, scale_factor):
+        '''
+        Get the forward velocity between the fixed and moving images by only displacing the moving image
+
+        velocity_field is integrated to get the displacement field, which is added to the affine map
+        velocity is computed and 
+        '''
+        displacement_field = scaling_and_squaring(velocity_field, fixed_image_vgrid, n=6)
+        total_displacement_coords = fixed_image_affinecoords + displacement_field
+        moved_image = F.grid_sample(moving_image_down, total_displacement_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+        v = self.optical_flow(fixed_image_down, moved_image)  # [N, dims, H, W, D]
+        v = torch.einsum('nij,nj...->ni...', affine_map_inverse, v)  # [N, dims, H, W, D]
+        norm = v.abs().flatten(1).max(1).values.reshape(-1, 1, *([1]*self.dims)) + 1e-20
+        v = v / (norm) * scale_factor
+        v = v.permute(*permute_idx)  # [N, H, W, D, dims]
+        cur_loss = F.mse_loss(moved_image, fixed_image_down)
+        return v, cur_loss, moved_image
 
     @torch.no_grad()
     def optimize(self, save_transformed=False) -> None:
@@ -68,7 +121,8 @@ class LogDemonsRegistration(AbstractRegistration):
         # this affine map is the composition of torch2phy and then the affine matrix
         # the grid is in physical space and begins from the affine map, subsequent deformations will be applied to this
         affine_map_fixed2moving = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]
-        affine_map_inverse = torch.inverse(affine_map_fixed2moving[:, :, :-1]) # [N, dims, dims]
+        affine_map_forward = affine_map_fixed2moving[:, :, :-1]  # [N, dims, dims]
+        affine_map_inverse = torch.inverse(affine_map_forward) # [N, dims, dims]
         init_map = torch.eye(self.dims, self.dims+1, device=self.device).unsqueeze(0).repeat(self.fixed_images.size(), 1, 1)
 
         # keep track of saved images if asked to
@@ -104,21 +158,15 @@ class LogDemonsRegistration(AbstractRegistration):
 
             pbar = tqdm(range(iters))
             for i in pbar:
-                displacement_field = scaling_and_squaring(velocity_field, fixed_image_vgrid, n=6)
-                total_displacement_coords = fixed_image_affinecoords + displacement_field
-                moved_image = F.grid_sample(moving_image_down, total_displacement_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
-                v = self.optical_flow(fixed_image_down, moved_image)  # [N, dims, H, W, D]
-                v = torch.einsum('nij,nj...->ni...', affine_map_inverse, v)  # [N, dims, H, W, D]
-                norm = v.abs().flatten(1).max(1).values[:, None, None, None, None] + 1e-20
-                # print(norm)
-                v = v / (norm) * scale_factor
-                v = v.permute(*permute_idx)  # [N, H, W, D, dims]
-                prev_loss = F.mse_loss(moved_image, fixed_image_down)
+                # get the velocity field and loss
+                v, cur_loss, moved_image = self._get_velocity_field_fn(velocity_field, fixed_image_vgrid, fixed_image_affinecoords, \
+                                                        fixed_image_down, moving_image_down, affine_map_inverse, affine_map_forward, permute_idx, scale_factor)
                 # compute update
                 velocity_field = velocity_field + v + 0.5 * self.lie_bracket_fn(velocity_field, v)
                 velocity_field = separable_filtering(velocity_field, self.update_gaussian)
-                pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, prev_loss))
-
+                pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, cur_loss))
+            # save velocity field and optionally the transformed image
+            self.velocity_fields.append(velocity_field+0)
             if save_transformed:
                 transformed_images.append(moved_image)
 

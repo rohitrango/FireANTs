@@ -72,19 +72,22 @@ class LogDemonsRegistration(AbstractRegistration):
         v1 = torch.einsum('nij,nj...->ni...', affine_map_inverse, v1)  # [N, dims, H, W, D]
         norm = v1.abs().flatten(1).max(1).values.reshape(-1, 1, *([1]*self.dims)) + 1e-20
         v1 = v1 / norm * scale_factor
+        v1 = v1.permute(*permute_idx)  
 
         # backward velocity (compute M(Ax + b), F(x - \phi(x)) and compute optical flow)
         moved_image_aff = F.grid_sample(moving_image_down, fixed_image_affinecoords, mode='bilinear', align_corners=True)
         displacement_field_bwd = scaling_and_squaring(-torch.einsum('nij,n...j->n...i', affine_map_forward, velocity_field), fixed_image_vgrid, n=6)
         fixed_image_warp = F.grid_sample(fixed_image_down, fixed_image_vgrid + displacement_field_bwd, mode='bilinear', align_corners=True)
-        v2 = -self.optical_flow(moved_image_aff, fixed_image_warp)
+        v2 = self.optical_flow(moved_image_aff, fixed_image_warp)
         v2 = torch.einsum('nij,nj...->ni...', affine_map_inverse, v2)  # [N, dims, H, W, D]
         norm = v2.abs().flatten(1).max(1).values.reshape(-1, *([1]*(self.dims + 1))) + 1e-20
         v2 = v2 / norm * scale_factor
+        v2 = v2.permute(*permute_idx)
 
-        v = 0.5*(v1 + v2).permute(*permute_idx)
+        # update velocity function
+        velocity_field = velocity_field + 0.5*(v1 + self.lie_bracket_fn(velocity_field, v1)) + 0.5*(-v2 + self.lie_bracket_fn(velocity_field, v2))
         cur_loss = F.mse_loss(moved_image, fixed_image_down)
-        return v, cur_loss, moved_image
+        return velocity_field, cur_loss, moved_image
         
     
     def _get_forward_velocity(self, 
@@ -105,7 +108,9 @@ class LogDemonsRegistration(AbstractRegistration):
         v = v / (norm) * scale_factor
         v = v.permute(*permute_idx)  # [N, H, W, D, dims]
         cur_loss = F.mse_loss(moved_image, fixed_image_down)
-        return v, cur_loss, moved_image
+        # update velocity
+        velocity_field = velocity_field + v + 0.5 * self.lie_bracket_fn(velocity_field, v)
+        return velocity_field, cur_loss, moved_image
 
     @torch.no_grad()
     def optimize(self, save_transformed=False) -> None:
@@ -130,7 +135,6 @@ class LogDemonsRegistration(AbstractRegistration):
             transformed_images = []
         
         velocity_field = None
-        scale_factor = 2.0/max(fixed_size) * self.eps_prime
         permute_idx = (0, 2, 3, 4, 1) if self.dims == 3 else (0, 2, 3, 1)
         # Run iterations
         for scale, iters in zip(self.scales, self.iterations):
@@ -138,6 +142,9 @@ class LogDemonsRegistration(AbstractRegistration):
             prev_loss = np.inf
             # downsample fixed array and retrieve coords
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
+            # set scale factor
+            scale_factor = 2.0/max(fixed_size) * self.eps_prime
+            # scale_factor = 2.0/max(size_down) * self.eps_prime
 
             ## create smoothed and downsampled images
             sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device)
@@ -159,10 +166,10 @@ class LogDemonsRegistration(AbstractRegistration):
             pbar = tqdm(range(iters))
             for i in pbar:
                 # get the velocity field and loss
-                v, cur_loss, moved_image = self._get_velocity_field_fn(velocity_field, fixed_image_vgrid, fixed_image_affinecoords, \
+                velocity_field, cur_loss, moved_image = self._get_velocity_field_fn(velocity_field, fixed_image_vgrid, fixed_image_affinecoords, \
                                                         fixed_image_down, moving_image_down, affine_map_inverse, affine_map_forward, permute_idx, scale_factor)
                 # compute update
-                velocity_field = velocity_field + v + 0.5 * self.lie_bracket_fn(velocity_field, v)
+                # velocity_field = velocity_field + v + 0.5 * self.lie_bracket_fn(velocity_field, v)
                 velocity_field = separable_filtering(velocity_field, self.update_gaussian)
                 pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, cur_loss))
             # save velocity field and optionally the transformed image

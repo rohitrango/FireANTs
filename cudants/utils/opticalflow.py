@@ -75,10 +75,6 @@ class OpticalFlow(nn.Module):
             Jp, Jpnorm_squared = self._method(I, J)
             denom = Jpnorm_squared + diff**2
             flow = torch.where(denom >= self.eps, diff * Jp / denom, 0)
-            # print("flow here", flow.midn(), flow.max())
-            # flow2 = diff * Jp / (denom + 1e-8)
-            # print(flow2.min(), flow2.max(), 'flow2')
-            # print(diff.min(), diff.max(), Jp.min(), Jp.max(), denom.min(), denom.max(), 'diff, Jp, denom')
             flow = separable_filtering(flow, self.gaussian_kernel)
             return flow
 

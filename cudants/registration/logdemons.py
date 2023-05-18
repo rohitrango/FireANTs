@@ -94,7 +94,7 @@ class LogDemonsRegistration(AbstractRegistration):
         Get the forward velocity between the fixed and moving images by only displacing the moving image
 
         velocity_field is integrated to get the displacement field, which is added to the affine map
-        velocity is computed and 
+        velocity is computed 
         '''
         displacement_field = scaling_and_squaring(velocity_field, fixed_image_vgrid, n=6)
         total_displacement_coords = fixed_image_affinecoords + displacement_field

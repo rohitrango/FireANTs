@@ -19,7 +19,7 @@ class GeodesicShooting(nn.Module, AbstractDeformation):
     '''
     def __init__(self, fixed_images: BatchedImages, moving_images: BatchedImages,
                 integrator_n: Union[str, int] = 6, 
-                optimizer: str = 'Adam', optimizer_lr: float = 1e-2,
+                optimizer: str = 'Adam', optimizer_lr: float = 1e-2, optimizer_params: dict = {},
                 smoothing_grad_sigma: float = 0.5,
                 ) -> None:
         super().__init__()
@@ -43,7 +43,7 @@ class GeodesicShooting(nn.Module, AbstractDeformation):
         # self.velocity_field = nn.Parameter(velocity_field)
         self.integrator_n = integrator_n
         # define optimizer
-        self.optimizer = getattr(torch.optim, optimizer)([self.velocity_field], lr=optimizer_lr)
+        self.optimizer = getattr(torch.optim, optimizer)([self.velocity_field], lr=optimizer_lr, **optimizer_params)
         self.optimizer_lr = optimizer_lr
         self.optimizer_name = optimizer
     
@@ -86,6 +86,10 @@ class GeodesicShooting(nn.Module, AbstractDeformation):
     def set_size(self, size):
         ''' size: [H, W, D] or [H, W] '''
         mode = 'bilinear' if self.n_dims == 2 else 'trilinear'
+        # keep old items for copying
+        old_shape = self.velocity_field.shape
+        old_optimizer_state = self.optimizer.state_dict()
+        # get new velocity field
         velocity_field = F.interpolate(self.velocity_field.detach().permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True, 
                     ).permute(*self.permute_imgtov)
         velocity_field = nn.Parameter(velocity_field)
@@ -95,6 +99,20 @@ class GeodesicShooting(nn.Module, AbstractDeformation):
         self.initialize_grid(size)
         self.optimizer = getattr(torch.optim, self.optimizer_name)([self.velocity_field], lr=self.optimizer_lr)
         # TODO: copy state variables from old optimizer
+        state_dict = old_optimizer_state['state']
+        old_optimizer_state['param_groups'] = self.optimizer.state_dict()['param_groups']
+        for g in state_dict.keys():
+            for k, v in state_dict[g].items():
+                # this is probably a state of the tensor
+                if isinstance(v, torch.Tensor) and v.shape == old_shape:
+                    state_dict[g][k] = F.interpolate(v.permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True, 
+                        ).permute(*self.permute_imgtov)
+        #         if isinstance(v, torch.Tensor):
+        #             print(k, v.shape)
+        #         else:
+        #             print(k, v)
+        # input("Here.")
+        self.optimizer.load_state_dict(old_optimizer_state)
 
 
 if __name__ == '__main__':

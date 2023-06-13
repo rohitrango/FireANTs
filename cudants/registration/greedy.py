@@ -29,6 +29,7 @@ class GreedyRegistration(AbstractRegistration):
                 optimizer_lr: float = 0.1, optimizer_momentum: float = 0.0,
                 integrator_n: Union[str, int] = 6,
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
+                cc_kernel_size: int = 3,
                 smooth_warp_sigma: float = 0.5,
                 smooth_grad_sigma: float = 0.5,
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, tolerance_mode: str = 'atol',
@@ -37,13 +38,17 @@ class GreedyRegistration(AbstractRegistration):
                 custom_loss: nn.Module = None) -> None:
         # initialize abstract registration
         # nn.Module.__init__(self)
-        super().__init__(scales, iterations, fixed_images, moving_images, loss_type, mi_kernel_type, cc_kernel_type, custom_loss,
+        super().__init__(scales, iterations, fixed_images, moving_images, loss_type, mi_kernel_type, cc_kernel_type, custom_loss, cc_kernel_size,
                          tolerance, max_tolerance_iters, tolerance_mode)
         self.dims = fixed_images.dims
         self.blur = blur
         # get warp
+        if optimizer == 'SGD':
+            optimizer_params['momentum'] = optimizer_params.get('momentum', optimizer_momentum)
+
         if deformation_type == 'geodesic':
-            warp = GeodesicShooting(fixed_images, moving_images, integrator_n=integrator_n, optimizer=optimizer, optimizer_lr=optimizer_lr, smoothing_grad_sigma=smooth_grad_sigma)
+            warp = GeodesicShooting(fixed_images, moving_images, integrator_n=integrator_n, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params,
+                                    smoothing_grad_sigma=smooth_grad_sigma)
         else:
             raise ValueError('Invalid deformation type: {}'.format(deformation_type))
         self.warp = warp

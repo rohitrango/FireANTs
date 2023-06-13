@@ -27,6 +27,7 @@ class LogDemonsRegistration(AbstractRegistration):
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, tolerance_mode: str = 'atol',
                 init_affine: Optional[torch.Tensor] = None,
+                cc_kernel_size: int = 3,
                 custom_loss: nn.Module = None,
                 ##### parameters for log-demons #####
                 optical_flow_method: str = 'gauss-newton',
@@ -38,7 +39,7 @@ class LogDemonsRegistration(AbstractRegistration):
                 symmetric: bool = False,
                 ) -> None:
         # initialize abstract registration
-        super().__init__(scales, iterations, fixed_images, moving_images, loss_type, mi_kernel_type, cc_kernel_type, custom_loss,
+        super().__init__(scales, iterations, fixed_images, moving_images, loss_type, mi_kernel_type, cc_kernel_type, custom_loss, cc_kernel_size,
                          tolerance, max_tolerance_iters, tolerance_mode)
         # log-demons requires that fixed and moving images have the same dimensions for computing optical flow
         assert fixed_images.shape == moving_images.shape, "Fixed and moving images must have the same dimensions"

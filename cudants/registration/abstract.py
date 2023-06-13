@@ -18,6 +18,7 @@ class AbstractRegistration(ABC):
                 loss_type: str = "cc",
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
                 custom_loss: nn.Module = None,
+                cc_kernel_size: int = 3, 
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, tolerance_mode: str = 'atol'
                 ) -> None:
         '''
@@ -44,7 +45,7 @@ class AbstractRegistration(ABC):
         if loss_type == 'mi':
             self.loss_fn = GlobalMutualInformationLoss(kernel_type=mi_kernel_type)
         elif loss_type == 'cc':
-            self.loss_fn = LocalNormalizedCrossCorrelationLoss(kernel_type=cc_kernel_type)
+            self.loss_fn = LocalNormalizedCrossCorrelationLoss(kernel_type=cc_kernel_type, spatial_dims=self.dims, kernel_size=cc_kernel_size)
         elif loss_type == 'custom':
             self.loss_fn = custom_loss
         else:

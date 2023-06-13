@@ -22,8 +22,8 @@ class AbstractRegistration(ABC):
                 ) -> None:
         '''
         Initialize abstract registration class
-
         '''
+        super().__init__()
         self.scales = scales
         _assert_check_scales_decreasing(self.scales)
         self.iterations = iterations

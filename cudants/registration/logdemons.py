@@ -47,7 +47,7 @@ class LogDemonsRegistration(AbstractRegistration):
         if init_affine is None:
             self.affine = torch.eye(self.dims + 1, device=self.device, dtype=torch.float32).repeat(fixed_images.size(), 1, 1)
         else:
-            self.affine = init_affine
+            self.affine = init_affine.detach()
         self.symmetric = symmetric
         self._get_velocity_field_fn = self._get_forward_velocity if not symmetric else self._get_symmetric_velocity
         # check for lie bracket
@@ -66,20 +66,22 @@ class LogDemonsRegistration(AbstractRegistration):
         '''
         # forward velocity
         displacement_field = scaling_and_squaring(velocity_field, fixed_image_vgrid, n=6)
+        # displacement_field = torch.einsum('nij,n...j->n...i', affine_map_inverse, displacement_field)
         total_displacement_coords = fixed_image_affinecoords + displacement_field
         moved_image = F.grid_sample(moving_image_down, total_displacement_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
         v1 = self.optical_flow(fixed_image_down, moved_image)  # [N, dims, H, W, D]
-        v1 = torch.einsum('nij,nj...->ni...', affine_map_inverse, v1)  # [N, dims, H, W, D]
+        # v1 = torch.einsum('nij,nj...->ni...', affine_map_inverse, v1)  # [N, dims, H, W, D]
         norm = v1.abs().flatten(1).max(1).values.reshape(-1, 1, *([1]*self.dims)) + 1e-20
         v1 = v1 / norm * scale_factor
         v1 = v1.permute(*permute_idx)  
 
         # backward velocity (compute M(Ax + b), F(x - \phi(x)) and compute optical flow)
         moved_image_aff = F.grid_sample(moving_image_down, fixed_image_affinecoords, mode='bilinear', align_corners=True)
-        displacement_field_bwd = scaling_and_squaring(-torch.einsum('nij,n...j->n...i', affine_map_forward, velocity_field), fixed_image_vgrid, n=6)
+        # displacement_field_bwd = scaling_and_squaring(-torch.einsum('nij,n...j->n...i', affine_map_forward, velocity_field), fixed_image_vgrid, n=6)
+        displacement_field_bwd = scaling_and_squaring(-velocity_field, fixed_image_vgrid, n=6)
         fixed_image_warp = F.grid_sample(fixed_image_down, fixed_image_vgrid + displacement_field_bwd, mode='bilinear', align_corners=True)
         v2 = self.optical_flow(moved_image_aff, fixed_image_warp)
-        v2 = torch.einsum('nij,nj...->ni...', affine_map_inverse, v2)  # [N, dims, H, W, D]
+        # v2 = torch.einsum('nij,nj...->ni...', affine_map_inverse, v2)  # [N, dims, H, W, D]
         norm = v2.abs().flatten(1).max(1).values.reshape(-1, *([1]*(self.dims + 1))) + 1e-20
         v2 = v2 / norm * scale_factor
         v2 = v2.permute(*permute_idx)
@@ -89,7 +91,6 @@ class LogDemonsRegistration(AbstractRegistration):
         cur_loss = F.mse_loss(moved_image, fixed_image_down)
         return velocity_field, cur_loss, moved_image
         
-    
     def _get_forward_velocity(self, 
                               velocity_field, fixed_image_vgrid, fixed_image_affinecoords, 
                               fixed_image_down, moving_image_down, affine_map_inverse, affine_map_forward, permute_idx, scale_factor):
@@ -100,10 +101,10 @@ class LogDemonsRegistration(AbstractRegistration):
         velocity is computed 
         '''
         displacement_field = scaling_and_squaring(velocity_field, fixed_image_vgrid, n=6)
+        # displacement_field = torch.einsum('nij,n...j->n...i', affine_map_inverse, displacement_field)
         total_displacement_coords = fixed_image_affinecoords + displacement_field
         moved_image = F.grid_sample(moving_image_down, total_displacement_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
         v = self.optical_flow(fixed_image_down, moved_image)  # [N, dims, H, W, D]
-        v = torch.einsum('nij,nj...->ni...', affine_map_inverse, v)  # [N, dims, H, W, D]
         norm = v.abs().flatten(1).max(1).values.reshape(-1, 1, *([1]*self.dims)) + 1e-20
         v = v / (norm) * scale_factor
         v = v.permute(*permute_idx)  # [N, H, W, D, dims]
@@ -144,7 +145,6 @@ class LogDemonsRegistration(AbstractRegistration):
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
             # set scale factor
             scale_factor = 2.0/max(fixed_size) * self.eps_prime
-            # scale_factor = 2.0/max(size_down) * self.eps_prime
 
             ## create smoothed and downsampled images
             sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device)

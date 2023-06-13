@@ -53,11 +53,9 @@ def lie_bracket_3d(u: torch.Tensor, v: torch.Tensor):
     # Compute the dot product of the Jacobians with v and u respectively
     J_u_v = torch.einsum('bjhwdi,bhwdi->bhwdj', J_u, v)
     J_v_u = torch.einsum('bjhwdi,bhwdi->bhwdj', J_v, u)
-
     # Compute Lie bracket as [u,v] = J_u*v - J_v*u
     lie_bracket = J_u_v - J_v_u
     return lie_bracket
-
 
 def downsample(image: ItemOrList[torch.Tensor], size: List[int], mode: str, sigma: Optional[torch.Tensor]=None,
                gaussians: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -111,6 +109,9 @@ def scaling_and_squaring(u, grid, n = 6):
         raise ValueError('Invalid dimension: {}'.format(dims))
     return v
 
+def _find_integrator_n(u):
+    raise NotImplementedError('Automatic integrator_n not implemented yet')
+
 def image_gradient_singlechannel(image):
     """
     Compute the gradient of an image using central difference approximation
@@ -142,7 +143,6 @@ def image_gradient_singlechannel(image):
     else:
         raise ValueError('Invalid dimension: {}'.format(dims))
     return grad
-
 
 def image_gradient(image):
     ''' compute the image gradient using central difference approximation '''

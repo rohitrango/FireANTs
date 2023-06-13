@@ -79,6 +79,11 @@ class BatchedImages:
     def size(self):
         return self.n_images
     
+    def shape(self):
+        shape = self.images[0].shape
+        shape[0] = self.n_images
+        return shape
+    
     def get_torch2phy(self):
         return torch.cat([x.torch2phy for x in self.images], dim=0)
     

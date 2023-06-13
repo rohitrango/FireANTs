@@ -12,7 +12,6 @@ from cudants.losses.cc import gaussian_1d, separable_filtering
 from cudants.utils.imageutils import downsample
 
 class AffineRegistration(AbstractRegistration):
-
     def __init__(self, scales: List[int], iterations: List[float], 
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",

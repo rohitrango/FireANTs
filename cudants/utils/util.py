@@ -1,6 +1,9 @@
 from typing import List
 from time import perf_counter
 from contextlib import contextmanager
+import torch
+
+from cudants.losses.cc import gaussian_1d, separable_filtering
 
 class catchtime:
     ''' class to naively profile pieces of code '''
@@ -22,3 +25,10 @@ def _assert_check_scales_decreasing(scales: List[int]):
     for i in range(len(scales)-1):
         if scales[i] <= scales[i+1]:
             raise ValueError("Scales must be in decreasing order")
+
+
+def grad_smoothing_hook(grad: torch.Tensor, gaussians: List[torch.Tensor]):
+    ''' this backward hook will smooth out the gradient using the gaussians 
+    has to be called with a partial function
+    '''
+    return separable_filtering(grad, gaussians)

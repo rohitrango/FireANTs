@@ -1,0 +1,621 @@
+{
+    "payload": {
+        "allShortcutsEnabled": false,
+        "fileTree": {
+            "challenge_eval": {
+                "items": [
+                    {
+                        "name": "evaluation_configs",
+                        "path": "challenge_eval/evaluation_configs",
+                        "contentType": "directory"
+                    },
+                    {
+                        "name": "README.md",
+                        "path": "challenge_eval/README.md",
+                        "contentType": "file"
+                    },
+                    {
+                        "name": "evaluation.py",
+                        "path": "challenge_eval/evaluation.py",
+                        "contentType": "file"
+                    },
+                    {
+                        "name": "lookup_tables.py",
+                        "path": "challenge_eval/lookup_tables.py",
+                        "contentType": "file"
+                    },
+                    {
+                        "name": "metadata.json",
+                        "path": "challenge_eval/metadata.json",
+                        "contentType": "file"
+                    },
+                    {
+                        "name": "metrics.py",
+                        "path": "challenge_eval/metrics.py",
+                        "contentType": "file"
+                    },
+                    {
+                        "name": "ranking.py",
+                        "path": "challenge_eval/ranking.py",
+                        "contentType": "file"
+                    },
+                    {
+                        "name": "requirements.txt",
+                        "path": "challenge_eval/requirements.txt",
+                        "contentType": "file"
+                    },
+                    {
+                        "name": "utils.py",
+                        "path": "challenge_eval/utils.py",
+                        "contentType": "file"
+                    }
+                ],
+                "totalCount": 9
+            },
+            "": {
+                "items": [
+                    {
+                        "name": "challenge_eval",
+                        "path": "challenge_eval",
+                        "contentType": "directory"
+                    },
+                    {
+                        "name": "grand_challenge",
+                        "path": "grand_challenge",
+                        "contentType": "directory"
+                    },
+                    {
+                        "name": "synthetic_deformation",
+                        "path": "synthetic_deformation",
+                        "contentType": "directory"
+                    },
+                    {
+                        "name": "tutorial",
+                        "path": "tutorial",
+                        "contentType": "directory"
+                    },
+                    {
+                        "name": "README.md",
+                        "path": "README.md",
+                        "contentType": "file"
+                    },
+                    {
+                        "name": "RnR-ExM Banner.png",
+                        "path": "RnR-ExM Banner.png",
+                        "contentType": "file"
+                    },
+                    {
+                        "name": "generate_submission.py",
+                        "path": "generate_submission.py",
+                        "contentType": "file"
+                    }
+                ],
+                "totalCount": 7
+            }
+        },
+        "fileTreeProcessingTime": 8.937054,
+        "foldersToFetch": [],
+        "reducedMotionEnabled": null,
+        "repo": {
+            "id": 578729957,
+            "defaultBranch": "main",
+            "name": "rnr-exm",
+            "ownerLogin": "ebesier",
+            "currentUserCanPush": false,
+            "isFork": false,
+            "isEmpty": false,
+            "createdAt": "2022-12-15T18:42:43.000Z",
+            "ownerAvatar": "https://avatars.githubusercontent.com/u/47066180?v=4",
+            "public": true,
+            "private": false,
+            "isOrgOwned": false
+        },
+        "refInfo": {
+            "name": "main",
+            "listCacheKey": "v0:1677251241.74226",
+            "canEdit": false,
+            "refType": "branch",
+            "currentOid": "2db1cfaaf420531b28a1be3b4929da1cb9e34201"
+        },
+        "path": "challenge_eval/metadata.json",
+        "currentUser": null,
+        "blob": {
+            "rawLines": [
+                "{",
+                "    \"zebrafish\": {",
+                "        \"zebrafish_pair4\": {",
+                "            \"runtime (seconds)\": 0,",
+                "            \"machine name\": 'enter machine name such as macOS',",
+                "            \"number of cores used\": 0, ",
+                "            \"number of GPUs used\": 0,",
+                "            \"Ghz that each processing unit supports\": {'core': '0 Ghz', 'GPU': '0 Ghz'},",
+                "            \"was the data downsampled before registration? If so, by what factor?\": \"data was downsampled by a factor of x before registration\",",
+                "            \"model summary\": \"brief explanation of model\"",
+                "        }",
+                "    },",
+                "    \"mouse\": {",
+                "        \"mouse_pair4\": {",
+                "            \"runtime (seconds)\": 0,",
+                "            \"machine name\": 'enter machine name such as macOS',",
+                "            \"number of cores used\": 0, ",
+                "            \"number of GPUs used\": 0,",
+                "            \"Ghz that each processing unit supports\": {'core': '0 Ghz', 'GPU': '0 Ghz'},",
+                "            \"was the data downsampled before registration? If so, by what factor?\": \"data was downsampled by a factor of x before registration\",",
+                "            \"model summary\": \"brief explanation of model\"",
+                "        }",
+                "    },",
+                "    \"c_elegan\": {",
+                "        \"c_elegan_pair4\": {",
+                "            \"runtime (seconds)\": 0,",
+                "            \"machine name\": 'enter machine name such as macOS',",
+                "            \"number of cores used\": 0, ",
+                "            \"number of GPUs used\": 0,",
+                "            \"Ghz that each processing unit supports\": {'core': '0 Ghz', 'GPU': '0 Ghz'},",
+                "            \"was the data downsampled before registration? If so, by what factor?\": \"data was downsampled by a factor of x before registration\",",
+                "            \"model summary\": \"brief explanation of model\"",
+                "        }",
+                "    }",
+                "}"
+            ],
+            "stylingDirectives": [
+                [],
+                [
+                    {
+                        "start": 4,
+                        "end": 15,
+                        "cssClass": "pl-ent"
+                    }
+                ],
+                [
+                    {
+                        "start": 8,
+                        "end": 25,
+                        "cssClass": "pl-ent"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 31,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 33,
+                        "end": 34,
+                        "cssClass": "pl-c1"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 26,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 28,
+                        "end": 63,
+                        "cssClass": "pl-ii"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 34,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 36,
+                        "end": 37,
+                        "cssClass": "pl-c1"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 33,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 35,
+                        "end": 36,
+                        "cssClass": "pl-c1"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 52,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 55,
+                        "end": 86,
+                        "cssClass": "pl-ii"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 82,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 84,
+                        "end": 143,
+                        "cssClass": "pl-s"
+                    },
+                    {
+                        "start": 84,
+                        "end": 85,
+                        "cssClass": "pl-pds"
+                    },
+                    {
+                        "start": 142,
+                        "end": 143,
+                        "cssClass": "pl-pds"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 27,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 29,
+                        "end": 57,
+                        "cssClass": "pl-s"
+                    },
+                    {
+                        "start": 29,
+                        "end": 30,
+                        "cssClass": "pl-pds"
+                    },
+                    {
+                        "start": 56,
+                        "end": 57,
+                        "cssClass": "pl-pds"
+                    }
+                ],
+                [],
+                [],
+                [
+                    {
+                        "start": 4,
+                        "end": 11,
+                        "cssClass": "pl-ent"
+                    }
+                ],
+                [
+                    {
+                        "start": 8,
+                        "end": 21,
+                        "cssClass": "pl-ent"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 31,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 33,
+                        "end": 34,
+                        "cssClass": "pl-c1"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 26,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 28,
+                        "end": 63,
+                        "cssClass": "pl-ii"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 34,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 36,
+                        "end": 37,
+                        "cssClass": "pl-c1"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 33,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 35,
+                        "end": 36,
+                        "cssClass": "pl-c1"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 52,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 55,
+                        "end": 86,
+                        "cssClass": "pl-ii"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 82,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 84,
+                        "end": 143,
+                        "cssClass": "pl-s"
+                    },
+                    {
+                        "start": 84,
+                        "end": 85,
+                        "cssClass": "pl-pds"
+                    },
+                    {
+                        "start": 142,
+                        "end": 143,
+                        "cssClass": "pl-pds"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 27,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 29,
+                        "end": 57,
+                        "cssClass": "pl-s"
+                    },
+                    {
+                        "start": 29,
+                        "end": 30,
+                        "cssClass": "pl-pds"
+                    },
+                    {
+                        "start": 56,
+                        "end": 57,
+                        "cssClass": "pl-pds"
+                    }
+                ],
+                [],
+                [],
+                [
+                    {
+                        "start": 4,
+                        "end": 14,
+                        "cssClass": "pl-ent"
+                    }
+                ],
+                [
+                    {
+                        "start": 8,
+                        "end": 24,
+                        "cssClass": "pl-ent"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 31,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 33,
+                        "end": 34,
+                        "cssClass": "pl-c1"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 26,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 28,
+                        "end": 63,
+                        "cssClass": "pl-ii"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 34,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 36,
+                        "end": 37,
+                        "cssClass": "pl-c1"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 33,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 35,
+                        "end": 36,
+                        "cssClass": "pl-c1"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 52,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 55,
+                        "end": 86,
+                        "cssClass": "pl-ii"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 82,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 84,
+                        "end": 143,
+                        "cssClass": "pl-s"
+                    },
+                    {
+                        "start": 84,
+                        "end": 85,
+                        "cssClass": "pl-pds"
+                    },
+                    {
+                        "start": 142,
+                        "end": 143,
+                        "cssClass": "pl-pds"
+                    }
+                ],
+                [
+                    {
+                        "start": 12,
+                        "end": 27,
+                        "cssClass": "pl-ent"
+                    },
+                    {
+                        "start": 29,
+                        "end": 57,
+                        "cssClass": "pl-s"
+                    },
+                    {
+                        "start": 29,
+                        "end": 30,
+                        "cssClass": "pl-pds"
+                    },
+                    {
+                        "start": 56,
+                        "end": 57,
+                        "cssClass": "pl-pds"
+                    }
+                ],
+                [],
+                [],
+                []
+            ],
+            "csv": null,
+            "csvError": null,
+            "dependabotInfo": {
+                "showConfigurationBanner": false,
+                "configFilePath": null,
+                "networkDependabotPath": "/ebesier/rnr-exm/network/updates",
+                "dismissConfigurationNoticePath": "/settings/dismiss-notice/dependabot_configuration_notice",
+                "configurationNoticeDismissed": null,
+                "repoAlertsPath": "/ebesier/rnr-exm/security/dependabot",
+                "repoSecurityAndAnalysisPath": "/ebesier/rnr-exm/settings/security_analysis",
+                "repoOwnerIsOrg": false,
+                "currentUserCanAdminRepo": false
+            },
+            "displayName": "metadata.json",
+            "displayUrl": "https://github.com/ebesier/rnr-exm/blob/main/challenge_eval/metadata.json?raw=true",
+            "headerInfo": {
+                "blobSize": "1.56 KB",
+                "deleteInfo": {
+                    "deleteTooltip": "You must be signed in to make or propose changes"
+                },
+                "editInfo": {
+                    "editTooltip": "You must be signed in to make or propose changes"
+                },
+                "ghDesktopPath": "https://desktop.github.com",
+                "gitLfsPath": null,
+                "onBranch": true,
+                "shortPath": "792cdf2",
+                "siteNavLoginPath": "/login?return_to=https%3A%2F%2Fgithub.com%2Febesier%2Frnr-exm%2Fblob%2Fmain%2Fchallenge_eval%2Fmetadata.json",
+                "isCSV": false,
+                "isRichtext": false,
+                "toc": null,
+                "lineInfo": {
+                    "truncatedLoc": "35",
+                    "truncatedSloc": "35"
+                },
+                "mode": "file"
+            },
+            "image": false,
+            "isCodeownersFile": null,
+            "isValidLegacyIssueTemplate": false,
+            "issueTemplateHelpUrl": "https://docs.github.com/articles/about-issue-and-pull-request-templates",
+            "issueTemplate": null,
+            "discussionTemplate": null,
+            "language": "JSON",
+            "languageID": 174,
+            "large": false,
+            "loggedIn": false,
+            "newDiscussionPath": "/ebesier/rnr-exm/discussions/new",
+            "newIssuePath": "/ebesier/rnr-exm/issues/new",
+            "planSupportInfo": {
+                "repoIsFork": null,
+                "repoOwnedByCurrentUser": null,
+                "requestFullPath": "/ebesier/rnr-exm/blob/main/challenge_eval/metadata.json",
+                "showFreeOrgGatedFeatureMessage": null,
+                "showPlanSupportBanner": null,
+                "upgradeDataAttributes": null,
+                "upgradePath": null
+            },
+            "publishBannersInfo": {
+                "dismissActionNoticePath": "/settings/dismiss-notice/publish_action_from_dockerfile",
+                "dismissStackNoticePath": "/settings/dismiss-notice/publish_stack_from_file",
+                "releasePath": "/ebesier/rnr-exm/releases/new?marketplace=true",
+                "showPublishActionBanner": false,
+                "showPublishStackBanner": false
+            },
+            "renderImageOrRaw": false,
+            "richText": null,
+            "renderedFileInfo": null,
+            "tabSize": 8,
+            "topBannersInfo": {
+                "overridingGlobalFundingFile": false,
+                "globalPreferredFundingPath": null,
+                "repoOwner": "ebesier",
+                "repoName": "rnr-exm",
+                "showInvalidCitationWarning": false,
+                "citationHelpUrl": "https://docs.github.com/en/github/creating-cloning-and-archiving-repositories/creating-a-repository-on-github/about-citation-files",
+                "showDependabotConfigurationBanner": false,
+                "actionsOnboardingTip": null
+            },
+            "truncated": false,
+            "viewable": true,
+            "workflowRedirectUrl": null,
+            "symbols": {
+                "timedOut": false,
+                "notAnalyzed": true,
+                "symbols": []
+            }
+        },
+        "copilotAccessInfo": null,
+        "csrf_tokens": {
+            "/ebesier/rnr-exm/branches": {
+                "post": "sJ11cTe6GKppJZepGsmdtonlAUwN5oXv4w_8qQTUwaUvfvJr_xZWx2x-znVBPD6JuaEfzl8WATWnF1bpy4cWSQ"
+            }
+        }
+    },
+    "title": "rnr-exm/challenge_eval/metadata.json at main \u00b7 ebesier/rnr-exm",
+    "locale": "en"
+}

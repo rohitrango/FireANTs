@@ -17,21 +17,33 @@ class RigidRegistration(AbstractRegistration):
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
                 optimizer: str = 'SGD', optimizer_params: dict = {},
-                optimizer_lr: float = 0.1, optimizer_momentum: float = 0.0,
+                optimizer_lr: float = 0.1, 
+                loss_params: dict = {},
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
-                tolerance: float = 1e-6, max_tolerance_iters: int = 10, tolerance_mode: str = 'atol',
+                tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
                 cc_kernel_size: int = 3,
                 init_translation: Optional[torch.Tensor] = None,
+                scaling: bool = False,
                 custom_loss: nn.Module = None, 
                 blur: bool = True,
                 ) -> None:
-        super().__init__(scales, iterations, fixed_images, moving_images, loss_type, mi_kernel_type, cc_kernel_type, custom_loss, cc_kernel_size,
-                         tolerance, max_tolerance_iters, tolerance_mode)
+        super().__init__(scales=scales, iterations=iterations, fixed_images=fixed_images, moving_images=moving_images, 
+                         loss_type=loss_type, mi_kernel_type=mi_kernel_type, cc_kernel_type=cc_kernel_type, custom_loss=custom_loss, 
+                         loss_params=loss_params,
+                         cc_kernel_size=cc_kernel_size,
+                         tolerance=tolerance, max_tolerance_iters=max_tolerance_iters)
         # initialize transform
         device = fixed_images.device
         self.dims = dims = self.moving_images.dims
         self.rotation_dims = rotation_dims = dims * (dims - 1) // 2
         self.rotation = nn.Parameter(torch.zeros((fixed_images.size(), rotation_dims), device=device))  # [N, Rd]
+        # introduce some scaling parameter
+        self.scaling = scaling
+        if self.scaling:
+            self.logscale = nn.Parameter(torch.zeros((fixed_images.size(), fixed_images.dims), device=device))
+        else:
+            self.logscale = torch.zeros((fixed_images.size(), fixed_images.dims), device=device)
+
         self.blur = blur
         # first three params are so(n) variables, last three are translation
         if init_translation is not None:
@@ -40,10 +52,14 @@ class RigidRegistration(AbstractRegistration):
             transl = torch.zeros((fixed_images.size(), fixed_images.dims))  # [N, D]
         self.transl = nn.Parameter(transl.to(device))  # [N, D]
         # optimizer
+        params = [self.rotation, self.transl]
+        if scaling:
+            params.append(self.logscale)
+
         if optimizer == 'SGD':
-            self.optimizer = SGD([self.rotation, self.transl], lr=optimizer_lr, momentum=optimizer_momentum, **optimizer_params)
+            self.optimizer = SGD(params, lr=optimizer_lr, **optimizer_params)
         elif optimizer == 'Adam':
-            self.optimizer = Adam([self.rotation, self.transl], lr=optimizer_lr, **optimizer_params)
+            self.optimizer = Adam(params, lr=optimizer_lr, **optimizer_params)
         else:
             raise ValueError(f"Optimizer {optimizer} not supported")
     
@@ -75,8 +91,15 @@ class RigidRegistration(AbstractRegistration):
     
     def get_rigid_matrix(self):
         rigidmat = self.get_rotation_matrix() # [N, dim+1, dim+1]
-        rigidmat[:, :-1, -1] = self.transl  # [N, dim+1, dim+1]
-        return rigidmat
+        scale = torch.exp(self.logscale)  # [N, D]
+        scale = scale[..., None]
+        # N, D = scale.shape
+        # scalediag = torch.zeros((N, D, D), device=scale.device)
+        # scalediag[:, np.arange(D), np.arange(D)] = scale
+        matclone = rigidmat.clone()
+        matclone[:, :-1, :-1] = scale * rigidmat[:, :-1, :-1]
+        matclone[:, :-1, -1] = self.transl  # [N, dim+1, dim+1]
+        return matclone
 
     def optimize(self, save_transformed=False):
         ''' Given fixed and moving images, optimize rigid registration '''
@@ -91,7 +114,8 @@ class RigidRegistration(AbstractRegistration):
             transformed_images = []
 
         for scale, iters in zip(self.scales, self.iterations):
-            tol_ctr = 0
+            # reset
+            self.convergence_monitor.reset()
             prev_loss = np.inf
             # downsample fixed array and retrieve coords
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
@@ -123,20 +147,8 @@ class RigidRegistration(AbstractRegistration):
                 self.optimizer.step()
                 # check for convergence
                 cur_loss = loss.item()
-                if self.tolerance_mode == 'atol':
-                    if (prev_loss - cur_loss) < self.tolerance:
-                        tol_ctr+=1
-                        if tol_ctr > self.max_tolerance_iters:
-                            break
-                    else:
-                        tol_ctr=0
-                elif self.tolerance_mode == 'rtol':
-                    if (prev_loss - cur_loss)/(prev_loss) < self.tolerance:
-                        tol_ctr+=1
-                        if tol_ctr > self.max_tolerance_iters:
-                            break
-                    else:
-                        tol_ctr=0
+                if self.convergence_monitor.converged(cur_loss):
+                    break
                 prev_loss = cur_loss
                 pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, prev_loss))
             # save transformed images
@@ -148,10 +160,12 @@ class RigidRegistration(AbstractRegistration):
 
 if __name__ == '__main__':
     from cudants.io.image import Image, BatchedImages
-    img1 = Image.load_file('/data/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
-    img2 = Image.load_file('/data/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t1.nii.gz')
+    img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
+    img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t1.nii.gz')
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2,])
-    transform = RigidRegistration([8, 4, 2, 1], [1000, 500, 250, 100], fixed, moving, loss_type='cc', optimizer='SGD', optimizer_lr=5e-3)
+    transform = RigidRegistration([8, 4, 2, 1], [1000, 500, 250, 100], fixed, moving, loss_type='cc', 
+                                  scaling=False,
+                                  optimizer='SGD', optimizer_lr=5e-3)
     transform.optimize()
-    print(transform.rotation.data.cpu().numpy(), transform.transl.data.cpu().numpy())
+    print(transform.rotation.data.cpu().numpy(), transform.transl.data.cpu().numpy(), torch.exp(transform.logscale.data))

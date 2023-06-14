@@ -1,4 +1,14 @@
 *egg-info
+*pdf
+*svg
+dist/
+build/
+**pkl
 **/__pycache__
+**/baselines
+**/*.pkl
 **/.ipynb_checkpoints/
 cudants/notebooks/images/
+**/*log.txt
+**/*.nii.gz
+cudants/scripts/misc

@@ -12,6 +12,9 @@ from cudants.utils.imageutils import scaling_and_squaring, _find_integrator_n
 from cudants.types import devicetype
 from cudants.losses.cc import gaussian_1d, separable_filtering
 from cudants.utils.util import grad_smoothing_hook
+from cudants.utils.imageutils import compute_inverse_warp_exp
+from cudants.utils.globals import MIN_IMG_SIZE
+from copy import deepcopy
 
 class GeodesicShooting(nn.Module, AbstractDeformation):
     '''
@@ -21,10 +24,13 @@ class GeodesicShooting(nn.Module, AbstractDeformation):
                 integrator_n: Union[str, int] = 6, 
                 optimizer: str = 'Adam', optimizer_lr: float = 1e-2, optimizer_params: dict = {},
                 smoothing_grad_sigma: float = 0.5,
+                init_scale: int = 1,
                 ) -> None:
         super().__init__()
         self.num_images = num_images = fixed_images.size()
         spatial_dims = fixed_images.shape[2:]  # [H, W, [D]]
+        if init_scale > 1:
+            spatial_dims = [max(int(s / init_scale), MIN_IMG_SIZE) for s in spatial_dims]
         self.n_dims = len(spatial_dims)  # number of spatial dimensions
         self.device = fixed_images.device
         # permute indices  (image to v and v to image)
@@ -43,7 +49,7 @@ class GeodesicShooting(nn.Module, AbstractDeformation):
         # self.velocity_field = nn.Parameter(velocity_field)
         self.integrator_n = integrator_n
         # define optimizer
-        self.optimizer = getattr(torch.optim, optimizer)([self.velocity_field], lr=optimizer_lr, **optimizer_params)
+        self.optimizer = getattr(torch.optim, optimizer)([self.velocity_field], lr=optimizer_lr, **deepcopy(optimizer_params))
         self.optimizer_lr = optimizer_lr
         self.optimizer_name = optimizer
     
@@ -75,13 +81,14 @@ class GeodesicShooting(nn.Module, AbstractDeformation):
         warp = scaling_and_squaring(self.velocity_field, self.grid, n=n)
         return warp
     
-    def get_inverse_warp(self):
-        if self.integrator_n == 'auto':
-            n = _find_integrator_n(self.velocity_field)
-        else:
-            n = self.integrator_n
-        invwarp = scaling_and_squaring(-self.velocity_field, self.grid, n=n)
-        return invwarp
+    def get_inverse_warp(self, *args, **kwargs):
+        # if self.integrator_n == 'auto':
+        #     n = _find_integrator_n(self.velocity_field)
+        # else:
+        #     n = self.integrator_n
+        # invwarp = scaling_and_squaring(-self.velocity_field, self.grid, n=n)
+        # return invwarp
+        return compute_inverse_warp_exp(self.get_warp().detach(), self.grid)
     
     def set_size(self, size):
         ''' size: [H, W, D] or [H, W] '''

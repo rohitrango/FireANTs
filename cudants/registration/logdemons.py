@@ -38,8 +38,9 @@ class LogDemonsRegistration(AbstractRegistration):
                 symmetric: bool = False,
                 ) -> None:
         # initialize abstract registration
-        super().__init__(scales, iterations, fixed_images, moving_images, loss_type, mi_kernel_type, cc_kernel_type, custom_loss, cc_kernel_size,
-                         tolerance, max_tolerance_iters, tolerance_mode)
+        super().__init__(scales=scales, iterations=iterations, fixed_images=fixed_images, moving_images=moving_images, 
+                         loss_type=loss_type, mi_kernel_type=mi_kernel_type, cc_kernel_type=cc_kernel_type, custom_loss=custom_loss, 
+                         cc_kernel_size=cc_kernel_size, tolerance=tolerance, max_tolerance_iters=max_tolerance_iters, tolerance_mode=tolerance_mode)
         # log-demons requires that fixed and moving images have the same dimensions for computing optical flow
         assert fixed_images.shape == moving_images.shape, "Fixed and moving images must have the same dimensions"
         self.dims = fixed_images.dims

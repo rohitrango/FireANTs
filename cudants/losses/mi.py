@@ -4,6 +4,7 @@ from time import time, sleep
 import torch
 from torch import nn
 from torch.nn import functional as F
+from typing import Optional
 # from torch.nn.modules.loss import _Loss
 
 class GlobalMutualInformationLoss(nn.Module):
@@ -146,7 +147,7 @@ class GlobalMutualInformationLoss(nn.Module):
         probability = torch.mean(weight, dim=-2, keepdim=True)  # (batch, 1, num_bin)
         return weight, probability
 
-    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def forward(self, pred: torch.Tensor, target: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Args:
             pred: the shape should be B[NDHW].
@@ -167,6 +168,13 @@ class GlobalMutualInformationLoss(nn.Module):
         mi = torch.sum(
             pab * torch.log((pab + self.smooth_nr) / (papb + self.smooth_dr) + self.smooth_dr), dim=(1, 2)
         )  # (batch)
+
+        ndim = len(pred.shape) - 2
+        if mask is not None:
+            maskmean = mask.flatten(2).mean(2)
+            for i in range(ndim):
+                maskmean = maskmean.unsqueeze(-1)
+            mi = mi * mask / maskmean
 
         if self.reduction == 'sum':
             return torch.sum(mi).neg()  # sum over the batch and channel ndims

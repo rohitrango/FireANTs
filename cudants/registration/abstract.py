@@ -6,6 +6,8 @@ from cudants.utils.util import _assert_check_scales_decreasing
 from cudants.losses import GlobalMutualInformationLoss, LocalNormalizedCrossCorrelationLoss
 from torch.optim import SGD, Adam
 from cudants.io.image import BatchedImages
+from typing import Optional
+from cudants.utils.util import ConvergenceMonitor
 
 def dummy_loss(*args):
     return 0
@@ -18,8 +20,10 @@ class AbstractRegistration(ABC):
                 loss_type: str = "cc",
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
                 custom_loss: nn.Module = None,
+                loss_params: dict = {},
                 cc_kernel_size: int = 3, 
-                tolerance: float = 1e-6, max_tolerance_iters: int = 10, tolerance_mode: str = 'atol'
+                reduction: str = 'mean',
+                tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
                 ) -> None:
         '''
         Initialize abstract registration class
@@ -36,16 +40,17 @@ class AbstractRegistration(ABC):
         
         self.tolerance = tolerance
         self.max_tolerance_iters = max_tolerance_iters
-        self.tolerance_mode = tolerance_mode
+        self.convergence_monitor = ConvergenceMonitor(self.max_tolerance_iters, self.tolerance)
 
         self.device = fixed_images.device
         self.dims = self.fixed_images.dims
 
         # initialize losses
         if loss_type == 'mi':
-            self.loss_fn = GlobalMutualInformationLoss(kernel_type=mi_kernel_type)
+            self.loss_fn = GlobalMutualInformationLoss(kernel_type=mi_kernel_type, reduction=reduction, **loss_params)
         elif loss_type == 'cc':
-            self.loss_fn = LocalNormalizedCrossCorrelationLoss(kernel_type=cc_kernel_type, spatial_dims=self.dims, kernel_size=cc_kernel_size)
+            self.loss_fn = LocalNormalizedCrossCorrelationLoss(kernel_type=cc_kernel_type, spatial_dims=self.dims, 
+                                                               kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
         elif loss_type == 'custom':
             self.loss_fn = custom_loss
         else:

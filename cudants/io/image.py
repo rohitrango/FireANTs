@@ -1,20 +1,35 @@
 import torch
 import SimpleITK as sitk
 import numpy as np
-from cudants.types import devicetype
 from typing import Any, Union, List
 from time import time
+from cudants.types import devicetype
+from cudants.utils.imageutils import integer_to_onehot
 
 class Image:
     '''
-    TODO: Documentaiton here
+    TODO: Documentation here
     '''
-    def __init__(self, itk_image: sitk.SimpleITK.Image, device: devicetype = 'cuda'):
+    def __init__(self, itk_image: sitk.SimpleITK.Image, device: devicetype = 'cuda',
+            is_segmentation=False, max_seg_label=None, background_seg_label=0, seg_preprocessor=lambda x: x) -> None:
         self.itk_image = itk_image
-        self.array = torch.from_numpy(sitk.GetArrayFromImage(itk_image)).to(device).float()
-        self.array = self.array[None, None]   # TODO: Change it to support multichannel images, right now just batchify and add a dummy channel to it
-        channels = itk_image.GetNumberOfComponentsPerPixel()
-        self.channels = channels
+        # check for segmentation parameters
+        # if `is_segmentation` is False, then just treat this as a float image
+        if not is_segmentation:
+            self.array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(float)).to(device).float()
+            self.array = self.array[None, None]   # TODO: Change it to support multichannel images, right now just batchify and add a dummy channel to it
+            channels = itk_image.GetNumberOfComponentsPerPixel()
+            self.channels = channels
+            assert channels == 1, "Only single channel images supported"
+        else:
+            array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(int)).to(device).long()
+            # preprocess segmentation if provided by user
+            array = seg_preprocessor(array)
+            if max_seg_label is not None:
+                array[array > max_seg_label] = background_seg_label
+            array = integer_to_onehot(array, background_label=background_seg_label, max_label=max_seg_label)[None]  # []
+            self.array = array.float()
+            self.channels = array.shape[1]
         # initialize matrix for pixel to physical
         dims = itk_image.GetDimension()
         self.dims = dims
@@ -38,9 +53,9 @@ class Image:
         self.device = device
         
     @classmethod
-    def load_file(cls, image_path:str, device:devicetype = 'cuda') -> 'Image':
+    def load_file(cls, image_path:str, *args, **kwargs) -> 'Image':
         itk_image = sitk.ReadImage(image_path)
-        return cls(itk_image, device=device)
+        return cls(itk_image, *args, **kwargs)
 
 
 class BatchedImages:
@@ -92,9 +107,16 @@ class BatchedImages:
 
 
 if __name__ == '__main__':
-    image = Image.load_file('/data/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
-    print(image.torch2phy)
-    image2 = Image.load_file('/data/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t1.nii.gz')
-    batch = BatchedImages([image, image2])
-    print(batch().shape)
-    print(batch.get_torch2phy().shape)
+    # image = Image.load_file('/data/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
+    # print(image.torch2phy)
+    # image2 = Image.load_file('/data/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t1.nii.gz')
+    # batch = BatchedImages([image, image2])
+    # print(batch().shape)
+    # print(batch.get_torch2phy().shape)
+    from glob import glob
+    files = sorted(glob("/data/IBSR_braindata/IBSR_01/*nii.gz"))
+    image = Image.load_file(files[2])
+    print(image.array.shape, image.array.min(), image.array.max())
+    # get label
+    label = Image.load_file(files[-1], is_segmentation=True)
+    print(label.array.shape, label.array.min(), label.array.max())

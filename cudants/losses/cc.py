@@ -3,6 +3,7 @@ Cross correlation
 '''
 from time import time, sleep
 import torch
+from torch.utils.checkpoint import checkpoint
 from torch import nn
 from torch.nn import functional as F
 from typing import Union, Tuple, List, Optional, Dict, Any, Callable
@@ -130,7 +131,6 @@ def separable_filtering(x: torch.Tensor, kernels: ItemOrList[torch.Tensor], mode
     Examples:
     .. code-block:: python
         >>> import torch
-        >>> from monai.networks.layers import separable_filtering
         >>> img = torch.randn(2, 4, 32, 32)  # batch_size 2, channels 4, 32x32 2D images
         # applying a [-1, 0, 1] filter along each of the spatial dimensions.
         # the output shape is the same as the input shape.
@@ -178,8 +178,10 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         kernel_size: int = 3,
         kernel_type: str = "rectangular",
         reduction: str = "mean",
-        smooth_nr: float = 0.0,
+        smooth_nr: float = 1e-5,
         smooth_dr: float = 1e-5,
+        unsigned: bool = True,
+        checkpointing: bool = False,
     ) -> None:
         """
         Args:
@@ -193,12 +195,15 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
                 - ``"sum"``: the output will be summed.
             smooth_nr: a small constant added to the numerator to avoid nan.
             smooth_dr: a small constant added to the denominator to avoid nan.
+            split: do we want to split computation across 2 GPUs? (if pred and target are on different GPUs)
+                default: False (assumes they are on same device and big enough to fit on one GPU)
         """
         super().__init__()
         self.ndim = spatial_dims
         if self.ndim not in {1, 2, 3}:
             raise ValueError(f"Unsupported ndim: {self.ndim}-d, only 1-d, 2-d, and 3-d inputs are supported")
         self.reduction = reduction
+        self.unsigned = unsigned
 
         self.kernel_size = kernel_size
         if self.kernel_size % 2 == 0:
@@ -211,6 +216,7 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         self.kernel_nd, self.kernel_vol = self.get_kernel_vol()   # get nD kernel and its volume
         self.smooth_nr = float(smooth_nr)
         self.smooth_dr = float(smooth_dr)
+        self.checkpointing = checkpointing
 
     def get_kernel_vol(self):
         vol = self.kernel
@@ -218,7 +224,7 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
             vol = torch.matmul(vol.unsqueeze(-1), self.kernel.unsqueeze(0))
         return vol, torch.sum(vol)
 
-    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def forward(self, pred: torch.Tensor, target: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Args:
             pred: the shape should be BNH[WD].
@@ -231,39 +237,58 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         if target.shape != pred.shape:
             raise ValueError(f"ground truth has differing shape ({target.shape}) from pred ({pred.shape})")
 
-        t2, p2, tp = target * target, pred * pred, target * pred
-        kernel, kernel_vol = self.kernel.to(pred), self.kernel_vol.to(pred)
-        kernel_nd = self.kernel_nd.to(pred)
-        kernels = [kernel] * self.ndim
         # sum over kernel
-        t_sum = separable_filtering(target, kernels=kernels)
-        p_sum = separable_filtering(pred, kernels=kernels)
-        t2_sum = separable_filtering(t2, kernels=kernels)
-        p2_sum = separable_filtering(p2, kernels=kernels)
-        tp_sum = separable_filtering(tp, kernels=kernels)
+        def cc_checkpoint_fn(target, pred, kernel, kernel_vol):
+            '''
+            This function is used to compute the intermediate results of the loss.
+            '''
+            t2, p2, tp = target * target, pred * pred, target * pred
+            kernel, kernel_vol = kernel.to(pred), kernel_vol.to(pred)
+            # kernel_nd = self.kernel_nd.to(pred)
+            kernels = [kernel] * self.ndim
+            kernels_t = kernels_p = kernels
+            kernel_vol_t = kernel_vol_p = kernel_vol
+            # compute intermediates
+            t_sum = separable_filtering(target, kernels=kernels_t)
+            p_sum = separable_filtering(pred, kernels=kernels_p)
+            t2_sum = separable_filtering(t2, kernels=kernels_t)
+            p2_sum = separable_filtering(p2, kernels=kernels_p)
+            tp_sum = separable_filtering(tp, kernels=kernels_t)  # use target device's output
+            # average over kernel
+            t_avg = t_sum / kernel_vol_t
+            p_avg = p_sum / kernel_vol_p
+            # normalized cross correlation between t and p
+            # sum[(t - mean[t]) * (p - mean[p])] / std[t] / std[p]
+            # denoted by num / denom
+            # assume we sum over N values
+            # num = sum[t * p - mean[t] * p - t * mean[p] + mean[t] * mean[p]]
+            #     = sum[t*p] - sum[t] * sum[p] / N * 2 + sum[t] * sum[p] / N
+            #     = sum[t*p] - sum[t] * sum[p] / N
+            #     = sum[t*p] - sum[t] * mean[p] = cross
+            # the following is actually squared ncc
+            cross = (tp_sum.to(pred) - p_avg * t_sum.to(pred))  # on pred device
+            t_var = torch.max(
+                t2_sum - t_avg * t_sum, torch.as_tensor(self.smooth_dr, dtype=t2_sum.dtype, device=t2_sum.device)
+            ).to(pred)
+            p_var = torch.max(
+                p2_sum - p_avg * p_sum, torch.as_tensor(self.smooth_dr, dtype=p2_sum.dtype, device=p2_sum.device)
+            )
+            if self.unsigned:
+                ncc: torch.Tensor = (cross * cross + self.smooth_nr) / ((t_var * p_var) + self.smooth_dr)
+            else:
+                ncc: torch.Tensor = (cross + self.smooth_nr) / ((torch.sqrt(t_var) * torch.sqrt(p_var)) + self.smooth_dr)
+            return ncc
+        
+        if self.checkpointing:
+            ncc = checkpoint(cc_checkpoint_fn, target, pred, self.kernel, self.kernel_vol)
+        else:
+            ncc = cc_checkpoint_fn(target, pred, self.kernel, self.kernel_vol)
 
-        # average over kernel
-        t_avg = t_sum / kernel_vol
-        p_avg = p_sum / kernel_vol
-
-        # normalized cross correlation between t and p
-        # sum[(t - mean[t]) * (p - mean[p])] / std[t] / std[p]
-        # denoted by num / denom
-        # assume we sum over N values
-        # num = sum[t * p - mean[t] * p - t * mean[p] + mean[t] * mean[p]]
-        #     = sum[t*p] - sum[t] * sum[p] / N * 2 + sum[t] * sum[p] / N
-        #     = sum[t*p] - sum[t] * sum[p] / N
-        #     = sum[t*p] - sum[t] * mean[p] = cross
-        # the following is actually squared ncc
-        cross = tp_sum - p_avg * t_sum
-        t_var = torch.max(
-            t2_sum - t_avg * t_sum, torch.as_tensor(self.smooth_dr, dtype=t2_sum.dtype, device=t2_sum.device)
-        )
-        p_var = torch.max(
-            p2_sum - p_avg * p_sum, torch.as_tensor(self.smooth_dr, dtype=p2_sum.dtype, device=p2_sum.device)
-        )
-        ncc: torch.Tensor = (cross * cross + self.smooth_nr) / (t_var * p_var)
-        # ncc: torch.Tensor = (cross + self.smooth_nr) / (torch.sqrt(t_var * p_var) + self.smooth_dr)
+        if mask is not None:
+            maskmean = mask.flatten(2).mean(2)  # [B, N]
+            for _ in range(self.ndim):
+                maskmean = maskmean.unsqueeze(-1)  # [B, N, 1, 1, ...]
+            ncc = ncc * mask / maskmean
 
         if self.reduction == 'sum':
             return torch.sum(ncc).neg()  # sum over the batch, channel and spatial ndims

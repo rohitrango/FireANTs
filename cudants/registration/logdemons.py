@@ -18,8 +18,7 @@ class LogDemonsRegistration(AbstractRegistration):
     '''
     This class implements multi-scale log-demons registration
 
-    Returns the warp field in pixel coordinates because optical flow works in pixel coordinates
-    TODO: Investigate if we can change this to physical coordinates 
+    Returns the warp field in pixel coordinates 
     '''    
     def __init__(self, scales: List[int], iterations: List[float], 
                 fixed_images: BatchedImages, moving_images: BatchedImages,
@@ -58,6 +57,7 @@ class LogDemonsRegistration(AbstractRegistration):
         self.eps_prime = eps_prime
         self.update_gaussian = gaussian_1d(torch.tensor(update_sigma, device=self.device), truncated=2, approx='sampled')
         self.velocity_fields = []
+        self.integrator_n = 10
 
     def _get_symmetric_velocity(self,
                               velocity_field, fixed_image_vgrid, fixed_image_affinecoords, 
@@ -66,8 +66,7 @@ class LogDemonsRegistration(AbstractRegistration):
         Get forward and backward velocities between the fixed and moving images, and average them out
         '''
         # forward velocity
-        displacement_field = scaling_and_squaring(velocity_field, fixed_image_vgrid, n=6)
-        # displacement_field = torch.einsum('nij,n...j->n...i', affine_map_inverse, displacement_field)
+        displacement_field = scaling_and_squaring(velocity_field, fixed_image_vgrid, n=self.integrator_n)
         total_displacement_coords = fixed_image_affinecoords + displacement_field
         moved_image = F.grid_sample(moving_image_down, total_displacement_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
         v1 = self.optical_flow(fixed_image_down, moved_image)  # [N, dims, H, W, D]
@@ -79,16 +78,16 @@ class LogDemonsRegistration(AbstractRegistration):
         # backward velocity (compute M(Ax + b), F(x - \phi(x)) and compute optical flow)
         moved_image_aff = F.grid_sample(moving_image_down, fixed_image_affinecoords, mode='bilinear', align_corners=True)
         # displacement_field_bwd = scaling_and_squaring(-torch.einsum('nij,n...j->n...i', affine_map_forward, velocity_field), fixed_image_vgrid, n=6)
-        displacement_field_bwd = scaling_and_squaring(-velocity_field, fixed_image_vgrid, n=6)
+        displacement_field_bwd = scaling_and_squaring(-velocity_field, fixed_image_vgrid, n=self.integrator_n)
         fixed_image_warp = F.grid_sample(fixed_image_down, fixed_image_vgrid + displacement_field_bwd, mode='bilinear', align_corners=True)
         v2 = self.optical_flow(moved_image_aff, fixed_image_warp)
-        # v2 = torch.einsum('nij,nj...->ni...', affine_map_inverse, v2)  # [N, dims, H, W, D]
         norm = v2.abs().flatten(1).max(1).values.reshape(-1, *([1]*(self.dims + 1))) + 1e-20
         v2 = v2 / norm * scale_factor
+        ## move this to moving image coordinates
+        v2 = F.grid_sample(v2, fixed_image_vgrid + displacement_field, mode='bilinear', align_corners=True)
         v2 = v2.permute(*permute_idx)
-
         # update velocity function
-        velocity_field = velocity_field + 0.5*(v1 + self.lie_bracket_fn(velocity_field, v1)) + 0.5*(-v2 + self.lie_bracket_fn(velocity_field, v2))
+        velocity_field = velocity_field + 0.5*(v1 + 0.5*self.lie_bracket_fn(velocity_field, v1)) + 0.5*(-v2 + 0.5*self.lie_bracket_fn(velocity_field, v2))
         cur_loss = F.mse_loss(moved_image, fixed_image_down)
         return velocity_field, cur_loss, moved_image
         
@@ -101,8 +100,7 @@ class LogDemonsRegistration(AbstractRegistration):
         velocity_field is integrated to get the displacement field, which is added to the affine map
         velocity is computed 
         '''
-        displacement_field = scaling_and_squaring(velocity_field, fixed_image_vgrid, n=6)
-        # displacement_field = torch.einsum('nij,n...j->n...i', affine_map_inverse, displacement_field)
+        displacement_field = scaling_and_squaring(velocity_field, fixed_image_vgrid, n=self.integrator_n)
         total_displacement_coords = fixed_image_affinecoords + displacement_field
         moved_image = F.grid_sample(moving_image_down, total_displacement_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
         v = self.optical_flow(fixed_image_down, moved_image)  # [N, dims, H, W, D]

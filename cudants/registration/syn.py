@@ -46,8 +46,6 @@ class SyNRegistration(AbstractRegistration):
         # get warp
         if optimizer == 'SGD':
             optimizer_params['momentum'] = optimizer_momentum
-        # else:
-            # del optimizer_params.get('momentum')
 
         if deformation_type == 'geodesic':
             fwd_warp = GeodesicShooting(fixed_images, moving_images, integrator_n=integrator_n, 
@@ -65,6 +63,7 @@ class SyNRegistration(AbstractRegistration):
         if init_affine is None:
             init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D, D+1]
         self.affine = init_affine.detach()
+
 
     def optimize(self, save_transformed=False):
         ''' 
@@ -139,7 +138,7 @@ class SyNRegistration(AbstractRegistration):
                     fwd_warp_field = separable_filtering(fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg), warp_gaussian).permute(*self.fwd_warp.permute_imgtov)
                     rev_inv_warp_field = separable_filtering(rev_inv_warp_field.permute(*self.rev_warp.permute_vtoimg), warp_gaussian).permute(*self.rev_warp.permute_imgtov)
                     # compose the two warp fields
-                    composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field, fixed_image_vgrid)  # compose two displacement fields with initial grid
+                    composed_warp = compose_warp(rev_inv_warp_field, fwd_warp_field, fixed_image_vgrid)  # compose two displacement fields with initial grid
                     moved_coords_final = fixed_image_affinecoords + composed_warp
                     moved_image = F.grid_sample(moving_image_blur, moved_coords_final, mode='bilinear', align_corners=True)
                     transformed_images.append(moved_image.detach().cpu())

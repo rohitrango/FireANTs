@@ -45,6 +45,8 @@ class GreedyRegistration(AbstractRegistration):
         # get warp
         if optimizer == 'SGD':
             optimizer_params['momentum'] = optimizer_params.get('momentum', optimizer_momentum)
+        print(optimizer, optimizer_params)
+            
 
         if deformation_type == 'geodesic':
             warp = GeodesicShooting(fixed_images, moving_images, integrator_n=integrator_n, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params,

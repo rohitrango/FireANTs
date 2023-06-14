@@ -20,11 +20,12 @@ class RigidRegistration(AbstractRegistration):
                 optimizer_lr: float = 0.1, optimizer_momentum: float = 0.0,
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, tolerance_mode: str = 'atol',
+                cc_kernel_size: int = 3,
                 init_translation: Optional[torch.Tensor] = None,
                 custom_loss: nn.Module = None, 
                 blur: bool = True,
                 ) -> None:
-        super().__init__(scales, iterations, fixed_images, moving_images, loss_type, mi_kernel_type, cc_kernel_type, custom_loss,
+        super().__init__(scales, iterations, fixed_images, moving_images, loss_type, mi_kernel_type, cc_kernel_type, custom_loss, cc_kernel_size,
                          tolerance, max_tolerance_iters, tolerance_mode)
         # initialize transform
         device = fixed_images.device

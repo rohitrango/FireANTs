@@ -32,7 +32,14 @@ def grad_smoothing_hook(grad: torch.Tensor, gaussians: List[torch.Tensor]):
     ''' this backward hook will smooth out the gradient using the gaussians 
     has to be called with a partial function
     '''
-    return separable_filtering(grad, gaussians)
+    # grad is of shape [B, H, W, D, dims]
+    if len(grad.shape) == 5:
+        permute_vtoimg = (0, 4, 1, 2, 3)
+        permute_imgtov = (0, 2, 3, 4, 1)
+    elif len(grad.shape) == 4:
+        permute_vtoimg = (0, 3, 1, 2)
+        permute_imgtov = (0, 2, 3, 1)
+    return separable_filtering(grad.permute(*permute_vtoimg), gaussians).permute(*permute_imgtov)
 
 
 def compose_warp(warp1: torch.Tensor, warp2: torch.Tensor, grid: torch.Tensor):

@@ -18,13 +18,14 @@ class AffineRegistration(AbstractRegistration):
                 optimizer: str = 'SGD', optimizer_params: dict = {},
                 optimizer_lr: float = 0.1, optimizer_momentum: float = 0.0,
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
+                cc_kernel_size: int = 3,
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, tolerance_mode: str = 'atol',
                 init_rigid: Optional[torch.Tensor] = None,
                 custom_loss: nn.Module = None,
                 blur: bool = True,
                 ) -> None:
 
-        super().__init__(scales, iterations, fixed_images, moving_images, loss_type, mi_kernel_type, cc_kernel_type, custom_loss,
+        super().__init__(scales, iterations, fixed_images, moving_images, loss_type, mi_kernel_type, cc_kernel_type, custom_loss, cc_kernel_size,
                          tolerance, max_tolerance_iters, tolerance_mode)
         device = self.device
         dims = self.dims

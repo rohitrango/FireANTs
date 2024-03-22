@@ -8,7 +8,9 @@ build/
 **/baselines
 **/*.pkl
 **/.ipynb_checkpoints/
-cudants/notebooks/images/
+fireants/notebooks/images/
 **/*log.txt
 **/*.nii.gz
-cudants/scripts/misc
+fireants/scripts/misc
+fireants/notebooks
+fireants/baselines

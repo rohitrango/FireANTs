@@ -8,6 +8,7 @@ from torch.optim import SGD, Adam
 from fireants.io.image import BatchedImages
 from typing import Optional
 from fireants.utils.util import ConvergenceMonitor
+from torch.nn import functional as F
 
 def dummy_loss(*args):
     return 0
@@ -53,6 +54,8 @@ class AbstractRegistration(ABC):
                                                                kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
         elif loss_type == 'custom':
             self.loss_fn = custom_loss
+        elif loss_type == 'mse':
+            self.loss_fn = partial(F.mse_loss, reduction=reduction)
         else:
             raise ValueError(f"Loss type {loss_type} not supported")
 

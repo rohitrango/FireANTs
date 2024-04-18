@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "FireANTs"
+version = "0.1"
+authors = [
+    {name="Rohit Jena", },
+    {name="Pratik Chaudhari", }
+    {name="James C. Gee", }
+]
+description = "FireANTs: Adaptive Riemannian Optimization for Multi-Scale Diffeomorphic Registration"
+readme = "README.md"
+requires-python = ">=3.7"

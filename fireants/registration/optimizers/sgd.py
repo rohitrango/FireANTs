@@ -4,7 +4,7 @@ from torch.nn import functional as F
 from fireants.utils.imageutils import jacobian as jacobian_fn
 from fireants.utils.imageutils import compute_inverse_warp_displacement
 from fireants.losses.cc import separable_filtering
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 class WarpSGD:
     ''' at the moment we only support a single warp function 

@@ -11,8 +11,8 @@ from fireants.registration.syn import SyNRegistration
 import argparse
 from tqdm import tqdm
 from evaluate_metrics import compute_metrics
-import pickle
-import itertools
+# import pickle
+# import itertools
 from torch.nn import functional as F
 
 def dice_score(p, q):

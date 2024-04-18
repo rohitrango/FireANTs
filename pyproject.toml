@@ -7,7 +7,7 @@ packages = ["fireants"]
 
 [project]
 name = "fireants"
-version = "0.1"
+version = "0.1.1"
 authors = [
     {name="Rohit Jena"},
     {name="Pratik Chaudhari"},

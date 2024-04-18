@@ -26,7 +26,7 @@ class GreedyRegistration(AbstractRegistration):
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
                 deformation_type: str = 'geodesic',
-                optimizer: str = 'SGD', optimizer_params: dict = {},
+                optimizer: str = 'Adam', optimizer_params: dict = {},
                 optimizer_lr: float = 0.1, 
                 integrator_n: Union[str, int] = 6,
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',

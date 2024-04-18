@@ -46,10 +46,10 @@ class DiceLossModule(nn.Module):
         den = moved_flat.sum(1) + fixed_flat.sum(1)
         return 1 - (num/den).mean()
 
-def get_image_paths(brain_id, masks=False):
+def get_image_paths(lung_id, masks=False):
     PATH = SCANS_PATH if not masks else MASKS_PATH
-    fixed = osp.join(PATH, "{:02d}_Fixed.mhd".format(brain_id))
-    moving = osp.join(PATH, "{:02d}_Moving.mhd".format(brain_id))
+    fixed = osp.join(PATH, "{:02d}_Fixed.mhd".format(lung_id))
+    moving = osp.join(PATH, "{:02d}_Moving.mhd".format(lung_id))
     return fixed, moving
 
 def augment_image_with_mask(image, mask):
@@ -82,11 +82,11 @@ def register_dataset(config):
     }
     count = 0
 
-    for brain_id in range(1, 31):
+    for lung_id in range(1, 31):
         torch.cuda.empty_cache()
         time.sleep(2)
-        fixed_img_path, moving_img_path = get_image_paths(brain_id)
-        fixed_seg_path, moving_seg_path = get_image_paths(brain_id, masks=True)
+        fixed_img_path, moving_img_path = get_image_paths(lung_id)
+        fixed_seg_path, moving_seg_path = get_image_paths(lung_id, masks=True)
         # load fixed images
         fixed_image, fixed_seg = Image.load_file(fixed_img_path), Image.load_file(fixed_seg_path, is_segmentation=True)
         fixed_image = augment_image_with_mask(fixed_image, fixed_seg)
@@ -128,7 +128,7 @@ def register_dataset(config):
         deformable.optimize(save_transformed=False)
         def_end = time.time()
 
-        print(f"For scan pair: {brain_id}")
+        print(f"For scan pair: {lung_id}")
         print(f"Affine time: {aff_end - aff_start}")
         print(f"Deformable time: {def_end - def_start}\n")
         print(f"Total time: {def_end + aff_end - def_start - aff_start}\n")
@@ -168,8 +168,8 @@ def register_dataset(config):
                 moved_lung = moved_lung.detach().cpu().numpy().astype(np.float32)[0, 0]
                 moved_lung = sitk.GetImageFromArray(moved_lung)
                 moved_lung.CopyInformation(fixed_image.images[0].itk_image)
-                sitk.WriteImage(moved_lung, osp.join(out_root_dir, "{:02d}.nii.gz".format(brain_id)))
-                print("Written to {}".format(osp.join(out_root_dir, "{:02d}.nii.gz".format(brain_id))))
+                sitk.WriteImage(moved_lung, osp.join(out_root_dir, "{:02d}.nii.gz".format(lung_id)))
+                print("Written to {}".format(osp.join(out_root_dir, "{:02d}.nii.gz".format(lung_id))))
 
             ## we dont need the segmentations
             with grad_context():
@@ -203,12 +203,12 @@ def register_dataset(config):
                 defX.CopyInformation(fixed_image.itk_image)
                 defY.CopyInformation(fixed_image.itk_image)
                 defZ.CopyInformation(fixed_image.itk_image)
-                brain_dir = osp.join(out_root_dir, "{:02d}".format(brain_id))
-                os.makedirs(brain_dir, exist_ok=True)
-                sitk.WriteImage(defX, osp.join(brain_dir, "defX.mhd"))
-                sitk.WriteImage(defY, osp.join(brain_dir, "defY.mhd"))
-                sitk.WriteImage(defZ, osp.join(brain_dir, "defZ.mhd"))
-                print("Written to {}".format(brain_dir))
+                lung_dir = osp.join(out_root_dir, "{:02d}".format(lung_id))
+                os.makedirs(lung_dir, exist_ok=True)
+                sitk.WriteImage(defX, osp.join(lung_dir, "defX.mhd"))
+                sitk.WriteImage(defY, osp.join(lung_dir, "defY.mhd"))
+                sitk.WriteImage(defZ, osp.join(lung_dir, "defZ.mhd"))
+                print("Written to {}".format(lung_dir))
                 del fixed_image
 
 
@@ -247,7 +247,7 @@ if __name__ == '__main__':
         print("Running...")
         results = tuner.fit()
         ray.shutdown()
-    # create evaluation brains and deformation fields
+    # create evaluation lung and deformation fields
     elif mode == 'eval':
         register_dataset(config)
     else:

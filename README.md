@@ -22,7 +22,7 @@ pip install fireants
 ```
 
 ## Tutorial
-To check out some of the tutorials, check out the `notebooks/` directory for usage.
+To check out some of the tutorials, check out the `tutorials/` directory for usage.
 Alternatively, to reproduce the results in the [paper](https://arxiv.org/abs/2404.01249) checkout the `fireants/scripts/` directory.
 
 ## Datasets

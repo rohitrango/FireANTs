@@ -15,3 +15,4 @@ fireants/scripts/misc
 fireants/notebooks
 fireants/baselines
 .req.txt
+!tutorials/**/*.nii.gz

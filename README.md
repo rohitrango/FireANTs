@@ -16,9 +16,34 @@ cd fireants
 pip install -e .
 ```
 
-Or to install from PyPI:
+Or install from PyPI:
 ```
 pip install fireants
 ```
 
 ## Tutorial
+To check out some of the tutorials, check out the `notebooks/` directory for usage.
+Alternatively, to reproduce the results in the [paper](https://arxiv.org/abs/2404.01249) checkout the `fireants/scripts/` directory.
+
+## Datasets
+In the paper, we use the datasets as following: 
+* Klein's evaluation of 14 non-linear registration algorithms: [here](https://www.synapse.org/#!Synapse:syn3251018)
+* EMPIRE10 lung registration challenge: [here](https://empire10.grand-challenge.org/)
+* Expansion Microscopy dataset: [here](https://rnr-exm.grand-challenge.org/)
+
+
+## Contributing
+Feel free to [add issues](https://github.com/rohitrango/fireants/issues/new) or [pull requests](https://github.com/rohitrango/fireants/compare) to the repository. We welcome contributions to the package.
+
+## Citation
+
+If you use FireANTs in your research, please cite the following paper:
+
+```
+@article{jena2024fireants,
+  title={FireANTs: Adaptive Riemannian Optimization for Multi-Scale Diffeomorphic Registration},
+  author={Jena, Rohit and Chaudhari, Pratik and Gee, James C},
+  journal={arXiv preprint arXiv:2404.01249},
+  year={2024}
+}
+```

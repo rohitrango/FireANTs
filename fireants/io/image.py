@@ -11,7 +11,8 @@ class Image:
     TODO: Documentation here
     '''
     def __init__(self, itk_image: sitk.SimpleITK.Image, device: devicetype = 'cuda',
-            is_segmentation=False, max_seg_label=None, background_seg_label=0, seg_preprocessor=lambda x: x) -> None:
+            is_segmentation=False, max_seg_label=None, background_seg_label=0, seg_preprocessor=lambda x: x,
+            spacing=None, direction=None, origin=None, center=None) -> None:
         self.itk_image = itk_image
         # check for segmentation parameters
         # if `is_segmentation` is False, then just treat this as a float image
@@ -35,10 +36,19 @@ class Image:
         self.dims = dims
         if dims not in [2, 3]:
             raise NotImplementedError("Image class only supports 2D/3D images.")
+        
+        # custom spacing if not provided use simpleitk values
+        spacing = np.array(itk_image.GetSpacing())[None] if spacing is None else np.array(spacing)[None]
+        origin = np.array(itk_image.GetOrigin())[None] if origin is None else np.array(origin)[None]
+        direction = np.array(itk_image.GetDirection()).reshape(dims, dims) if direction is None else np.array(direction).reshape(dims, dims)
+        if center is not None:
+            print("Center location provided, recalibrating origin.")
+            origin = center - np.matmul(direction, ((np.array(itk_image.GetSize())*spacing/2).squeeze())[:, None]).T
+
         px2phy = np.eye(dims+1)
-        px2phy[:dims, -1] = itk_image.GetOrigin()
-        px2phy[:dims, :dims] = np.array(itk_image.GetDirection()).reshape(dims, dims)
-        px2phy[:dims, :dims] = px2phy[:dims, :dims] * np.array(itk_image.GetSpacing())[None]
+        px2phy[:dims, -1] = origin
+        px2phy[:dims, :dims] = direction
+        px2phy[:dims, :dims] = px2phy[:dims, :dims] * spacing 
         # generate mapping from torch to px
         torch2px = np.eye(dims+1)
         scaleterm = (np.array(itk_image.GetSize())-1)*0.5

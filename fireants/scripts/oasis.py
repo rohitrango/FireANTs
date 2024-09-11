@@ -181,5 +181,3 @@ if __name__ == '__main__':
                 'cc_size': 2,
             }
         register_val_dataset(config, test=True)
-
-    

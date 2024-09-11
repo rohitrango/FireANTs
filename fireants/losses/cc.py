@@ -115,7 +115,8 @@ def _separable_filtering_conv(
             raise NotImplementedError(f"Unsupported spatial_dims: {spatial_dims}.")
     return input_
 
-@torch.jit.script
+# @torch.jit.script
+# def separable_filtering(x: torch.Tensor, kernels: ItemOrList[torch.Tensor], mode: str = "zeros") -> torch.Tensor:
 def separable_filtering(x: torch.Tensor, kernels: ItemOrList[torch.Tensor], mode: str = "zeros") -> torch.Tensor:
     """
     Apply 1-D convolutions along each spatial dimension of `x`.

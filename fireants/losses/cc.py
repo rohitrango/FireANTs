@@ -117,6 +117,7 @@ def _separable_filtering_conv(
 
 @torch.jit.script
 def separable_filtering(x: torch.Tensor, kernels: ItemOrList[torch.Tensor], mode: str = "zeros") -> torch.Tensor:
+# def separable_filtering(x: torch.Tensor, kernels: ItemOrList[torch.Tensor], mode: str = "zeros") -> torch.Tensor:
     """
     Apply 1-D convolutions along each spatial dimension of `x`.
     Args:

@@ -38,14 +38,14 @@ class GreedyRegistration(AbstractRegistration):
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
                 init_affine: Optional[torch.Tensor] = None,
                 blur: bool = True,
-                custom_loss: nn.Module = None) -> None:
+                custom_loss: nn.Module = None, **kwargs) -> None:
         # initialize abstract registration
         # nn.Module.__init__(self)
         super().__init__(scales=scales, iterations=iterations, fixed_images=fixed_images, moving_images=moving_images, 
                          loss_type=loss_type, mi_kernel_type=mi_kernel_type, cc_kernel_type=cc_kernel_type, custom_loss=custom_loss, 
                          loss_params=loss_params,
                          cc_kernel_size=cc_kernel_size, reduction=reduction,
-                         tolerance=tolerance, max_tolerance_iters=max_tolerance_iters)
+                         tolerance=tolerance, max_tolerance_iters=max_tolerance_iters, **kwargs)
         self.dims = fixed_images.dims
         self.blur = blur
         self.reduction = reduction
@@ -67,7 +67,7 @@ class GreedyRegistration(AbstractRegistration):
         self.affine = init_affine.detach()
     
     def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
-        ''' given fixed and moving images, get warp '''
+        ''' given fixed and moving images, get warp field (not displacement field) '''
         fixed_arrays = fixed_images()
         if shape is None:
             shape = fixed_images.shape
@@ -133,7 +133,7 @@ class GreedyRegistration(AbstractRegistration):
             self.warp.set_size(size_down)
             # Get coordinates to transform
             fixed_image_affinecoords = F.affine_grid(affine_map_init, fixed_image_down.shape, align_corners=True)
-            pbar = tqdm(range(iters))
+            pbar = tqdm(range(iters)) if self.progress_bar else range(iters)
             # reduce 
             if self.reduction == 'mean':
                 scale_factor = 1
@@ -152,7 +152,8 @@ class GreedyRegistration(AbstractRegistration):
                 moved_image = F.grid_sample(moving_image_blur, moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
                 loss = self.loss_fn(moved_image, fixed_image_down)
                 loss.backward()
-                pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))
+                if self.progress_bar:
+                    pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))
                 # optimize the velocity field
                 self.warp.step()
                 # check for convergence

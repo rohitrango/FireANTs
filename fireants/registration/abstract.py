@@ -25,6 +25,7 @@ class AbstractRegistration(ABC):
                 cc_kernel_size: int = 3, 
                 reduction: str = 'mean',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
+                progress_bar: bool = True,
                 ) -> None:
         '''
         Initialize abstract registration class
@@ -45,6 +46,7 @@ class AbstractRegistration(ABC):
 
         self.device = fixed_images.device
         self.dims = self.fixed_images.dims
+        self.progress_bar = progress_bar        # variable to show or hide progress bar
 
         # initialize losses
         if loss_type == 'mi':

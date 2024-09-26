@@ -9,6 +9,7 @@ from fireants.io.image import BatchedImages
 from typing import Optional
 from fireants.utils.util import ConvergenceMonitor
 from torch.nn import functional as F
+from functools import partial
 
 def dummy_loss(*args):
     return 0

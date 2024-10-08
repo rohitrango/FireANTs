@@ -66,6 +66,10 @@ class Image:
     def load_file(cls, image_path:str, *args, **kwargs) -> 'Image':
         itk_image = sitk.ReadImage(image_path)
         return cls(itk_image, *args, **kwargs)
+    
+    @property
+    def shape(self):
+        return self.array.shape
 
 
 class BatchedImages:

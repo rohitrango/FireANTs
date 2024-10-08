@@ -87,7 +87,7 @@ class BatchedImages:
         else:
             raise ValueError("All images must have the same shape")
         self.n_images = len(self.images)
-        self.interpolate_mode = 'bilinear' if self.images[0] == 2 else 'trilinear'
+        self.interpolate_mode = 'bilinear' if len(self.images[0].shape) == 4 else 'trilinear'
 
     def __call__(self):
         # get batch of images

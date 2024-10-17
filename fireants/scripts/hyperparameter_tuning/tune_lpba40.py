@@ -19,7 +19,7 @@ from fireants.io.image import Image, BatchedImages
 from fireants.registration.affine import AffineRegistration
 from fireants.registration.greedy import GreedyRegistration
 from fireants.registration.syn import SyNRegistration
-from evaluate_metrics import compute_metrics
+from fireants.scripts.evaluate_metrics import compute_metrics
 from itertools import product
 from functools import partial
 import pandas as pd

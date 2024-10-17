@@ -7,6 +7,18 @@ from torch import nn
 from torch.nn import functional as F
 from typing import Union, Tuple, List, Optional, Dict, Any, Callable
 
+class NoOp(nn.Module):
+    ''' dummy loss function that does not penalize anything 
+
+    this can be used for regularization only. 
+    '''
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        # ignore everything
+    
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return torch.tensor(0.0).to(pred.dtype).to(pred.device)
+
 class MeanSquaredError(nn.Module):
     """
     """

@@ -82,13 +82,13 @@ class StationaryVelocity(nn.Module, AbstractDeformation):
         return warp
     
     def get_inverse_warp(self, *args, **kwargs):
-        # if self.integrator_n == 'auto':
-        #     n = _find_integrator_n(self.velocity_field)
-        # else:
-        #     n = self.integrator_n
-        # invwarp = scaling_and_squaring(-self.velocity_field, self.grid, n=n)
-        # return invwarp
-        return compute_inverse_warp_exp(self.get_warp().detach(), self.grid)
+        if self.integrator_n == 'auto':
+            n = _find_integrator_n(self.velocity_field)
+        else:
+            n = self.integrator_n
+        invwarp = scaling_and_squaring(-self.velocity_field, self.grid, n=n)
+        return invwarp
+        # return compute_inverse_warp_exp(self.get_warp().detach(), self.grid)
     
     def set_size(self, size):
         ''' size: [H, W, D] or [H, W] '''

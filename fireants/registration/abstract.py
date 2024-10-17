@@ -3,7 +3,7 @@ from typing import List
 import torch
 from torch import nn
 from fireants.utils.util import _assert_check_scales_decreasing
-from fireants.losses import GlobalMutualInformationLoss, LocalNormalizedCrossCorrelationLoss
+from fireants.losses import GlobalMutualInformationLoss, LocalNormalizedCrossCorrelationLoss, NoOp
 from torch.optim import SGD, Adam
 from fireants.io.image import BatchedImages
 from typing import Optional
@@ -57,6 +57,8 @@ class AbstractRegistration(ABC):
                                                                kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
         elif loss_type == 'custom':
             self.loss_fn = custom_loss
+        elif loss_type == 'noop':
+            self.loss_fn = NoOp()
         elif loss_type == 'mse':
             self.loss_fn = partial(F.mse_loss, reduction=reduction)
         else:

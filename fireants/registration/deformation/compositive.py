@@ -106,14 +106,14 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
         warp = self.warp
         return warp
     
-    def get_inverse_warp(self, n_iters:int=50, debug: bool = False, lr=0.1):
+    def get_inverse_warp(self, n_iters:int=20, debug: bool = False, lr=0.1):
         ''' run an optimization procedure to get the inverse warp '''
         if self.optimize_inverse_warp:
             invwarp = self.inv
-            invwarp = compute_inverse_warp_displacement(self.warp.data, self.grid, invwarp, iters=20)
+            invwarp = compute_inverse_warp_displacement(self.warp.data, self.grid, invwarp, iters=n_iters)
         else:
             # no invwarp is defined, start from scratch
-            invwarp = compute_inverse_warp_displacement(self.warp.data, self.grid, -self.warp.data, iters=200)
+            invwarp = compute_inverse_warp_displacement(self.warp.data, self.grid, -self.warp.data, iters=n_iters)
         return invwarp
 
     def set_size(self, size):

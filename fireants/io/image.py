@@ -70,6 +70,14 @@ class Image:
     @property
     def shape(self):
         return self.array.shape
+    
+    def __del__(self):
+        del self.itk_image
+        del self.array
+        del self.torch2phy
+        del self.phy2torch
+        del self._torch2px
+        del self._px2phy
 
 
 class BatchedImages:
@@ -94,8 +102,12 @@ class BatchedImages:
         self.interpolate_mode = 'bilinear' if len(self.images[0].shape) == 4 else 'trilinear'
 
     def __call__(self):
-        # get batch of images
+        # get batch of images, this consumes more memory
         return torch.cat([x.array for x in self.images], dim=0)
+    
+    def __del__(self):
+        for image in self.images:
+            del image
     
     @property
     def device(self):

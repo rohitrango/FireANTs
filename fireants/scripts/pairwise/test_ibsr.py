@@ -9,7 +9,7 @@ from fireants.registration.greedy import GreedyRegistration
 from fireants.registration.syn import SyNRegistration
 import argparse
 from tqdm import tqdm
-from evaluate_metrics import compute_metrics
+from fireants.scripts.evaluate_metrics import compute_metrics
 import pickle
 
 DATA_DIR = "/data/rohitrango/brain_data/IBSR18/"

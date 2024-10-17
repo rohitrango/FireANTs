@@ -9,7 +9,6 @@ from fireants.registration.affine import AffineRegistration
 from fireants.registration.greedy import GreedyRegistration
 from fireants.registration.syn import SyNRegistration
 from fireants.utils.imageutils import jacobian
-from evaluate_metrics import compute_metrics
 from itertools import product
 from functools import partial
 import pandas as pd

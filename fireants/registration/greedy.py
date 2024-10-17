@@ -3,13 +3,13 @@ from torch import nn
 from torch.optim import SGD, Adam
 from torch.nn import functional as F
 import numpy as np
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Callable
 from tqdm import tqdm
 
 from fireants.utils.globals import MIN_IMG_SIZE
 from fireants.io.image import BatchedImages
 from fireants.registration.abstract import AbstractRegistration
-from fireants.registration.deformation.geodesic import GeodesicShooting
+from fireants.registration.deformation.svf import StationaryVelocity
 from fireants.registration.deformation.compositive import CompositiveWarp
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
@@ -37,6 +37,8 @@ class GreedyRegistration(AbstractRegistration):
                 reduction: str = 'sum',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
                 init_affine: Optional[torch.Tensor] = None,
+                warp_reg: Optional[Union[Callable, nn.Module]] = None,
+                displacement_reg: Optional[Union[Callable, nn.Module]] = None,
                 blur: bool = True,
                 custom_loss: nn.Module = None, **kwargs) -> None:
         # initialize abstract registration
@@ -49,9 +51,12 @@ class GreedyRegistration(AbstractRegistration):
         self.dims = fixed_images.dims
         self.blur = blur
         self.reduction = reduction
+        # specify regularizations
+        self.warp_reg = warp_reg
+        self.displacement_reg = displacement_reg
         # specify deformation type
         if deformation_type == 'geodesic':
-            warp = GeodesicShooting(fixed_images, moving_images, integrator_n=integrator_n, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params,
+            warp = StationaryVelocity(fixed_images, moving_images, integrator_n=integrator_n, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params,
                                     smoothing_grad_sigma=smooth_grad_sigma, init_scale=scales[0])
         elif deformation_type == 'compositive':
             warp = CompositiveWarp(fixed_images, moving_images, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params, \
@@ -67,7 +72,7 @@ class GreedyRegistration(AbstractRegistration):
         self.affine = init_affine.detach()
     
     def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
-        ''' given fixed and moving images, get warp field (not displacement field) '''
+        ''' given fixed and moving images, get transformation field (not displacement (= warp) field) '''
         fixed_arrays = fixed_images()
         if shape is None:
             shape = fixed_images.shape
@@ -151,6 +156,11 @@ class GreedyRegistration(AbstractRegistration):
                 # move the image
                 moved_image = F.grid_sample(moving_image_blur, moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
                 loss = self.loss_fn(moved_image, fixed_image_down)
+                # apply regularization on the warp field
+                if self.displacement_reg is not None:
+                    loss = loss + self.displacement_reg(warp_field)
+                if self.warp_reg is not None:
+                    loss = loss + self.warp_reg(moved_coords)
                 loss.backward()
                 if self.progress_bar:
                     pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))

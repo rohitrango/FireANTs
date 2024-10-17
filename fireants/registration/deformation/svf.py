@@ -16,7 +16,7 @@ from fireants.utils.imageutils import compute_inverse_warp_exp
 from fireants.utils.globals import MIN_IMG_SIZE
 from copy import deepcopy
 
-class GeodesicShooting(nn.Module, AbstractDeformation):
+class StationaryVelocity(nn.Module, AbstractDeformation):
     '''
     Class for geodesic shooting, by optimizing a velocity field
     '''
@@ -127,7 +127,7 @@ if __name__ == '__main__':
     img2 = Image.load_file('/data/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz')
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2,])
-    deformation = GeodesicShooting(fixed, moving )
+    deformation = StationaryVelocity(fixed, moving )
     for i in range(100):
         deformation.set_zero_grad() 
         w = deformation.get_warp()

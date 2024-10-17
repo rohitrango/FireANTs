@@ -1,6 +1,6 @@
 from tqdm import tqdm
 import numpy as np
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Callable
 import torch
 from torch import nn
 from fireants.io.image import BatchedImages
@@ -10,7 +10,7 @@ from fireants.utils.globals import MIN_IMG_SIZE
 from fireants.io.image import BatchedImages
 from fireants.registration.abstract import AbstractRegistration
 from fireants.registration.deformation.compositive import CompositiveWarp
-from fireants.registration.deformation.geodesic import GeodesicShooting
+from fireants.registration.deformation.svf import StationaryVelocity
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 from fireants.utils.util import compose_warp
@@ -38,6 +38,8 @@ class SyNRegistration(AbstractRegistration):
                 loss_params: dict = {},
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10,
                 init_affine: Optional[torch.Tensor] = None,
+                warp_reg: Optional[Union[Callable, nn.Module]] = None,
+                displacement_reg: Optional[Union[Callable, nn.Module]] = None,
                 blur: bool = True,
                 optimize_inverse_warp_rev: bool = True,
                 custom_loss: nn.Module = None, **kwargs) -> None:
@@ -50,12 +52,15 @@ class SyNRegistration(AbstractRegistration):
         self.dims = fixed_images.dims
         self.blur = blur
         self.reduction = reduction
+        # specify regularizations
+        self.warp_reg = warp_reg
+        self.displacement_reg = displacement_reg
 
         if deformation_type == 'geodesic':
-            fwd_warp = GeodesicShooting(fixed_images, moving_images, integrator_n=integrator_n, 
+            fwd_warp = StationaryVelocity(fixed_images, moving_images, integrator_n=integrator_n, 
                                         optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params,
                                         smoothing_grad_sigma=smooth_grad_sigma)
-            rev_warp = GeodesicShooting(fixed_images, moving_images, integrator_n=integrator_n, 
+            rev_warp = StationaryVelocity(fixed_images, moving_images, integrator_n=integrator_n, 
                                         optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params,
                                         smoothing_grad_sigma=smooth_grad_sigma)
         elif deformation_type == 'compositive':
@@ -173,8 +178,15 @@ class SyNRegistration(AbstractRegistration):
                 fixed_image_warp = F.grid_sample(fixed_image_down, fixed_coords, mode='bilinear', align_corners=True)
                 # compute loss
                 loss = self.loss_fn(moved_image_warp, fixed_image_warp) 
+                # add regularization
+                if self.warp_reg is not None:
+                    loss = loss + self.warp_reg(moved_coords) + self.warp_reg(fixed_coords)
+                if self.displacement_reg is not None:
+                    loss = loss + self.displacement_reg(fwd_warp_field) + self.displacement_reg(rev_warp_field)
+                # backward
                 loss.backward()
-                pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))
+                if self.progress_bar:
+                    pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))
                 # optimize the deformations
                 self.fwd_warp.step()
                 self.rev_warp.step()

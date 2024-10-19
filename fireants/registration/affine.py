@@ -12,7 +12,7 @@ from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 
 class AffineRegistration(AbstractRegistration):
-    def __init__(self, scales: List[int], iterations: List[float], 
+    def __init__(self, scales: List[float], iterations: List[int], 
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
                 optimizer: str = 'SGD', optimizer_params: dict = {},
@@ -37,11 +37,17 @@ class AffineRegistration(AbstractRegistration):
         self.loss_device = loss_device
         # first three params are so(n) variables, last three are translation
         if init_rigid is not None:
-            affine = init_rigid
+            B, D1, D2 = init_rigid.shape
+            if D1 == dims and D2 == dims+1:
+                affine = init_rigid
+            elif D1 == dims+1 and D2 == dims+1:
+                affine = init_rigid[:, :-1, :] + 0
+            else:
+                raise ValueError(f"init_rigid must have shape [N, {dims}, {dims+1}] or [N, {dims+1}, {dims+1}], got {init_rigid.shape}")
         else:
-            affine = torch.eye(dims, dims+1).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D, D+1]
+            affine = torch.eye(dims, dims+1).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, D, D+1]
         self.affine = nn.Parameter(affine.to(device))  # [N, D]
-        self.row = torch.zeros((fixed_images.size(), 1, dims+1), device=device)   # keep this to append to affine matrix
+        self.row = torch.zeros((self.opt_size, 1, dims+1), device=device)   # keep this to append to affine matrix
         self.row[:, 0, -1] = 1.0
         self.moved_mask = moved_mask
         # optimizer
@@ -52,8 +58,24 @@ class AffineRegistration(AbstractRegistration):
         else:
             raise ValueError(f"Optimizer {optimizer} not supported")
     
-    def get_affine_matrix(self):
-        return torch.cat([self.affine, self.row], dim=1)
+    def get_affine_matrix(self, homogenous=True):
+        return torch.cat([self.affine, self.row], dim=1) if homogenous else self.affine
+    
+    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
+        # get coordinates of shape fixed image
+        fixed_t2p = fixed_images.get_torch2phy()
+        moving_p2t = moving_images.get_phy2torch()
+        affinemat = self.get_affine_matrix()
+        if shape is None:
+            shape = fixed_images.shape
+        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device).unsqueeze(0).repeat(affinemat.shape[0], 1, 1)  # [N, dims, dims+1]
+        fixed_image_coords = F.affine_grid(init_grid, shape, align_corners=True)  # [N, H, W, [D], dims+1]
+        fixed_image_coords_homo = torch.cat([fixed_image_coords, torch.ones(list(fixed_image_coords.shape[:-1]) + [1], device=fixed_image_coords.device)], dim=-1)
+        fixed_image_coords_homo = torch.einsum('ntd, n...d->n...t', fixed_t2p, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]  
+        # modify 
+        coords = torch.einsum('ntd, n...d->n...t', affinemat, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]
+        coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
+        return coords[..., :-1]
 
     def optimize(self, save_transformed=False):
         ''' Given fixed and moving images, optimize rigid registration '''
@@ -64,7 +86,7 @@ class AffineRegistration(AbstractRegistration):
         moving_p2t = self.moving_images.get_phy2torch()
         fixed_size = fixed_arrays.shape[2:]
         # save initial affine transform to initialize grid 
-        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device).unsqueeze(0).repeat(self.fixed_images.size(), 1, 1)  # [N, dims, dims+1]
+        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, dims, dims+1]
 
         if save_transformed:
             transformed_images = []

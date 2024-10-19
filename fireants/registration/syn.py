@@ -26,13 +26,13 @@ class SyNRegistration(AbstractRegistration):
     def __init__(self, scales: List[int], iterations: List[float], 
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
-                deformation_type: str = 'geodesic',
-                optimizer: str = 'SGD', optimizer_params: dict = {},
+                deformation_type: str = 'compositive',
+                optimizer: str = 'Adam', optimizer_params: dict = {},
                 optimizer_lr: float = 0.1, 
                 integrator_n: Union[str, int] = 10,
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
-                smooth_warp_sigma: float = 0.5,
-                smooth_grad_sigma: float = 0.5,
+                smooth_warp_sigma: float = 0.25,
+                smooth_grad_sigma: float = 1.0,
                 reduction: str = 'sum',
                 cc_kernel_size: float = 3,
                 loss_params: dict = {},
@@ -76,7 +76,7 @@ class SyNRegistration(AbstractRegistration):
         self.smooth_warp_sigma = smooth_warp_sigma   # in voxels
         # initialize affine
         if init_affine is None:
-            init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D, D+1]
+            init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D+1, D+1]
         self.affine = init_affine.detach()
 
     def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages):
@@ -103,14 +103,14 @@ class SyNRegistration(AbstractRegistration):
         moved_coords_final = fixed_image_affinecoords + composed_warp
         return moved_coords_final
 
-    def evaluate(self, fixed_images: BatchedImages, moving_images: BatchedImages):
-        '''
-        Evaluate on a pair of images (hopefully the same images or labels with same metadata) 
-        '''
-        moving_arrays = moving_images()
-        moved_coords_final = self.get_warped_coordinates(fixed_images, moving_images)
-        moved_image = F.grid_sample(moving_arrays, moved_coords_final, mode='bilinear', align_corners=True)
-        return moved_image
+    # def evaluate(self, fixed_images: BatchedImages, moving_images: BatchedImages):
+    #     '''
+    #     Evaluate on a pair of images (hopefully the same images or labels with same metadata) 
+    #     '''
+    #     moving_arrays = moving_images()
+    #     moved_coords_final = self.get_warped_coordinates(fixed_images, moving_images)
+    #     moved_image = F.grid_sample(moving_arrays, moved_coords_final, mode='bilinear', align_corners=True)
+    #     return moved_image
 
     def optimize(self, save_transformed=False):
         ''' 

@@ -95,15 +95,27 @@ class BatchedImages:
                 raise TypeError("All images must be of type Image")
         shapes = [x.array.shape for x in self.images]
         if all([x == shapes[0] for x in shapes]):
-            self.shape = shapes[0]
+            pass
         else:
             raise ValueError("All images must have the same shape")
         self.n_images = len(self.images)
         self.interpolate_mode = 'bilinear' if len(self.images[0].shape) == 4 else 'trilinear'
+        self.broadcasted = False
 
     def __call__(self):
         # get batch of images, this consumes more memory
-        return torch.cat([x.array for x in self.images], dim=0)
+        if self.broadcasted:
+            minusones = [-1] * (len(self.images[0].shape) - 1)
+            return self.images[0].array.expand(self.n_images, *minusones)
+        else:
+            return torch.cat([x.array for x in self.images], dim=0)
+    
+    def broadcast(self, n):
+        # broadcast the batch to n channels, only works if the batch size is 1 to begin with
+        if not self.broadcasted and self.n_images != 1:
+            raise ValueError("Batch size must be 1 to broadcast")
+        self.broadcasted = True
+        self.n_images = n
     
     def __del__(self):
         for image in self.images:
@@ -120,8 +132,9 @@ class BatchedImages:
     def size(self):
         return self.n_images
     
+    @property
     def shape(self):
-        shape = self.images[0].shape
+        shape = list(self.images[0].shape)
         shape[0] = self.n_images
         return shape
     

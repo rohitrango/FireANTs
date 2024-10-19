@@ -33,7 +33,7 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
                 smoothing_grad_sigma: float = 0.5, smoothing_warp_sigma: float = 0.5, optimize_inverse_warp: bool = False,
                 ) -> None:
         super().__init__()
-        self.num_images = num_images = fixed_images.size()
+        self.num_images = num_images = max(fixed_images.size(), moving_images.size())
         spatial_dims = fixed_images.shape[2:]  # [H, W, [D]]
         self.n_dims = len(spatial_dims)  # number of spatial dimensions
         # permute indices

@@ -25,14 +25,14 @@ class GreedyRegistration(AbstractRegistration):
     def __init__(self, scales: List[int], iterations: List[float], 
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
-                deformation_type: str = 'geodesic',
+                deformation_type: str = 'compositive',
                 optimizer: str = 'Adam', optimizer_params: dict = {},
-                optimizer_lr: float = 0.1, 
-                integrator_n: Union[str, int] = 6,
+                optimizer_lr: float = 0.5, 
+                integrator_n: Union[str, int] = 7,
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
                 cc_kernel_size: int = 3,
                 smooth_warp_sigma: float = 0.5,
-                smooth_grad_sigma: float = 0.5,
+                smooth_grad_sigma: float = 1.0,
                 loss_params: dict = {},
                 reduction: str = 'sum',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
@@ -68,7 +68,7 @@ class GreedyRegistration(AbstractRegistration):
         self.smooth_warp_sigma = smooth_warp_sigma   # in voxels
         # initialize affine
         if init_affine is None:
-            init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D, D+1]
+            init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, D, D+1]
         self.affine = init_affine.detach()
     
     def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
@@ -98,12 +98,12 @@ class GreedyRegistration(AbstractRegistration):
         moved_coords = fixed_image_affinecoords + warp_field  # affine transform + warp field   
         return moved_coords
 
-    def evaluate(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
-        ''' given a new set of fixed and moving images, warp the fixed image '''
-        moving_arrays = moving_images()
-        moved_coords = self.get_warped_coordinates(fixed_images, moving_images, shape=shape)
-        moved_image = F.grid_sample(moving_arrays, moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
-        return moved_image
+    # def evaluate(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
+    #     ''' given a new set of fixed and moving images, warp the fixed image '''
+    #     moving_arrays = moving_images()
+        # moved_coords = self.get_warped_coordinates(fixed_images, moving_images, shape=shape)
+        # moved_image = F.grid_sample(moving_arrays, moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+        # return moved_image
     
     def optimize(self, save_transformed=False):
         ''' optimize the warp field to match the two images based on loss function '''
@@ -113,7 +113,6 @@ class GreedyRegistration(AbstractRegistration):
         moving_p2t = self.moving_images.get_phy2torch()
         fixed_size = fixed_arrays.shape[2:]
         # save initial affine transform to initialize grid 
-        # init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device).unsqueeze(0).repeat(self.fixed_images.size(), 1, 1)  # [N, dims, dims+1]
         affine_map_init = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]
 
         # to save transformed images
@@ -172,7 +171,7 @@ class GreedyRegistration(AbstractRegistration):
 
             # save transformed image
             if save_transformed:
-                transformed_images.append(moved_image.detach().cpu())
+                transformed_images.append(moved_image.detach())
 
         if save_transformed:
             return transformed_images

@@ -1,0 +1,46 @@
+debug: True
+verbose: True
+
+# input params
+image_file: oasis_subjects.txt
+image_prefix: /mnt/rohit_data2/neurite-OASIS/
+image_suffix: /aligned_norm.nii.gz
+
+# template params
+# init_template_path: /mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0270_MR1/aligned_norm.nii.gz
+init_template_path: null
+save_template_image_path: ./saved_templates/template_test.nii.gz
+template_iterations: 10
+
+# registration params
+batch_size: 10
+
+# rigid transform
+do_rigid: False
+rigid:
+  iterations: [200, 100, 25]
+  scales: [4, 2, 1]
+  progress_bar: ${verbose}
+  loss_type: cc
+
+# affine transform
+do_affine: False
+affine:
+  iterations: [200, 100, 25]
+  scales: [4, 2, 1]
+  progress_bar: ${verbose}
+  loss_type: cc
+
+# deformation transform
+do_deform: True
+deform_algo: greedy
+deform:
+  iterations: [200, 100, 25]
+  scales: [4, 2, 1]
+  optimizer_lr: 0.5
+  smooth_warp_sigma: 0.25
+  smooth_grad_sigma: 1.0
+
+# additional params
+tmpdir: null
+last_reg: null

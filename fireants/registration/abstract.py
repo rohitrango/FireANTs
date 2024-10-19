@@ -39,7 +39,12 @@ class AbstractRegistration(ABC):
         # check for fixed and moving image sizes
         self.fixed_images = fixed_images
         self.moving_images = moving_images
-        assert (self.fixed_images.size() == self.moving_images.size()), "Number of fixed and moving images must match"
+        # assert (self.fixed_images.size() == self.moving_images.size()), "Number of fixed and moving images must match"
+
+        # check if sizes are broadcastable
+        fsize, msize = self.fixed_images.size(), self.moving_images.size()
+        assert (fsize == msize) or (fsize == 1) or (msize == 1), "Number of fixed and moving images must match or broadcastable"
+        self.opt_size = max(fsize, msize)
         
         self.tolerance = tolerance
         self.max_tolerance_iters = max_tolerance_iters
@@ -67,3 +72,14 @@ class AbstractRegistration(ABC):
     @abstractmethod
     def optimize(self):
         pass
+    
+    @abstractmethod
+    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
+        pass
+
+    def evaluate(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
+        ''' given a new set of fixed and moving images, warp the fixed image '''
+        moving_arrays = moving_images()
+        moved_coords = self.get_warped_coordinates(fixed_images, moving_images, shape=shape)
+        moved_image = F.grid_sample(moving_arrays, moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+        return moved_image

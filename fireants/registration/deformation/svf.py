@@ -27,7 +27,8 @@ class StationaryVelocity(nn.Module, AbstractDeformation):
                 init_scale: int = 1,
                 ) -> None:
         super().__init__()
-        self.num_images = num_images = fixed_images.size()
+        # if we are here, it means the overarching registration function hasnt thrown an error
+        self.num_images = num_images = max(fixed_images.size(), moving_images.size())
         spatial_dims = fixed_images.shape[2:]  # [H, W, [D]]
         if init_scale > 1:
             spatial_dims = [max(int(s / init_scale), MIN_IMG_SIZE) for s in spatial_dims]

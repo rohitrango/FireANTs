@@ -5,12 +5,24 @@ verbose: True
 image_file: oasis_subjects.txt
 image_prefix: /mnt/rohit_data2/neurite-OASIS/
 image_suffix: /aligned_norm.nii.gz
+num_subjects: 16    # set to null to use all subjects
 
 # template params
-# init_template_path: /mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0270_MR1/aligned_norm.nii.gz
-init_template_path: null
-save_template_image_path: ./saved_templates/template_test.nii.gz
+init_template_path: /mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0270_MR1/aligned_norm.nii.gz
+# init_template_path: null
 template_iterations: 10
+
+# save outputs
+save_dir: ./saved_templates
+save_every: 1               # number of epochs to save the template (last epoch will always be saved)
+save_init_template: True  
+save_moved_images: False    # set to true if you want to save the moved images at last step (used for template creation)
+# no num_subjects: will be the same as the number of subjects used for creation
+save_additional:
+  image_file: []
+  image_prefix: []
+  image_suffix: []
+  is_segmentation: []
 
 # registration params
 batch_size: 10
@@ -38,8 +50,9 @@ deform:
   iterations: [200, 100, 25]
   scales: [4, 2, 1]
   optimizer_lr: 0.5
-  smooth_warp_sigma: 0.25
+  smooth_warp_sigma: 0.5
   smooth_grad_sigma: 1.0
+  progress_bar: ${verbose}
 
 # additional params
 tmpdir: null

@@ -105,7 +105,7 @@ def downsample(image: ItemOrList[torch.Tensor], size: List[int], mode: str, sigm
         # create gaussian convs
         gaussians = [gaussian_1d(s, truncated=2) for s in sigma]
     # otherwise gaussians is given, just downsample
-    image_smooth = separable_filtering(image, gaussians)
+    image_smooth = separable_filtering(image+0, gaussians)
     image_down = F.interpolate(image_smooth, size=size, mode=mode, align_corners=True)
     return image_down
 

@@ -71,6 +71,10 @@ class Image:
     def shape(self):
         return self.array.shape
     
+    def delete_array(self):
+        # safely delete the array, change this later with batchedimages
+        del self.array
+    
     def __del__(self):
         del self.itk_image
         del self.array
@@ -84,7 +88,7 @@ class BatchedImages:
     '''
     Class for batched images
     '''
-    def __init__(self, images: Union[Image, List[Image]]) -> None:
+    def __init__(self, images: Union[Image, List[Image]], optimize_memory: bool = None) -> None:
         if isinstance(images, Image):
             images = [images]
         self.images = images

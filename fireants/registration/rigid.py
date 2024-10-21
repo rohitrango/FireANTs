@@ -23,6 +23,7 @@ class RigidRegistration(AbstractRegistration):
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
                 cc_kernel_size: int = 3,
                 init_translation: Optional[torch.Tensor] = None,
+                init_moment: Optional[torch.Tensor] = None,
                 scaling: bool = False,
                 custom_loss: nn.Module = None, 
                 blur: bool = True, **kwargs
@@ -51,6 +52,11 @@ class RigidRegistration(AbstractRegistration):
         else:
             transl = torch.zeros((self.opt_size, fixed_images.dims))  # [N, D]
         self.transl = nn.Parameter(transl.to(device))  # [N, D]
+        # set init moment
+        if init_moment is not None:
+            self.moment = init_moment.to(device)
+        else:
+            self.moment = torch.eye(dims, device=device).unsqueeze(0).repeat(self.opt_size, 1, 1)
         # optimizer
         params = [self.rotation, self.transl]
         if scaling:
@@ -87,7 +93,10 @@ class RigidRegistration(AbstractRegistration):
             rotmat[:, 3, 3] = 1
         else:
             raise ValueError(f"Dimensions {self.dims} not supported")
-        return rotmat
+        
+        # premulitply by moment
+        rotmat[:, :self.dims, :self.dims] = rotmat[:, :self.dims, :self.dims] @ self.moment
+        return rotmat 
     
     def get_rigid_matrix(self, homogenous=True):
         rigidmat = self.get_rotation_matrix() # [N, dim+1, dim+1]

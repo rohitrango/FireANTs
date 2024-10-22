@@ -316,8 +316,11 @@ class LaplacianFilter(nn.Module):
             lap_meta = self._scale_image(lap_image)
             image_meta = self._scale_image(image)
             # scale the laplacian image
-            lap_image = (lap_image - lap_meta['min']) / (image_meta['max'] - image_meta['min']) * (image_meta['max'] - image_meta['min']) 
-            scaled_image = image - image_meta['min'] - self.learning_rate * lap_image
+            lap_image = (lap_image - lap_meta['min']) / (lap_meta['max'] - lap_meta['min']) * (image_meta['max'] - image_meta['min']) 
+            scaled_image = image - self.learning_rate * lap_image
+            # scale it again
+            scaled_meta = self._scale_image(scaled_image)
+            scaled_image = scaled_image - scaled_meta['min']
             return scaled_image
         else:
             return image - self.learning_rate * lap_image

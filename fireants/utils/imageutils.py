@@ -217,31 +217,6 @@ def integer_to_onehot(image: torch.Tensor, background_label:int=0, max_label=Non
 scaling_and_squaring_nograd = torch.no_grad()(scaling_and_squaring)
 image_gradient_nograd = torch.no_grad()(image_gradient)
 
-if __name__ == '__main__':
-    pass
-    ### Testing image gradient
-    # from timeit import timeit
-    # image = torch.rand(1, 1, 128, 128, 128).cuda()
-    # timegrad = timeit(lambda: image_gradient(image), number=1000)/1000
-    # timenograd = timeit(lambda: image_gradient_nograd(image), number=1000)/1000
-    # print("Time (no_grad): {:.5f} s".format(timenograd))
-    # print("Time (grad): {:.5f} s".format(timegrad))
-    # print("Speedup: {:.2f}x".format(timegrad/timenograd))
-
-    ### Not a massive speedup from no_grad in scaling and squaring (around 1.06x)
-    # from timeit import timeit
-    # H = 128
-    # image = torch.rand(1, 1, H, H, H).cuda()
-    # affine = torch.eye(3, 4).unsqueeze(0).cuda().requires_grad_(True)
-    # grid = F.affine_grid(affine, image.size(), align_corners=True)
-    # u = torch.rand(1, H, H, H, 3).cuda()
-    # N = 1000
-    # timenograd = timeit(lambda: scaling_and_squaring_nograd(u, grid, n=6), number=N)/N
-    # timegrad = timeit(lambda: scaling_and_squaring(u, grid, n=6), number=N)/N
-    # print("Time (no_grad): {:.5f} s".format(timenograd))
-    # print("Time (grad): {:.5f} s".format(timegrad))
-    # print("Speedup: {:.2f}x".format(timegrad/timenograd))
-
 def compute_inverse_warp_displacement(warp, grid, initial_inverse=None, iters=20, lr=1e-2):
     ''' 
     Compute the inverse warp using a given warp, grid and optional initialization
@@ -283,3 +258,66 @@ def compute_inverse_warp_exp(warp, grid, lr=5e-3, iters=200, n=10):
             loss.backward()
             optim.step()
     return scaling_and_squaring(vel.data, grid, n=n)
+
+### Other itk like filters
+class LaplacianFilter(nn.Module):
+    def __init__(self, dims, device=None, spacing=None, itk_scale=True, learning_rate=1):
+        super().__init__()
+        self.dims = dims
+        self.itk_scale = itk_scale
+        self.learning_rate = learning_rate
+        assert dims in [2, 3] 
+        if spacing is None:
+            spacing = [1.0] * dims
+        self.spacing = torch.tensor(spacing, dtype=torch.float32)   # save spacing
+        if dims == 2:
+            laplacian = torch.tensor([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=torch.float32) / 4
+        else:
+            laplacian = torch.tensor([[[0, 0, 0], [0, 1, 0], [0, 0, 0]],
+                                      [[0, 1, 0], [1, -6, 1], [0, 1, 0]],
+                                      [[0, 0, 0], [0, 1, 0], [0, 0, 0]]], dtype=torch.float32) / 6
+        self.laplacian = laplacian[None, None]  # [1, 1, n, n, [n]]
+        if device is not None:
+            self.laplacian = self.laplacian.to(device)
+        self.device = device
+    
+    def _scale_image(self, image):
+        imgflat = image.flatten(2)
+        meta = {
+            'mean': imgflat.mean(2),
+            'min': imgflat.min(2).values,
+            'max': imgflat.max(2).values
+        }
+        for k in meta:
+            meta[k] = meta[k][..., None, None]
+            if self.dims == 3:
+                meta[k] = meta[k][..., None]
+        return meta
+    
+    def forward(self, image: torch.Tensor, itk_scale=None):
+        ''' forward pass 
+        input: tensor of size [B, C, D, H, [W]]
+        '''
+        C = image.shape[1]
+        if self.device is None:
+            self.laplacian = self.laplacian.to(image.device)
+
+        if self.dims == 2:
+            lap = self.laplacian.expand(C, -1, -1, -1)
+            lap_image = F.pad(image, (1, 1, 1, 1), 'replicate')
+            lap_image = F.conv2d(lap_image, lap, padding=0, groups=C)
+        else:
+            lap = self.laplacian.expand(C, -1, -1, -1, -1)
+            lap_image = F.pad(image, (1, 1, 1, 1, 1, 1), 'replicate')
+            lap_image = F.conv3d(lap_image, lap, padding=0, groups=C)
+
+        itk_scale = itk_scale if itk_scale is not None else self.itk_scale
+        if itk_scale:        
+            lap_meta = self._scale_image(lap_image)
+            image_meta = self._scale_image(image)
+            # scale the laplacian image
+            lap_image = (lap_image - lap_meta['min']) / (image_meta['max'] - image_meta['min']) * (image_meta['max'] - image_meta['min']) 
+            scaled_image = image - image_meta['min'] - self.learning_rate * lap_image
+            return scaled_image
+        else:
+            return image - self.learning_rate * lap_image

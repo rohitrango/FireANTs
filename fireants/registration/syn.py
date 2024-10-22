@@ -206,7 +206,7 @@ class SyNRegistration(AbstractRegistration):
                 composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field, fixed_image_vgrid)
                 moved_coords_final = fixed_image_affinecoords + composed_warp
                 moved_image = F.grid_sample(moving_image_blur, moved_coords_final, mode='bilinear', align_corners=True)
-                transformed_images.append(moved_image.detach().cpu())
+                transformed_images.append(moved_image.detach())
                 ## compose twice
                 # moved_image = F.grid_sample(moved_image_warp, rev_inv_warp_field + fixed_image_vgrid, mode='bilinear', align_corners=True)
                 # transformed_images.append(moved_image.detach().cpu())

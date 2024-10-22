@@ -19,6 +19,7 @@ from omegaconf import DictConfig, OmegaConf
 from fireants.io.image import Image, BatchedImages
 from fireants.registration import RigidRegistration, AffineRegistration, GreedyRegistration, SyNRegistration
 from fireants.scripts.template.template_helpers import *
+from fireants.utils.imageutils import LaplacianFilter
 
 logger = logging.getLogger("build_template")
 logger.setLevel(logging.INFO)
@@ -64,6 +65,9 @@ def main(args):
     logger_zero = logger if local_rank == 0 else None       # a reference to logger for stuff only where I want to print once
     torch.cuda.set_device(local_rank)
     device = torch.cuda.current_device()
+
+    # set up laplacian filter
+    laplace = LaplacianFilter(dims=3, device=device, **dict(args.laplace_params))
 
     if local_rank == 0:
         os.makedirs(args.save_dir, exist_ok=True)
@@ -216,6 +220,10 @@ def main(args):
         
         # update template
         dist.all_reduce(updated_template_arr, op=dist.ReduceOp.SUM)
+
+        # apply laplacian filter
+        for _ in range(args.num_laplacian):
+            updated_template_arr = laplace(updated_template_arr)
 
         logger.debug("Template updated...")
         logger.debug((local_rank, init_template.array.min(), init_template.array.mean(), init_template.array.max()))

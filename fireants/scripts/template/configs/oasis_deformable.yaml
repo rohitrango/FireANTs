@@ -10,7 +10,11 @@ num_subjects: 16    # set to null to use all subjects
 # template params
 init_template_path: /mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0270_MR1/aligned_norm.nii.gz
 # init_template_path: null
-template_iterations: 10
+template_iterations: 6
+num_laplacian: 1
+laplace_params:
+  learning_rate: 1.0
+  itk_scale: true
 
 # save outputs
 save_dir: ./saved_templates
@@ -47,12 +51,14 @@ affine:
 do_deform: True
 deform_algo: greedy
 deform:
-  iterations: [200, 100, 25]
+  iterations: [200, 100, 50]
   scales: [4, 2, 1]
   optimizer_lr: 0.5
   smooth_warp_sigma: 0.5
   smooth_grad_sigma: 1.0
   progress_bar: ${verbose}
+  cc_kernel_size: 5
+
 
 # additional params
 tmpdir: null

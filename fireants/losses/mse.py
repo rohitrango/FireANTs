@@ -32,7 +32,7 @@ class MeanSquaredError(nn.Module):
         super().__init__()
         self.reduction = reduction
 
-    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def forward(self, pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
         """
         Args:
             pred: the shape should be BNH[WD].

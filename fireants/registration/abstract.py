@@ -3,7 +3,7 @@ from typing import List
 import torch
 from torch import nn
 from fireants.utils.util import _assert_check_scales_decreasing
-from fireants.losses import GlobalMutualInformationLoss, LocalNormalizedCrossCorrelationLoss, NoOp
+from fireants.losses import GlobalMutualInformationLoss, LocalNormalizedCrossCorrelationLoss, NoOp, MeanSquaredError
 from torch.optim import SGD, Adam
 from fireants.io.image import BatchedImages
 from typing import Optional
@@ -65,7 +65,8 @@ class AbstractRegistration(ABC):
         elif loss_type == 'noop':
             self.loss_fn = NoOp()
         elif loss_type == 'mse':
-            self.loss_fn = partial(F.mse_loss, reduction=reduction)
+            # self.loss_fn = partial(F.mse_loss, reduction=reduction)
+            self.loss_fn = MeanSquaredError(reduction=reduction)
         else:
             raise ValueError(f"Loss type {loss_type} not supported")
 

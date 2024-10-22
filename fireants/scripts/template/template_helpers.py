@@ -7,6 +7,7 @@ import time
 import os
 import torch
 from fireants.io.image import Image, BatchedImages
+import SimpleITK as sitk
 
 class Timer:
     def __init__(self, description: str, logger):
@@ -41,6 +42,8 @@ def check_args(args, logger):
         args.last_reg = 'affine'
     elif args.do_rigid:
         args.last_reg = 'rigid'
+    elif args.do_moments:
+        args.last_reg = 'moments'
     else:
         logger.error('No registration type specified')
         return False
@@ -60,16 +63,31 @@ def get_image_files(image_file, image_prefix=None, image_suffix=None, num_subjec
         image_files = image_files[:num_subjects]
     return image_files
 
-# TODO: change this function to use the template_img
 def save_moved(moved_tensor, id_list, save_dir, template_img, prefix=None):
     '''
     save the moved images
+
+    A very bad way to create a lock
     '''
-    for moved, id in zip(moved_tensor, id_list):
-        movedimg = moved[0].cpu()
-        savename = f"{prefix}_{id}" if prefix is not None else id
-        torch.save(movedimg, f"{save_dir}/{savename}.pt")
-    
+    world_size = torch.distributed.get_world_size()
+    local_rank = torch.distributed.get_rank()
+    # poll among all ranks
+    for lockid in range(world_size):
+        if lockid == local_rank:
+            # run the save function
+            for moved, id in zip(moved_tensor, id_list):
+                movedimg = moved[0].detach().cpu().numpy()
+                savename = f"{prefix}_{id}" if prefix is not None else id
+                # create itk object
+                img = sitk.GetImageFromArray(movedimg)
+                img.CopyInformation(template_img.itk_image)
+                sitk.WriteImage(img, f"{save_dir}/{savename}.nii.gz")
+                print(f"Saved moved image {savename}.")
+            torch.distributed.barrier()
+        else:
+            torch.distributed.barrier()
+         
+        
 
 def save_additional(reg_obj, init_template_batch, additional_save_batches, batchid, save_dir):
     ''' save additional files 

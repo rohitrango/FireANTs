@@ -18,7 +18,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch.nn import functional as F
 
 from fireants.io.image import Image, BatchedImages
-from fireants.registration import RigidRegistration, AffineRegistration, GreedyRegistration, SyNRegistration
+from fireants.registration import RigidRegistration, AffineRegistration, GreedyRegistration, SyNRegistration, MomentsRegistration
 from fireants.scripts.template.template_helpers import *
 from fireants.utils.imageutils import LaplacianFilter
 from fireants.utils.warputils import shape_averaging_invwarp
@@ -131,9 +131,9 @@ def main(args):
             init_template.delete_array()
             init_template.array = init_template_arr + 0
 
-            # save initial template if specified
-            if args.save_init_template and local_rank == 0:
-                torch.save(init_template_arr.cpu(), f"{args.save_dir}/init_template.pt")
+    # save initial template if specified
+    if args.save_init_template and local_rank == 0:
+        torch.save(init_template.array.cpu(), f"{args.save_dir}/init_template.pt")
 
     logger.debug((init_template.shape, init_template.array.min(), init_template.array.max()))
 
@@ -175,13 +175,29 @@ def main(args):
             init_template_batch.broadcast(len(imgs))
             # variables to keep track of 
             moved_images = None
-            # rigid registration
+            # initialization of affine and deformable stages
             init_rigid = None
             init_affine = None
+            # moments variables
+            init_moment_rigid = None
+            init_moment_transl = None
+
+            if args.do_moments:
+                logger.debug("Running moments registration")
+                moments = MomentsRegistration(fixed_images=init_template_batch, \
+                                              moving_images=moving_images_batch, \
+                                                **dict(args.moments))
+                moments.optimize(save_transformed=False)
+                init_moment_rigid = moments.get_rigid_moment_init()
+                init_moment_transl = moments.get_rigid_transl_init()
+                init_rigid = moments.get_affine_init()      # for initializing affine if rigid is skipped
+
             if args.do_rigid:
                 logger.debug("Running rigid registration")
-                rigid = RigidRegistration(fixed_images=init_template_batch, \
-                                          moving_images=moving_images_batch, \
+                rigid = RigidRegistration(  fixed_images=init_template_batch, \
+                                            moving_images=moving_images_batch, \
+                                            init_translation=init_moment_transl, \
+                                            init_moment=init_moment_rigid, \
                                           **dict(args.rigid))
                 rigid.optimize(save_transformed=False)
                 init_rigid = rigid.get_rigid_matrix()

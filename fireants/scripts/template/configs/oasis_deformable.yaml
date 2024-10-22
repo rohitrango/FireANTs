@@ -18,11 +18,14 @@ laplace_params:
   learning_rate: 0.5
   itk_scale: true
 
+# shape averaging
+shape_avg: true
+
 # save outputs
 save_dir: ./saved_templates
 save_every: 1               # number of epochs to save the template (last epoch will always be saved)
-save_init_template: True  
-save_moved_images: False    # set to true if you want to save the moved images at last step (used for template creation)
+save_init_template: true  
+save_moved_images: false    # set to true if you want to save the moved images at last step (used for template creation)
 # no num_subjects: will be the same as the number of subjects used for creation
 save_additional:
   image_file: []

@@ -15,11 +15,13 @@ from torch import distributed as dist
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
+from torch.nn import functional as F
 
 from fireants.io.image import Image, BatchedImages
 from fireants.registration import RigidRegistration, AffineRegistration, GreedyRegistration, SyNRegistration
 from fireants.scripts.template.template_helpers import *
 from fireants.utils.imageutils import LaplacianFilter
+from fireants.utils.warputils import shape_averaging_invwarp
 
 logger = logging.getLogger("build_template")
 logger.setLevel(logging.INFO)
@@ -37,6 +39,12 @@ def dist_cleanup(world_size):
     global logger
     logger.info('Cleaning up distributed training')
     dist.destroy_process_group()
+
+def add_shape(avg_warp: torch.Tensor, reg):
+    if avg_warp is None:
+        return None
+    avg_warp = avg_warp + reg.get_warped_coordinates(reg.fixed_images, reg.moving_images).sum(0, keepdim=True)
+    return avg_warp
 
 @hydra.main(version_base="1.2", config_path="./configs", config_name="oasis_deformable")
 def main(args):
@@ -153,6 +161,13 @@ def main(args):
         updated_template_arr = torch.zeros_like(init_template.array, device=device)
         init_template_batch = BatchedImages([init_template], optimize_memory=False)
 
+        # if shape averaging is true, we need to keep track of warp statistics as well
+        if args.shape_avg:
+            B, C, H, W, D = init_template.array.shape
+            avg_warp = torch.zeros((1, H, W, D, 3), device=device)
+        else:
+            avg_warp = None
+
         # run through batches
         for batchid, batch in enumerate(imgbatches):
             imgs = [Image.load_file(imgfile, device=device) for imgfile in batch]
@@ -178,6 +193,8 @@ def main(args):
                             save_moved(moved_images, imgidbatches[batchid], args.save_dir, init_template)
                         # save additional files
                         save_additional(rigid, init_template_batch, additional_save_batches, batchid, args.save_dir)  # <-
+                    # save shape
+                    avg_warp = add_shape(avg_warp, rigid)
                 del rigid
             
             if args.do_affine:
@@ -195,6 +212,8 @@ def main(args):
                             save_moved(moved_images, imgidbatches[batchid], args.save_dir, init_template)
                         # save additional files
                         save_additional(affine, init_template_batch, additional_save_batches, batchid, args.save_dir)  # <-
+                    # save shape
+                    avg_warp = add_shape(avg_warp, affine)
                 del affine
             
             if args.do_deform:
@@ -206,12 +225,15 @@ def main(args):
                     init_affine=init_affine, \
                     **dict(args.deform)
                 )
+                # no need to check for last reg here, there is nothing beyond deformable
                 moved_images = deform.optimize(save_transformed=True)[-1]   # this is relatively expensive step, get moved images here
                 if is_last_epoch:
                     if args.save_moved_images:
                         save_moved(moved_images, imgidbatches[batchid], args.save_dir, init_template)
                     # save additional files
                     save_additional(deform, init_template_batch, additional_save_batches, batchid, args.save_dir)  # <-
+                # save shape
+                avg_warp = add_shape(avg_warp, deform)
                 del deform
             
             # add it to the template
@@ -224,6 +246,15 @@ def main(args):
         # apply laplacian filter
         for _ in range(args.num_laplacian):
             updated_template_arr = laplace(updated_template_arr)
+        
+        # perform shape averaging if specified
+        if avg_warp is not None:
+            avg_warp = avg_warp / total_file_count
+            dist.all_reduce(avg_warp, op=dist.ReduceOp.SUM)
+            # now we have added all the average grid coordinates, take inverse
+            init_template_batch.broadcast(1)
+            inverse_avg_warp = shape_averaging_invwarp(init_template_batch, avg_warp)
+            updated_template_arr = F.grid_sample(updated_template_arr, inverse_avg_warp, align_corners=True)
 
         logger.debug("Template updated...")
         logger.debug((local_rank, init_template.array.min(), init_template.array.mean(), init_template.array.max()))

@@ -98,13 +98,6 @@ class GreedyRegistration(AbstractRegistration):
         moved_coords = fixed_image_affinecoords + warp_field  # affine transform + warp field   
         return moved_coords
 
-    # def evaluate(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
-    #     ''' given a new set of fixed and moving images, warp the fixed image '''
-    #     moving_arrays = moving_images()
-        # moved_coords = self.get_warped_coordinates(fixed_images, moving_images, shape=shape)
-        # moved_image = F.grid_sample(moving_arrays, moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
-        # return moved_image
-    
     def optimize(self, save_transformed=False):
         ''' optimize the warp field to match the two images based on loss function '''
         fixed_arrays = self.fixed_images()

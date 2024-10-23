@@ -258,10 +258,6 @@ def main(args):
         
         # update template
         dist.all_reduce(updated_template_arr, op=dist.ReduceOp.SUM)
-
-        # apply laplacian filter
-        for _ in range(args.num_laplacian):
-            updated_template_arr = laplace(updated_template_arr)
         
         # perform shape averaging if specified
         if avg_warp is not None:
@@ -270,7 +266,12 @@ def main(args):
             # now we have added all the average grid coordinates, take inverse
             init_template_batch.broadcast(1)
             inverse_avg_warp = shape_averaging_invwarp(init_template_batch, avg_warp)
+            updated_template_arr = laplace(updated_template_arr, itk_scale=True, learning_rate=1)
             updated_template_arr = F.grid_sample(updated_template_arr, inverse_avg_warp, align_corners=True)
+
+        # apply laplacian filter
+        for _ in range(args.num_laplacian):
+            updated_template_arr = laplace(updated_template_arr)
 
         logger.debug("Template updated...")
         logger.debug((local_rank, init_template.array.min(), init_template.array.mean(), init_template.array.max()))

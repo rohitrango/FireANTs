@@ -294,7 +294,7 @@ class LaplacianFilter(nn.Module):
                 meta[k] = meta[k][..., None]
         return meta
     
-    def forward(self, image: torch.Tensor, itk_scale=None):
+    def forward(self, image: torch.Tensor, itk_scale=None, learning_rate=None):
         ''' forward pass 
         input: tensor of size [B, C, D, H, [W]]
         '''
@@ -312,15 +312,17 @@ class LaplacianFilter(nn.Module):
             lap_image = F.conv3d(lap_image, lap, padding=0, groups=C)
 
         itk_scale = itk_scale if itk_scale is not None else self.itk_scale
+        learning_rate = learning_rate if learning_rate is not None else self.learning_rate
+
         if itk_scale:        
             lap_meta = self._scale_image(lap_image)
             image_meta = self._scale_image(image)
             # scale the laplacian image
             lap_image = (lap_image - lap_meta['min']) / (lap_meta['max'] - lap_meta['min']) * (image_meta['max'] - image_meta['min']) 
-            scaled_image = image - self.learning_rate * lap_image
+            scaled_image = image - learning_rate * lap_image
             # scale it again
             scaled_meta = self._scale_image(scaled_image)
             scaled_image = scaled_image - scaled_meta['min']
             return scaled_image
         else:
-            return image - self.learning_rate * lap_image
+            return image - learning_rate * lap_image

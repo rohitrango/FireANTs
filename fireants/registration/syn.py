@@ -1,6 +1,6 @@
 from tqdm import tqdm
 import numpy as np
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Callable
 import torch
 from torch import nn
 from fireants.io.image import BatchedImages
@@ -10,7 +10,7 @@ from fireants.utils.globals import MIN_IMG_SIZE
 from fireants.io.image import BatchedImages
 from fireants.registration.abstract import AbstractRegistration
 from fireants.registration.deformation.compositive import CompositiveWarp
-from fireants.registration.deformation.geodesic import GeodesicShooting
+from fireants.registration.deformation.svf import StationaryVelocity
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 from fireants.utils.util import compose_warp
@@ -26,18 +26,20 @@ class SyNRegistration(AbstractRegistration):
     def __init__(self, scales: List[int], iterations: List[float], 
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
-                deformation_type: str = 'geodesic',
-                optimizer: str = 'SGD', optimizer_params: dict = {},
+                deformation_type: str = 'compositive',
+                optimizer: str = 'Adam', optimizer_params: dict = {},
                 optimizer_lr: float = 0.1, 
                 integrator_n: Union[str, int] = 10,
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
-                smooth_warp_sigma: float = 0.5,
-                smooth_grad_sigma: float = 0.5,
+                smooth_warp_sigma: float = 0.25,
+                smooth_grad_sigma: float = 1.0,
                 reduction: str = 'sum',
                 cc_kernel_size: float = 3,
                 loss_params: dict = {},
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10,
                 init_affine: Optional[torch.Tensor] = None,
+                warp_reg: Optional[Union[Callable, nn.Module]] = None,
+                displacement_reg: Optional[Union[Callable, nn.Module]] = None,
                 blur: bool = True,
                 optimize_inverse_warp_rev: bool = True,
                 custom_loss: nn.Module = None, **kwargs) -> None:
@@ -50,12 +52,15 @@ class SyNRegistration(AbstractRegistration):
         self.dims = fixed_images.dims
         self.blur = blur
         self.reduction = reduction
+        # specify regularizations
+        self.warp_reg = warp_reg
+        self.displacement_reg = displacement_reg
 
         if deformation_type == 'geodesic':
-            fwd_warp = GeodesicShooting(fixed_images, moving_images, integrator_n=integrator_n, 
+            fwd_warp = StationaryVelocity(fixed_images, moving_images, integrator_n=integrator_n, 
                                         optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params,
                                         smoothing_grad_sigma=smooth_grad_sigma)
-            rev_warp = GeodesicShooting(fixed_images, moving_images, integrator_n=integrator_n, 
+            rev_warp = StationaryVelocity(fixed_images, moving_images, integrator_n=integrator_n, 
                                         optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params,
                                         smoothing_grad_sigma=smooth_grad_sigma)
         elif deformation_type == 'compositive':
@@ -71,7 +76,7 @@ class SyNRegistration(AbstractRegistration):
         self.smooth_warp_sigma = smooth_warp_sigma   # in voxels
         # initialize affine
         if init_affine is None:
-            init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D, D+1]
+            init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D+1, D+1]
         self.affine = init_affine.detach()
 
     def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages):
@@ -98,14 +103,14 @@ class SyNRegistration(AbstractRegistration):
         moved_coords_final = fixed_image_affinecoords + composed_warp
         return moved_coords_final
 
-    def evaluate(self, fixed_images: BatchedImages, moving_images: BatchedImages):
-        '''
-        Evaluate on a pair of images (hopefully the same images or labels with same metadata) 
-        '''
-        moving_arrays = moving_images()
-        moved_coords_final = self.get_warped_coordinates(fixed_images, moving_images)
-        moved_image = F.grid_sample(moving_arrays, moved_coords_final, mode='bilinear', align_corners=True)
-        return moved_image
+    # def evaluate(self, fixed_images: BatchedImages, moving_images: BatchedImages):
+    #     '''
+    #     Evaluate on a pair of images (hopefully the same images or labels with same metadata) 
+    #     '''
+    #     moving_arrays = moving_images()
+    #     moved_coords_final = self.get_warped_coordinates(fixed_images, moving_images)
+    #     moved_image = F.grid_sample(moving_arrays, moved_coords_final, mode='bilinear', align_corners=True)
+    #     return moved_image
 
     def optimize(self, save_transformed=False):
         ''' 
@@ -173,8 +178,15 @@ class SyNRegistration(AbstractRegistration):
                 fixed_image_warp = F.grid_sample(fixed_image_down, fixed_coords, mode='bilinear', align_corners=True)
                 # compute loss
                 loss = self.loss_fn(moved_image_warp, fixed_image_warp) 
+                # add regularization
+                if self.warp_reg is not None:
+                    loss = loss + self.warp_reg(moved_coords) + self.warp_reg(fixed_coords)
+                if self.displacement_reg is not None:
+                    loss = loss + self.displacement_reg(fwd_warp_field) + self.displacement_reg(rev_warp_field)
+                # backward
                 loss.backward()
-                pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))
+                if self.progress_bar:
+                    pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))
                 # optimize the deformations
                 self.fwd_warp.step()
                 self.rev_warp.step()
@@ -194,7 +206,7 @@ class SyNRegistration(AbstractRegistration):
                 composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field, fixed_image_vgrid)
                 moved_coords_final = fixed_image_affinecoords + composed_warp
                 moved_image = F.grid_sample(moving_image_blur, moved_coords_final, mode='bilinear', align_corners=True)
-                transformed_images.append(moved_image.detach().cpu())
+                transformed_images.append(moved_image.detach())
                 ## compose twice
                 # moved_image = F.grid_sample(moved_image_warp, rev_inv_warp_field + fixed_image_vgrid, mode='bilinear', align_corners=True)
                 # transformed_images.append(moved_image.detach().cpu())

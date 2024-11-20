@@ -3,13 +3,14 @@ from torch import nn
 from torch.optim import SGD, Adam
 from torch.nn import functional as F
 import numpy as np
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Callable
 from tqdm import tqdm
+import SimpleITK as sitk
 
 from fireants.utils.globals import MIN_IMG_SIZE
 from fireants.io.image import BatchedImages
 from fireants.registration.abstract import AbstractRegistration
-from fireants.registration.deformation.geodesic import GeodesicShooting
+from fireants.registration.deformation.svf import StationaryVelocity
 from fireants.registration.deformation.compositive import CompositiveWarp
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
@@ -25,18 +26,20 @@ class GreedyRegistration(AbstractRegistration):
     def __init__(self, scales: List[int], iterations: List[float], 
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
-                deformation_type: str = 'geodesic',
+                deformation_type: str = 'compositive',
                 optimizer: str = 'Adam', optimizer_params: dict = {},
-                optimizer_lr: float = 0.1, 
-                integrator_n: Union[str, int] = 6,
+                optimizer_lr: float = 0.5, 
+                integrator_n: Union[str, int] = 7,
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
                 cc_kernel_size: int = 3,
                 smooth_warp_sigma: float = 0.5,
-                smooth_grad_sigma: float = 0.5,
+                smooth_grad_sigma: float = 1.0,
                 loss_params: dict = {},
                 reduction: str = 'sum',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
                 init_affine: Optional[torch.Tensor] = None,
+                warp_reg: Optional[Union[Callable, nn.Module]] = None,
+                displacement_reg: Optional[Union[Callable, nn.Module]] = None,
                 blur: bool = True,
                 custom_loss: nn.Module = None, **kwargs) -> None:
         # initialize abstract registration
@@ -49,9 +52,12 @@ class GreedyRegistration(AbstractRegistration):
         self.dims = fixed_images.dims
         self.blur = blur
         self.reduction = reduction
+        # specify regularizations
+        self.warp_reg = warp_reg
+        self.displacement_reg = displacement_reg
         # specify deformation type
         if deformation_type == 'geodesic':
-            warp = GeodesicShooting(fixed_images, moving_images, integrator_n=integrator_n, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params,
+            warp = StationaryVelocity(fixed_images, moving_images, integrator_n=integrator_n, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params,
                                     smoothing_grad_sigma=smooth_grad_sigma, init_scale=scales[0])
         elif deformation_type == 'compositive':
             warp = CompositiveWarp(fixed_images, moving_images, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params, \
@@ -63,11 +69,11 @@ class GreedyRegistration(AbstractRegistration):
         self.smooth_warp_sigma = smooth_warp_sigma   # in voxels
         # initialize affine
         if init_affine is None:
-            init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D, D+1]
+            init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, D, D+1]
         self.affine = init_affine.detach()
     
     def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
-        ''' given fixed and moving images, get warp field (not displacement field) '''
+        ''' given fixed and moving images, get transformation field (not displacement (= warp) field) '''
         fixed_arrays = fixed_images()
         if shape is None:
             shape = fixed_images.shape
@@ -92,14 +98,40 @@ class GreedyRegistration(AbstractRegistration):
         # move these coordinates, and return them
         moved_coords = fixed_image_affinecoords + warp_field  # affine transform + warp field   
         return moved_coords
-
-    def evaluate(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
-        ''' given a new set of fixed and moving images, warp the fixed image '''
-        moving_arrays = moving_images()
-        moved_coords = self.get_warped_coordinates(fixed_images, moving_images, shape=shape)
-        moved_image = F.grid_sample(moving_arrays, moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
-        return moved_image
     
+    def save_as_ants_transforms(self, filenames: Union[str, List[str]]):
+        ''' given a list of filenames, save the warp field as ants transforms '''
+        if isinstance(filenames, str):
+            filenames = [filenames]
+        assert len(filenames) == self.opt_size, "Number of filenames should match the number of warps"
+        # get the warp field
+        fixed_image: BatchedImages = self.fixed_images
+        moving_image: BatchedImages = self.moving_images
+        # get the moved coordinates
+        moved_coords = self.get_warped_coordinates(fixed_image, moving_image)   # [B, H, W, [D], dim]
+        init_grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=moved_coords.device)[None], \
+                                  fixed_image.shape, align_corners=True)
+        # this is now moved displacements
+        moved_coords = moved_coords - init_grid
+
+        # convert this grid into moving coordinates 
+        moving_t2p = moving_image.get_torch2phy()[:, :self.dims, :self.dims]
+        moved_coords = torch.einsum('bij, b...j->b...i', moving_t2p, moved_coords)
+        # save 
+        for i in range(self.opt_size):
+            moved_disp = moved_coords[i].detach().cpu().numpy()  # [H, W, D, 3]
+            savefile = filenames[i]
+            # get itk image
+            if len(fixed_image.images) < i:     # this image is probably broadcasted then
+                itk_data = fixed_image.images[0].itk_image
+            else:
+                itk_data = fixed_image.images[i].itk_image
+            # copy itk data
+            warp = sitk.GetImageFromArray(moved_disp)
+            warp.CopyInformation(itk_data)
+            sitk.WriteImage(warp, savefile)
+
+
     def optimize(self, save_transformed=False):
         ''' optimize the warp field to match the two images based on loss function '''
         fixed_arrays = self.fixed_images()
@@ -108,7 +140,6 @@ class GreedyRegistration(AbstractRegistration):
         moving_p2t = self.moving_images.get_phy2torch()
         fixed_size = fixed_arrays.shape[2:]
         # save initial affine transform to initialize grid 
-        # init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device).unsqueeze(0).repeat(self.fixed_images.size(), 1, 1)  # [N, dims, dims+1]
         affine_map_init = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]
 
         # to save transformed images
@@ -151,6 +182,11 @@ class GreedyRegistration(AbstractRegistration):
                 # move the image
                 moved_image = F.grid_sample(moving_image_blur, moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
                 loss = self.loss_fn(moved_image, fixed_image_down)
+                # apply regularization on the warp field
+                if self.displacement_reg is not None:
+                    loss = loss + self.displacement_reg(warp_field)
+                if self.warp_reg is not None:
+                    loss = loss + self.warp_reg(moved_coords)
                 loss.backward()
                 if self.progress_bar:
                     pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))
@@ -162,7 +198,7 @@ class GreedyRegistration(AbstractRegistration):
 
             # save transformed image
             if save_transformed:
-                transformed_images.append(moved_image.detach().cpu())
+                transformed_images.append(moved_image.detach())
 
         if save_transformed:
             return transformed_images

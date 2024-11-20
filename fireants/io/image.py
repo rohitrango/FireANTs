@@ -70,13 +70,25 @@ class Image:
     @property
     def shape(self):
         return self.array.shape
+    
+    def delete_array(self):
+        # safely delete the array, change this later with batchedimages
+        del self.array
+    
+    def __del__(self):
+        del self.itk_image
+        del self.array
+        del self.torch2phy
+        del self.phy2torch
+        del self._torch2px
+        del self._px2phy
 
 
 class BatchedImages:
     '''
     Class for batched images
     '''
-    def __init__(self, images: Union[Image, List[Image]]) -> None:
+    def __init__(self, images: Union[Image, List[Image]], optimize_memory: bool = None) -> None:
         if isinstance(images, Image):
             images = [images]
         self.images = images
@@ -87,15 +99,31 @@ class BatchedImages:
                 raise TypeError("All images must be of type Image")
         shapes = [x.array.shape for x in self.images]
         if all([x == shapes[0] for x in shapes]):
-            self.shape = shapes[0]
+            pass
         else:
             raise ValueError("All images must have the same shape")
         self.n_images = len(self.images)
         self.interpolate_mode = 'bilinear' if len(self.images[0].shape) == 4 else 'trilinear'
+        self.broadcasted = False
 
     def __call__(self):
-        # get batch of images
-        return torch.cat([x.array for x in self.images], dim=0)
+        # get batch of images, this consumes more memory
+        if self.broadcasted:
+            minusones = [-1] * (len(self.images[0].shape) - 1)
+            return self.images[0].array.expand(self.n_images, *minusones)
+        else:
+            return torch.cat([x.array for x in self.images], dim=0)
+    
+    def broadcast(self, n):
+        # broadcast the batch to n channels, only works if the batch size is 1 to begin with
+        if not self.broadcasted and self.n_images != 1:
+            raise ValueError("Batch size must be 1 to broadcast")
+        self.broadcasted = True
+        self.n_images = n
+    
+    def __del__(self):
+        for image in self.images:
+            del image
     
     @property
     def device(self):
@@ -108,8 +136,9 @@ class BatchedImages:
     def size(self):
         return self.n_images
     
+    @property
     def shape(self):
-        shape = self.images[0].shape
+        shape = list(self.images[0].shape)
         shape[0] = self.n_images
         return shape
     

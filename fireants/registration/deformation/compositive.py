@@ -33,7 +33,7 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
                 smoothing_grad_sigma: float = 0.5, smoothing_warp_sigma: float = 0.5, optimize_inverse_warp: bool = False,
                 ) -> None:
         super().__init__()
-        self.num_images = num_images = fixed_images.size()
+        self.num_images = num_images = max(fixed_images.size(), moving_images.size())
         spatial_dims = fixed_images.shape[2:]  # [H, W, [D]]
         self.n_dims = len(spatial_dims)  # number of spatial dimensions
         # permute indices
@@ -106,14 +106,14 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
         warp = self.warp
         return warp
     
-    def get_inverse_warp(self, n_iters:int=50, debug: bool = False, lr=0.1):
+    def get_inverse_warp(self, n_iters:int=20, debug: bool = False, lr=0.1):
         ''' run an optimization procedure to get the inverse warp '''
         if self.optimize_inverse_warp:
             invwarp = self.inv
-            invwarp = compute_inverse_warp_displacement(self.warp.data, self.grid, invwarp, iters=20)
+            invwarp = compute_inverse_warp_displacement(self.warp.data, self.grid, invwarp, iters=n_iters)
         else:
             # no invwarp is defined, start from scratch
-            invwarp = compute_inverse_warp_displacement(self.warp.data, self.grid, -self.warp.data, iters=200)
+            invwarp = compute_inverse_warp_displacement(self.warp.data, self.grid, -self.warp.data, iters=n_iters)
         return invwarp
 
     def set_size(self, size):

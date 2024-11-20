@@ -16,3 +16,5 @@ fireants/notebooks
 fireants/baselines
 .req.txt
 !tutorials/**/*.nii.gz
+**/tmp
+**/outputs

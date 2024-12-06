@@ -87,8 +87,6 @@ def save_moved(moved_tensor, id_list, save_dir, template_img, prefix=None):
         else:
             torch.distributed.barrier()
          
-        
-
 def save_additional(reg_obj, init_template_batch, additional_save_batches, batchid, save_dir):
     ''' save additional files 
     

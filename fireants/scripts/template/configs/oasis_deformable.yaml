@@ -12,11 +12,19 @@ init_template_path: /mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0270_MR1/aligned_n
 # init_template_path: null
 template_iterations: 6
 
-# laplacian params
+# do we want to learn the laplacian?
+use_learned_laplacian: true
+
+# static laplacian params
 num_laplacian: 2
 laplace_params:
   learning_rate: 0.5
   itk_scale: true
+
+# learned laplacian params
+learned_laplace_params: 
+  mode: "laplacian"     # conv if we want to learn generic convolutional filters
+  num_layers: 2
 
 # shape averaging
 shape_avg: true

@@ -23,6 +23,7 @@ from fireants.utils.imageutils import LaplacianFilter
 from fireants.utils.warputils import shape_averaging_invwarp
 
 from fireants.scripts.template.template_helpers import *
+from fireants.scripts.template.learnable_filters import LearnableLaplacianFilter
 
 logger = logging.getLogger("build_template")
 logger.setLevel(logging.INFO)
@@ -76,8 +77,13 @@ def main(args):
     device = torch.cuda.current_device()
 
     # set up laplacian filter
-    logger.info("Using static laplacian filter.")
-    laplace = LaplacianFilter(dims=3, device=device, **dict(args.laplace_params))
+    if args.use_learned_laplacian:
+        logger.info("Using learned laplacian filter.")
+        args.num_laplacian = 1
+        laplace = LearnableLaplacianFilter(dims=3, device=device, **dict(args.learned_laplace_params))
+    else:
+        logger.info("Using static laplacian filter.")
+        laplace = LaplacianFilter(dims=3, device=device, **dict(args.laplace_params))
 
     if local_rank == 0:
         os.makedirs(args.save_dir, exist_ok=True)
@@ -264,6 +270,9 @@ def main(args):
                 avg_warp = add_shape(avg_warp, deform)
                 del deform
             
+            # update the learned laplacian if specified
+            laplace.update_laplacian(init_template_batch(), moved_images)
+
             # add it to the template
             updated_template_arr = updated_template_arr + moved_images.detach().sum(0, keepdim=True)/total_file_count
             del moved_images

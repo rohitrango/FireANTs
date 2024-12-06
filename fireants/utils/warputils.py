@@ -6,6 +6,8 @@ import torch.nn.functional as F
 from fireants.utils.util import catchtime
 from typing import Optional, List
 
+from scipy.ndimage import zoom
+
 from fireants.io.image import BatchedImages, Image
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.types import ItemOrList
@@ -77,3 +79,28 @@ def shape_averaging_invwarp(
     # add the grid to the inverse warp
     inverse_warp = inverse_warp + grid
     return inverse_warp
+
+### Utility to convert dense warp fields from pytorch format to scipy format
+### Used to submit to learn2reg challenge 
+def dense_warp_to_scipy_format(disp_field: torch.Tensor, zoom_factor: Optional[float] = None):
+    ''' Convert a dense warp field to a scipy format '''
+    dims = len(disp_field.shape) - 2
+    if dims == 2:
+        raise ValueError('Only 3D warps are supported (for now)')
+    elif dims == 3:
+        disps = []
+        B, H, W, D, _ = disp_field.shape
+        for b in range(B):
+            disp = disp_field[b].detach().cpu().numpy()
+            # [ZYX, [xyz]] -> [XYZ, [xyz]]
+            disp = disp.transpose(2, 1, 0, 3)
+            disp[..., 0] *= (D-1)/2
+            disp[..., 1] *= (W-1)/2
+            disp[..., 2] *= (H-1)/2
+            if zoom_factor is not None:
+                disp = [zoom(disp[..., i], zoom_factor, order=2) for i in range(3)]
+                disp = np.stack(disp, axis=-1)
+            disp = disp.transpose(3, 0, 1, 2)
+            return disp
+    else:
+        raise ValueError('Only 2D and 3D warps are supported')

@@ -72,7 +72,7 @@ class GreedyRegistration(AbstractRegistration):
             init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, D, D+1]
         self.affine = init_affine.detach()
     
-    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
+    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None, displacement=False):
         ''' given fixed and moving images, get transformation field (not displacement (= warp) field) '''
         fixed_arrays = fixed_images()
         if shape is None:
@@ -97,6 +97,11 @@ class GreedyRegistration(AbstractRegistration):
             warp_field = separable_filtering(warp_field.permute(*self.warp.permute_vtoimg), warp_gaussian).permute(*self.warp.permute_imgtov)
         # move these coordinates, and return them
         moved_coords = fixed_image_affinecoords + warp_field  # affine transform + warp field   
+        if displacement:
+            init_grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=moved_coords.device)[None], \
+                            fixed_images.shape, align_corners=True)
+            moved_coords = moved_coords - init_grid
+
         return moved_coords
     
     def save_as_ants_transforms(self, filenames: Union[str, List[str]]):

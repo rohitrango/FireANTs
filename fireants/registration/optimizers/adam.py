@@ -12,7 +12,9 @@ class WarpAdam:
     '''
     def __init__(self, warp, lr, warpinv=None, beta1=0.9, beta2=0.99, weight_decay=0, eps=1e-8,
                  scaledown=False, multiply_jacobian=False,
-                 smoothing_gaussians=None, optimize_inverse_warp=False):
+                 smoothing_gaussians=None, 
+                 freeform=False,
+                 optimize_inverse_warp=False):
         # init
         if beta1 < 0.0 or beta1 >= 1.0:
             raise ValueError("Invalid beta1 value: {}".format(beta1))
@@ -27,6 +29,7 @@ class WarpAdam:
         self.half_resolution = 1.0/(max(warp.shape[1:-1]) - 1)
         self.warp = warp
         self.warpinv = warpinv
+        self.freeform = freeform
         self.optimize_inverse_warp = optimize_inverse_warp
         self.lr = lr
         self.eps = eps
@@ -101,19 +104,24 @@ class WarpAdam:
         # get updated gradient (this will be normalized and passed in)
         grad = self.exp_avg / beta_correction1 / denom
         # renormalize and update warp
-        # gradmax = self.eps + grad.reshape(grad.shape[0], -1).abs().max(1).values  # [B,]
-        gradmax = self.eps + grad.norm(p=2, dim=-1, keepdim=True).flatten(1).max(1).values
-        gradmax = gradmax.reshape(-1, *([1])*(self.n_dims+1))
-        if not self.scaledown:  # if scaledown is "True", then we scale down even if the norm is below 1
-            gradmax = torch.clamp(gradmax, min=1)
-        # print(gradmax.abs().min(), gradmax.abs().max())
-        grad = grad / gradmax * self.half_resolution   # norm is now 0.5r
-        # multiply by learning rate
-        grad.mul_(-self.lr)
-        # print(grad.abs().max().item(), self.half_resolution, self.warp.shape)
-        # compositional update
-        w = grad + F.grid_sample(self.warp.data.permute(*self.permute_vtoimg), self.grid + grad, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
-        # w = grad + self.warp.data
+        if self.freeform:
+            grad.mul_(-self.lr)
+            w = grad + self.warp.data
+        else:
+            # This is the diffeomorphic update
+            # gradmax = self.eps + grad.reshape(grad.shape[0], -1).abs().max(1).values  # [B,]
+            gradmax = self.eps + grad.norm(p=2, dim=-1, keepdim=True).flatten(1).max(1).values
+            gradmax = gradmax.reshape(-1, *([1])*(self.n_dims+1))
+            if not self.scaledown:  # if scaledown is "True", then we scale down even if the norm is below 1
+                gradmax = torch.clamp(gradmax, min=1)
+            # print(gradmax.abs().min(), gradmax.abs().max())
+            grad = grad / gradmax * self.half_resolution   # norm is now 0.5r
+            # multiply by learning rate
+            grad.mul_(-self.lr)
+            # print(grad.abs().max().item(), self.half_resolution, self.warp.shape)
+            # compositional update
+            w = grad + F.grid_sample(self.warp.data.permute(*self.permute_vtoimg), self.grid + grad, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
+        
         # smooth result if asked for
         if self.smoothing_gaussians is not None:
             w = separable_filtering(w.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)

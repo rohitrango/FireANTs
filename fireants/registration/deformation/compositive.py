@@ -31,11 +31,13 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
                 optimizer: str = 'Adam', optimizer_lr: float = 1e-2, optimizer_params: dict = {},
                 init_scale: int = 1, 
                 smoothing_grad_sigma: float = 0.5, smoothing_warp_sigma: float = 0.5, optimize_inverse_warp: bool = False,
+                freeform: bool = False,
                 ) -> None:
         super().__init__()
         self.num_images = num_images = max(fixed_images.size(), moving_images.size())
         spatial_dims = fixed_images.shape[2:]  # [H, W, [D]]
         self.n_dims = len(spatial_dims)  # number of spatial dimensions
+        self.freeform = freeform
         # permute indices
         self.permute_imgtov = (0, *range(2, self.n_dims+2), 1)  # [N, HWD, dims] -> [N, HWD, dims] -> [N, dims, HWD]
         self.permute_vtoimg = (0, self.n_dims+1, *range(1, self.n_dims+1))  # [N, dims, HWD] -> [N, HWD, dims]
@@ -73,6 +75,8 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
         oparams['optimize_inverse_warp'] = optimize_inverse_warp
         if optimize_inverse_warp:
             oparams['warpinv'] = self.inv
+        if oparams.get('freeform') is None:
+            oparams['freeform'] = freeform
         # add optimizer
         optimizer = optimizer.lower()
         if optimizer == 'sgd':

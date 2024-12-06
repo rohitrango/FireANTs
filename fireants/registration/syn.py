@@ -79,7 +79,7 @@ class SyNRegistration(AbstractRegistration):
             init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D+1, D+1]
         self.affine = init_affine.detach()
 
-    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages):
+    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, displacement=False):
         ''' given fixed and moving images, get warp '''
         fixed_arrays = fixed_images()
         fixed_t2p = fixed_images.get_torch2phy()
@@ -101,6 +101,10 @@ class SyNRegistration(AbstractRegistration):
         # # compose the two warp fields
         composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field, fixed_image_vgrid)
         moved_coords_final = fixed_image_affinecoords + composed_warp
+        if displacement:
+            init_grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=moved_coords_final.device)[None], \
+                            fixed_images.shape, align_corners=True)
+            moved_coords_final = moved_coords_final - init_grid
         return moved_coords_final
 
     # def evaluate(self, fixed_images: BatchedImages, moving_images: BatchedImages):

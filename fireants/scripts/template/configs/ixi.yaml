@@ -26,7 +26,7 @@ learned_laplace_params:
   mode: "laplacian"     # conv if we want to learn generic convolutional filters
   num_layers: 0
   lr: 3e-4
-  loss_fn: 'cc'
+  loss_fn: 'mse'
   use_global_scaling: False
   hidden_channels: 32
   grad_accum_steps: 1

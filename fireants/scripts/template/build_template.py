@@ -278,7 +278,7 @@ def main(args):
             # now we have added all the average grid coordinates, take inverse
             init_template_batch.broadcast(1)
             inverse_avg_warp = shape_averaging_invwarp(init_template_batch, avg_warp)
-            updated_template_arr = laplace(updated_template_arr, itk_scale=True, learning_rate=1)
+            # updated_template_arr = laplace(updated_template_arr, itk_scale=True, learning_rate=1)
             updated_template_arr = F.grid_sample(updated_template_arr, inverse_avg_warp, align_corners=True)
 
         # apply laplacian filter

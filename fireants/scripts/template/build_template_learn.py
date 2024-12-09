@@ -16,6 +16,7 @@ from torch import distributed as dist
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from torch.nn import functional as F
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from fireants.io.image import Image, BatchedImages
 from fireants.registration import RigidRegistration, AffineRegistration, GreedyRegistration, SyNRegistration, MomentsRegistration
@@ -23,7 +24,7 @@ from fireants.utils.imageutils import LaplacianFilter
 from fireants.utils.warputils import shape_averaging_invwarp
 
 from fireants.scripts.template.template_helpers import *
-from fireants.scripts.template.learnable_filters import LearnableLaplacianFilter
+from fireants.scripts.template.learnable_filters import LearnableLaplacianFilter, LaplacianTrainer
 
 logger = logging.getLogger("build_template")
 logger.setLevel(logging.INFO)
@@ -77,13 +78,11 @@ def main(args):
     device = torch.cuda.current_device()
 
     # set up laplacian filter
-    if args.use_learned_laplacian:
-        logger.info("Using learned laplacian filter.")
-        args.num_laplacian = 1
-        laplace = LearnableLaplacianFilter(dims=3, device=device, **dict(args.learned_laplace_params))
-    else:
-        logger.info("Using static laplacian filter.")
-        laplace = LaplacianFilter(dims=3, device=device, **dict(args.laplace_params))
+    logger.info("Using learned laplacian filter.")
+    laplace = LearnableLaplacianFilter(**dict(args.learned_laplace_params)).to(device)
+    print(laplace)
+    laplace = DDP(laplace, device_ids=[device])
+    laplace = LaplacianTrainer(laplace, **dict(args.learned_laplace_params))
 
     if local_rank == 0:
         os.makedirs(args.save_dir, exist_ok=True)
@@ -271,7 +270,10 @@ def main(args):
                 del deform
             
             # update the learned laplacian if specified
+            # updated_template = laplace.update_laplacian(init_template_batch(), moved_images)
             laplace.update_laplacian(init_template_batch(), moved_images)
+            # if updated_template is not None:
+            #     init_template.array = updated_template 
 
             # add it to the template
             updated_template_arr = updated_template_arr + moved_images.detach().sum(0, keepdim=True)/total_file_count
@@ -279,6 +281,9 @@ def main(args):
         
         # update template
         dist.all_reduce(updated_template_arr, op=dist.ReduceOp.SUM)
+
+        # update laplacian filter with no params (this will run any more gradient descent ops if needed)
+        laplace.update_laplacian()
         
         # perform shape averaging if specified
         if avg_warp is not None:
@@ -287,12 +292,12 @@ def main(args):
             # now we have added all the average grid coordinates, take inverse
             init_template_batch.broadcast(1)
             inverse_avg_warp = shape_averaging_invwarp(init_template_batch, avg_warp)
-            updated_template_arr = laplace(updated_template_arr, itk_scale=True, learning_rate=1)
+            updated_template_arr = laplace(updated_template_arr).detach()
             updated_template_arr = F.grid_sample(updated_template_arr, inverse_avg_warp, align_corners=True)
 
         # apply laplacian filter
-        for _ in range(args.num_laplacian):
-            updated_template_arr = laplace(updated_template_arr, itk_scale=True, learning_rate=1)
+        # for _ in range(args.num_laplacian): <- deprecated, we only apply once
+        updated_template_arr = laplace(updated_template_arr).detach()
 
         logger.debug("Template updated...")
         logger.debug((local_rank, init_template.array.min(), init_template.array.mean(), init_template.array.max()))
@@ -307,6 +312,10 @@ def main(args):
 
     # cleanup
     dist_cleanup(world_size)
+
+    # save laplacian
+    if local_rank == 0:
+        torch.save(laplace.laplace.state_dict(), f"{args.save_dir}/laplacian.pt")
     
 
 if __name__ == '__main__':

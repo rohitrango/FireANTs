@@ -15,7 +15,10 @@ from fireants.registration.deformation.compositive import CompositiveWarp
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 
-class GreedyRegistration(AbstractRegistration):
+## Deformable utils 
+from fireants.registration.deformablemixin import DeformableMixin
+
+class GreedyRegistration(AbstractRegistration, DeformableMixin):
     '''
     This class implements greedy registration with a custom loss
     The moving image is interpolated to the fixed image grid, with an initial affine transform
@@ -103,39 +106,6 @@ class GreedyRegistration(AbstractRegistration):
             moved_coords = moved_coords - init_grid
 
         return moved_coords
-    
-    def save_as_ants_transforms(self, filenames: Union[str, List[str]]):
-        ''' given a list of filenames, save the warp field as ants transforms '''
-        if isinstance(filenames, str):
-            filenames = [filenames]
-        assert len(filenames) == self.opt_size, "Number of filenames should match the number of warps"
-        # get the warp field
-        fixed_image: BatchedImages = self.fixed_images
-        moving_image: BatchedImages = self.moving_images
-        # get the moved coordinates
-        moved_coords = self.get_warped_coordinates(fixed_image, moving_image)   # [B, H, W, [D], dim]
-        init_grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=moved_coords.device)[None], \
-                                  fixed_image.shape, align_corners=True)
-        # this is now moved displacements
-        moved_coords = moved_coords - init_grid
-
-        # convert this grid into moving coordinates 
-        moving_t2p = moving_image.get_torch2phy()[:, :self.dims, :self.dims]
-        moved_coords = torch.einsum('bij, b...j->b...i', moving_t2p, moved_coords)
-        # save 
-        for i in range(self.opt_size):
-            moved_disp = moved_coords[i].detach().cpu().numpy()  # [H, W, D, 3]
-            savefile = filenames[i]
-            # get itk image
-            if len(fixed_image.images) < i:     # this image is probably broadcasted then
-                itk_data = fixed_image.images[0].itk_image
-            else:
-                itk_data = fixed_image.images[i].itk_image
-            # copy itk data
-            warp = sitk.GetImageFromArray(moved_disp)
-            warp.CopyInformation(itk_data)
-            sitk.WriteImage(warp, savefile)
-
 
     def optimize(self, save_transformed=False):
         ''' optimize the warp field to match the two images based on loss function '''

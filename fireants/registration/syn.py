@@ -15,7 +15,9 @@ from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 from fireants.utils.util import compose_warp
 
-class SyNRegistration(AbstractRegistration):
+from fireants.registration.deformablemixin import DeformableMixin
+
+class SyNRegistration(AbstractRegistration, DeformableMixin):
     '''
     This class implements symmetric registration with a custom loss
     The moving image and fixed image are registered to a fixed "mid space"
@@ -79,9 +81,16 @@ class SyNRegistration(AbstractRegistration):
             init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D+1, D+1]
         self.affine = init_affine.detach()
 
-    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, displacement=False):
+    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None, displacement=False):
         ''' given fixed and moving images, get warp '''
         fixed_arrays = fixed_images()
+
+        # TODO: use the shape
+        if shape is None:
+            shape = fixed_images.shape
+        else:
+            shape = [fixed_arrays.shape[0], 1] + list(shape) 
+
         fixed_t2p = fixed_images.get_torch2phy()
         moving_p2t = moving_images.get_phy2torch()
         # fixed_size = fixed_arrays.shape[2:]

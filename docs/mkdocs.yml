@@ -1,0 +1,38 @@
+site_name: 🔥 FireANTs 
+theme: 
+  name: readthedocs
+  icon: 🔥
+nav:
+  - Home: index.md
+  - Installation: install.md
+  - Quickstart: quickstart.md
+  - Custom loss functions in FireANTs: customloss.md
+  - Advanced concepts:
+    - Image representation: advanced/image.md
+    - Riemannian optimization: advanced/riemannian.md
+    - Types of image matching: 
+      - Moment matching: advanced/moments.md
+      - Rigid/affine matching: advanced/rigidaffine.md
+      - Deformable matching: advanced/deformable.md
+  - API Reference: 
+    - Image: reference/image.md
+    - Image matching / registration: 
+      - Abstract base class: reference/abstract.md
+      - Rigid matching: reference/rigid.md
+      - Affine matching: reference/affine.md
+      - Deformable matching: 
+        - Greedy matching: reference/greedy.md
+        - Symmetric matching: reference/syn.md
+        - DeformableMixin: reference/deformablemixin.md
+
+plugins: 
+  - mkdocstrings
+
+markdown_extensions:
+  - admonition
+  - pymdownx.arithmatex:
+      generic: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js

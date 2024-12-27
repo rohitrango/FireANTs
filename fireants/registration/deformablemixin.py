@@ -19,9 +19,43 @@ from fireants.utils.imageutils import downsample
 
 
 class DeformableMixin:
+    """Mixin class providing common functionality for deformable registration classes.
+
+    This mixin implements shared methods used by both GreedyRegistration and SyNRegistration
+    classes, particularly for saving deformation fields in a format compatible with ANTs
+    (Advanced Normalization Tools) and other widely used registration tools.
+
+    The mixin assumes the parent class has:
+
+    - opt_size: Number of registration pairs
+    - dims: Number of spatial dimensions
+    - fixed_images: BatchedImages object containing fixed images
+    - moving_images: BatchedImages object containing moving images
+    - get_warped_coordinates(): Method to get transformed coordinates
+    """
 
     def save_as_ants_transforms(reg, filenames: Union[str, List[str]]):
-        ''' given a list of filenames, save the warp field as ants transforms '''
+        """Save deformation fields in ANTs-compatible format.
+
+        Converts the learned deformation fields to displacement fields in physical space
+        and saves them in a format that can be used by ANTs registration tools.
+        The displacement fields are saved as multi-component images where each component
+        represents the displacement along one spatial dimension.
+
+        Args:
+            filenames (Union[str, List[str]]): Path(s) where the transform(s) should be saved.
+                If a single string is provided for multiple transforms, it will be treated
+                as the first filename. For multiple transforms, provide a list of filenames
+                matching the number of transforms.
+
+        Raises:
+            AssertionError: If number of filenames doesn't match number of transforms (opt_size)
+
+        !!! caution "Physical Space Coordinates"
+            The saved transforms are in physical space coordinates, not normalized [-1,1] space.
+            The displacement fields are saved with the same orientation and spacing as the 
+            fixed images.
+        """
         if isinstance(filenames, str):
             filenames = [filenames]
         assert len(filenames) == reg.opt_size, "Number of filenames should match the number of warps"

@@ -19,13 +19,49 @@ from fireants.utils.imageutils import downsample
 from fireants.registration.deformablemixin import DeformableMixin
 
 class GreedyRegistration(AbstractRegistration, DeformableMixin):
-    '''
-    This class implements greedy registration with a custom loss
-    The moving image is interpolated to the fixed image grid, with an initial affine transform
+    """Greedy deformable registration class for non-linear image alignment.
+    
+    Args:
+        scales (List[int]): Downsampling factors for multi-resolution optimization.
+            Must be in descending order (e.g. [4,2,1]).
+        iterations (List[float]): Number of iterations to perform at each scale.
+            Must be same length as scales.
+        fixed_images (BatchedImages): Fixed/reference images to register to.
+        moving_images (BatchedImages): Moving images to be registered.
+        loss_type (str, optional): Similarity metric to use. Defaults to "cc".
+        deformation_type (str, optional): Type of deformation model - 'geodesic' or 'compositive'. 
+            Defaults to 'compositive'.
+        optimizer (str, optional): Optimization algorithm - 'SGD' or 'Adam'. Defaults to 'Adam'.
+        optimizer_params (dict, optional): Additional parameters for optimizer. Defaults to {}.
+        optimizer_lr (float, optional): Learning rate for optimizer. Defaults to 0.5.
+        integrator_n (Union[str, int], optional): Number of integration steps for geodesic shooting.
+            Only used if deformation_type='geodesic'. Defaults to 7.
+        mi_kernel_type (str, optional): Kernel type for MI loss. Defaults to 'b-spline'.
+        cc_kernel_type (str, optional): Kernel type for CC loss. Defaults to 'rectangular'.
+        cc_kernel_size (int, optional): Kernel size for CC loss. Defaults to 3.
+        smooth_warp_sigma (float, optional): Gaussian smoothing sigma for warp field. Defaults to 0.5.
+        smooth_grad_sigma (float, optional): Gaussian smoothing sigma for gradient field. Defaults to 1.0.
+        loss_params (dict, optional): Additional parameters for loss function. Defaults to {}.
+        reduction (str, optional): Loss reduction method - 'mean' or 'sum'. Defaults to 'sum'.
+        tolerance (float, optional): Convergence tolerance. Defaults to 1e-6.
+        max_tolerance_iters (int, optional): Max iterations for convergence check. Defaults to 10.
+        init_affine (Optional[torch.Tensor], optional): Initial affine transformation. Defaults to None.
+        warp_reg (Optional[Union[Callable, nn.Module]], optional): Regularization on warp field. Defaults to None.
+        displacement_reg (Optional[Union[Callable, nn.Module]], optional): Regularization on displacement field. 
+            Defaults to None.
+        blur (bool, optional): Whether to blur images during downsampling. Defaults to True.
+        custom_loss (nn.Module, optional): Custom loss module. Defaults to None.
 
-    smooth_warp_sigma: how much to smooth the final warp field
-    smooth_grad_sigma: how much to smooth the gradient of the final warp field  (this is similar to the Green's kernel)
-    '''    
+    Attributes:
+        warp: Deformation model (StationaryVelocity or CompositiveWarp)
+            * StationaryVelocity: Stores the stationary velocity field representation of a dense diffeomorphic transform
+            * CompositiveWarp: Stores the compositive warp field representation of a dense diffeomorphic transform. This class is also used to store free-form deformations.
+        affine (torch.Tensor): Initial affine transformation matrix
+            * Shape: [N, D, D+1]
+            * If init_affine is not provided, it is initialized to identity transform
+        smooth_warp_sigma (float): Smoothing sigma for warp field
+
+    """
     def __init__(self, scales: List[int], iterations: List[float], 
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
@@ -76,7 +112,25 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         self.affine = init_affine.detach()
     
     def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None, displacement=False):
-        ''' given fixed and moving images, get transformation field (not displacement (= warp) field) '''
+        """Get transformed coordinates for warping the moving image.
+
+        Computes the coordinate transformation from fixed to moving image space
+        using the current deformation parameters and optional initial affine transform.
+
+        Args:
+            fixed_images (BatchedImages): Fixed reference images
+            moving_images (BatchedImages): Moving images to be transformed
+            shape (Optional[tuple]): Output shape for coordinate grid.
+                Defaults to fixed image shape.
+            displacement (bool, optional): Whether to return displacement field instead of
+                transformed coordinates. Defaults to False.
+
+        Returns:
+            torch.Tensor: If displacement=False, transformed coordinates in normalized [-1,1] space
+                Shape: [N, H, W, [D], dims]
+                If displacement=True, displacement field, displacements in normalized [-1,1] space
+                Shape: [N, H, W, [D], dims]
+        """
         fixed_arrays = fixed_images()
         if shape is None:
             shape = fixed_images.shape
@@ -108,7 +162,20 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         return moved_coords
 
     def optimize(self, save_transformed=False):
-        ''' optimize the warp field to match the two images based on loss function '''
+        """Optimize the deformation parameters.
+
+        Performs multi-resolution optimization of the deformation field
+        using the configured similarity metric and optimizer. The deformation
+        field is optionally smoothed at each iteration.
+
+        Args:
+            save_transformed (bool, optional): Whether to save transformed images
+                at each scale. Defaults to False.
+
+        Returns:
+            Optional[List[torch.Tensor]]: If save_transformed=True, returns list of
+                transformed images at each scale. Otherwise returns None.
+        """
         fixed_arrays = self.fixed_images()
         moving_arrays = self.moving_images()
         fixed_t2p = self.fixed_images.get_torch2phy()

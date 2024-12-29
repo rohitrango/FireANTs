@@ -6,7 +6,8 @@ nav:
   - Home: index.md
   - Installation: install.md
   - Quickstart: quickstart.md
-  - Custom loss functions in FireANTs: customloss.md
+  - Custom loss functions: customloss.md
+  - Template construction: template.md
   - Advanced concepts:
     - Image representation: advanced/image.md
     - Riemannian optimization: advanced/riemannian.md

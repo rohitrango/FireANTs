@@ -25,6 +25,9 @@ pip install fireants
 To check out some of the tutorials, check out the `tutorials/` directory for usage.
 Alternatively, to reproduce the results in the [paper](https://arxiv.org/abs/2404.01249) checkout the `fireants/scripts/` directory.
 
+## Documentation
+You can also check out the [Documentation](https://fireants.readthedocs.io/en/latest/). Feel free to reach out to me for improvements in the documentation.
+
 ## Datasets
 In the paper, we use the datasets as following: 
 * Klein's evaluation of 14 non-linear registration algorithms: [here](https://www.synapse.org/#!Synapse:syn3251018)

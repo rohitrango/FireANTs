@@ -44,7 +44,7 @@ Moment matching roughly works in the following way:
 This example demonstrates how to perform moment matching for images. We will use an in-vivo to ex-vivo hemisphere registration as an example.
 First, we visualize the images in ITK-SNAP.
 
-![in-vivo](/assets/moment/before-moment-matching.png)
+![in-vivo](../assets/moment/before-moment-matching.png)
 
 The in-vivo image (right) falls completely outside the range of the ex-vivo image's physical coordinates range, therefore the image is not visible in the ITK-SNAP window.
 
@@ -58,7 +58,7 @@ moments = MomentsRegistration(fixed_images=fixed_images_batch, \
 moments.optimize(save_transformed=False)
 ```
 
-![after-moment-matching](/assets/moment/after-moment-matching.png)
+![after-moment-matching](../assets/moment/after-moment-matching.png)
 
 The images are now in a similar physical space, and amenable to rigid/affine/deformable image registration.
 

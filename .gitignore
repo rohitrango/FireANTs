@@ -1,6 +1,7 @@
 *egg-info
 *pdf
 .vscode
+fireants/scripts/template/evaltemplate/*.csv
 *svg
 dist/
 build/

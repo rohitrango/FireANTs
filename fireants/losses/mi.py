@@ -61,6 +61,7 @@ class GlobalMutualInformationLoss(nn.Module):
             self.preterm = 1 / (2 * sigma**2)
             self.bin_centers = bin_centers[None, None, ...]
         self.reduction = reduction 
+        print(f"using reduction {reduction}")
 
         self.smooth_nr = float(smooth_nr)
         self.smooth_dr = float(smooth_dr)

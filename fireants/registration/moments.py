@@ -103,7 +103,12 @@ class MomentsRegistration(AbstractRegistration):
             moved_coords_m = moved_coords_m.view(-1, *fixed_arrays.shape[2:], self.dims)
             # sample moving image?!
             moved_image = F.grid_sample(moving_arrays, moved_coords_m, mode='bilinear', align_corners=True)
-            loss_val = self.loss_fn(moved_image, fixed_arrays).flatten(1).sum(1)
+            loss_val = self.loss_fn(moved_image, fixed_arrays)#.flatten(1).sum(1)
+            if len(loss_val.shape) > 1:
+                loss_val = loss_val.flatten(1).sum(1)
+            elif len(loss_val.shape) == 0:
+                raise ValueError("loss function should at least have the batch dimension")
+            
             index = torch.where(loss_val < best_metric)[0]
             best_metric[index] = loss_val[index]
             best_idx[index] = ori_id

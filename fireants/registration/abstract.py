@@ -15,6 +15,54 @@ def dummy_loss(*args):
     return 0
 
 class AbstractRegistration(ABC):
+    """Base class for all registration algorithms in FireANTs.
+
+    This abstract class provides the core functionality and interface for image registration,
+    handling all the common functionality for all linear and non-linear registration algorithms.
+    It handles features like
+        - multi-resolution optimization, 
+        - arbitrary similarity metrics, and 
+        - convergence monitoring.
+
+    Args:
+        scales (List[int]): Downsampling factors for multi-resolution registration.
+            Must be in descending order (e.g. [4,2,1]).
+        iterations (List[float]): Number of iterations to perform at each scale.
+            Must match length of scales.
+        fixed_images (BatchedImages): Fixed/reference images to register to.
+        moving_images (BatchedImages): Moving images to be registered.
+        loss_type (str, optional): Similarity metric to use. A set of predefined loss functions are provided:
+            - 'mi': Mutual information
+                Global mutual information between the fixed image and the moved image is measured using Parzen windowing using different kernel types.
+                Mutual information is implemented using the `GlobalMutualInformationLoss` class.
+            - 'cc': Cross correlation (default)
+                Local normalized cross correlation between the fixed image and the moved image is measured using a kernel of size `cc_kernel_size`. This is a de-facto standard similarity metric for both linear and non-linear image registration. It also consumes less very little memory than mutual information.  
+                Cross correlation is implemented using the `LocalNormalizedCrossCorrelationLoss` class.
+            - 'mse': Mean squared error
+                Mean squared error is implemented using the `MeanSquaredError` class.
+                This is the fastest similarity metric, but it is not robust to outliers, multi-modal images, or even intensity inhomogeneities within the same modality. Good for testing registration pipelines.
+            - 'custom': Custom loss function (see `custom_loss` for more details)
+            - 'noop': No similarity metric  (this is useful for testing regularizations)
+        mi_kernel_type (str, optional): Kernel type for mutual information loss. Default: 'b-spline'
+        cc_kernel_type (str, optional): Kernel type for cross correlation loss. Default: 'rectangular'
+        custom_loss (nn.Module, optional): Custom loss module if loss_type='custom'.
+            See [Custom Loss Functions](../advanced/customloss.md) for more details on how to implement custom loss functions.
+        loss_params (dict, optional): Additional parameters for loss function. See the documentation of the loss function for more details on what parameters are available. This implementation abstracts away the loss function implementation details from the registration pipeline.
+        cc_kernel_size (int, optional): Kernel size for cross correlation loss. Default: 3
+        reduction (str, optional): Loss reduction method. Default: 'mean'
+        tolerance (float, optional): Convergence tolerance. Default: 1e-6
+        max_tolerance_iters (int, optional): Max iterations for convergence check. Default: 10
+        progress_bar (bool, optional): Whether to show progress bar. Default: True
+
+    Methods:
+        optimize(): Abstract method to perform registration optimization
+        get_warped_coordinates(): Abstract method to get transformed coordinates
+        evaluate(): Apply learned transformation to new images
+
+    Note:
+        The number of scales and iterations must match, and scales must be in descending order.
+        The fixed and moving images must be broadcastable in batch dimension.
+    """
 
     def __init__(self,
                 scales: List[int], iterations: List[float], 
@@ -72,14 +120,71 @@ class AbstractRegistration(ABC):
 
     @abstractmethod
     def optimize(self):
+        ''' 
+        Abstract method to perform registration optimization
+        '''
         pass
     
     @abstractmethod
     def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
+        '''Get the transformed coordinates for warping the moving image.
+
+        This abstract method must be implemented by all registration classes to define how
+        coordinates are transformed from the fixed image space to the moving image space.
+        The transformed coordinates are used with grid_sample to warp the moving image.
+
+        Args:
+            fixed_images (BatchedImages): Fixed/reference images that define the target space.
+                The output coordinates will be in this image's coordinate system.
+            moving_images (BatchedImages): Moving images to be transformed.
+                Used to access the original image space parameters.
+            shape (Optional[Tuple[int, ...]]): Optional output shape for the coordinate grid.
+                If None, uses the shape of the fixed image.
+
+        Returns:
+            torch.Tensor: Transformed coordinates in normalized [-1, 1] space.
+                Has shape [N, H, W, [D], dims] where:
+                    N = batch size
+                    H, W, [D] = spatial dimensions (D only for 3D)
+                    dims = number of spatial dimensions (2 or 3)
+                These coordinates can be used directly with `torch.nn.functional.grid_sample()`
+
+        Note:
+            - Coordinates are returned in the normalized [-1, 1] coordinate system required by grid_sample
+            - The transformation maps from fixed image space to moving image space (backward transform)
+            - Physical space transformations are handled internally using the image metadata
+        '''
         pass
 
     def evaluate(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
-        ''' given a new set of fixed and moving images, warp the fixed image '''
+        '''Apply the learned transformation to new images.
+
+        This method applies the registration transformation learned during optimization
+        to a new set of images. It can be used to:
+            - Validate registration performance on test images
+            - Apply learned transformations to new data
+            - Transform auxiliary data (e.g. segmentation masks) using learned parameters
+        
+        All registration classes will implement their own `get_warped_coordinates` method, 
+        which is used to apply the learned transformation to new images.
+
+        Args:
+            fixed_images (BatchedImages): Fixed/reference images that define the target space
+            moving_images (BatchedImages): Moving images to be transformed
+            shape (Optional[Tuple[int, ...]]): Optional output shape for the transformed image.
+                If None, uses the shape of the fixed image.
+
+        Returns:
+            torch.Tensor: The transformed moving image in the space of the fixed image.
+                Has shape [N, C, H, W, [D]] where:
+                    N = batch size
+                    C = number of channels
+                    H, W, D = spatial dimensions (D only for 3D)
+
+        Note:
+            The transformation is applied using bilinear interpolation with align_corners=True
+            to maintain consistency with the optimization process.
+        '''
         moving_arrays = moving_images()
         moved_coords = self.get_warped_coordinates(fixed_images, moving_images, shape=shape)
         moved_image = F.grid_sample(moving_arrays, moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]

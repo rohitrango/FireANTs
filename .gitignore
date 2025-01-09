@@ -20,3 +20,4 @@ fireants/baselines
 !tutorials/**/*.nii.gz
 **/tmp
 **/outputs
+docs/site

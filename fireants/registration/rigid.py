@@ -12,6 +12,44 @@ from fireants.utils.imageutils import downsample
 from fireants.utils.globals import MIN_IMG_SIZE
 
 class RigidRegistration(AbstractRegistration):
+    """Rigid registration class for 2D and 3D image registration.
+
+    This class implements rigid registration (rotation and translation) with optional anisotropic scaling.
+    The transformation is parameterized using:
+        - Rotation: Uses Lie algebra so(n) for 2D/3D rotations
+        - Translation: Direct parameterization in physical space
+        - Scaling (optional): Log-scale parameters for each dimension
+
+    Args:
+        scales (List[float]): Downsampling factors for multi-resolution optimization
+            Must be in descending order (e.g. [4,2,1]).
+        iterations (List[int]): Number of iterations at each scale
+            Must match length of scales.
+        fixed_images (BatchedImages): Fixed/reference images
+        moving_images (BatchedImages): Moving images to be registered
+        loss_type (str, optional): Similarity metric ('cc', 'mi', 'mse', 'custom', 'noop'). Default: 'cc'
+        optimizer (str, optional): Optimization algorithm ('Adam' or 'SGD'). Default: 'Adam'
+        optimizer_params (dict, optional): Additional parameters for optimizer. Default: {}
+        optimizer_lr (float, optional): Learning rate for optimizer. Default: 3e-3
+        loss_params (dict, optional): Additional parameters for loss function. Default: {}
+        mi_kernel_type (str, optional): Kernel type for MI loss. Default: 'b-spline'
+        cc_kernel_type (str, optional): Kernel type for CC loss. Default: 'rectangular'
+        tolerance (float, optional): Convergence tolerance. Default: 1e-6
+        max_tolerance_iters (int, optional): Max iterations for convergence. Default: 10
+        cc_kernel_size (int, optional): Kernel size for CC loss. Default: 3
+        init_translation (Optional[torch.Tensor], optional): Initial translation. Default: None
+        init_moment (Optional[torch.Tensor], optional): Initial rotation moment. Default: None
+        scaling (bool, optional): Whether to optimize scaling parameters. Default: False
+        custom_loss (nn.Module, optional): Custom loss module. Default: None
+        blur (bool, optional): Whether to apply Gaussian blur during downsampling. Default: True
+
+    Attributes:
+        rotation (nn.Parameter): Rotation parameters in so(n)
+        transl (nn.Parameter): Translation parameters
+        logscale (nn.Parameter): Log-scale parameters (if scaling=True)
+        moment (torch.Tensor): Current rotation moment matrix
+        optimizer: Optimizer instance (Adam or SGD)
+    """
 
     def __init__(self, scales: List[float], iterations: List[int], 
                 fixed_images: BatchedImages, moving_images: BatchedImages,
@@ -70,6 +108,14 @@ class RigidRegistration(AbstractRegistration):
             raise ValueError(f"Optimizer {optimizer} not supported")
     
     def get_rotation_matrix(self):
+        """Compute the rotation matrix from so(n) parameters.
+
+        For 2D: Uses direct angle parameterization
+        For 3D: Uses Rodriguez formula to compute matrix exponential
+
+        Returns:
+            torch.Tensor: Batch of rotation matrices [N, dim+1, dim+1]
+        """
         if self.dims == 2:
             rotmat = torch.zeros((self.opt_size, 3, 3), device=self.rotation.device)
             rotmat[:, 2, 2] = 1
@@ -99,6 +145,17 @@ class RigidRegistration(AbstractRegistration):
         return rotmat 
     
     def get_rigid_matrix(self, homogenous=True):
+        """Compute the complete rigid transformation matrix.
+
+        Combines rotation, translation and optional scaling into a single matrix.
+
+        Args:
+            homogenous (bool, optional): Whether to return homogeneous matrix. Default: True
+
+        Returns:
+            torch.Tensor: If homogenous=True: [N, dim+1, dim+1] transformation matrices
+                         If homogenous=False: [N, dim, dim+1] transformation matrices
+        """
         rigidmat = self.get_rotation_matrix() # [N, dim+1, dim+1]
         scale = torch.exp(self.logscale)  # [N, D]
         scale = scale[..., None]
@@ -111,6 +168,20 @@ class RigidRegistration(AbstractRegistration):
         return matclone if homogenous else matclone[:, :-1, :]  # [N, dim, dim+1]
     
     def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
+        """Compute transformed coordinates for the rigid registration.
+
+        Applies the rigid transformation (rotation, translation, scaling) to map
+        coordinates from fixed image space to moving image space.
+
+        Args:
+            fixed_images (BatchedImages): Fixed/reference images
+            moving_images (BatchedImages): Moving images
+            shape (Optional[tuple]): Output shape for coordinate grid
+
+        Returns:
+            torch.Tensor: Transformed coordinates in normalized [-1,1] space
+                         Shape: [N, H, W, [D], dims]
+        """
         fixed_t2p = fixed_images.get_torch2phy()
         moving_p2t = moving_images.get_phy2torch()
         rigid_matrix = self.get_rigid_matrix()
@@ -125,8 +196,20 @@ class RigidRegistration(AbstractRegistration):
         coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
         return coords[..., :-1]
     
-
     def optimize(self, save_transformed=False):
+        """Optimize the rigid registration parameters.
+
+        Performs multi-resolution optimization of the rigid transformation parameters
+        using the configured similarity metric and optimizer.
+
+        Args:
+            save_transformed (bool, optional): Whether to save transformed images at each scale.
+                                             Default: False
+
+        Returns:
+            Optional[List[torch.Tensor]]: If save_transformed=True, returns list of transformed
+                                        images at each scale. Otherwise returns None.
+        """
         ''' Given fixed and moving images, optimize rigid registration '''
         fixed_arrays = self.fixed_images()
         moving_arrays = self.moving_images()

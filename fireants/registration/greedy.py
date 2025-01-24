@@ -74,7 +74,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                 smooth_warp_sigma: float = 0.5,
                 smooth_grad_sigma: float = 1.0,
                 loss_params: dict = {},
-                reduction: str = 'sum',
+                reduction: str = 'mean',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
                 init_affine: Optional[torch.Tensor] = None,
                 warp_reg: Optional[Union[Callable, nn.Module]] = None,

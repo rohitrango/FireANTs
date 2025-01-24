@@ -179,7 +179,7 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         kernel_size: int = 3,
         kernel_type: str = "rectangular",
         reduction: str = "mean",
-        smooth_nr: float = 1e-5,
+        smooth_nr: float = 0,
         smooth_dr: float = 1e-5,
         unsigned: bool = True,
         checkpointing: bool = False,
@@ -284,6 +284,9 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
             ncc = checkpoint(cc_checkpoint_fn, target, pred, self.kernel, self.kernel_vol)
         else:
             ncc = cc_checkpoint_fn(target, pred, self.kernel, self.kernel_vol)
+        
+        # clamp
+        ncc = ncc.clamp(min=-1, max=1)
 
         if mask is not None:
             maskmean = mask.flatten(2).mean(2)  # [B, N]

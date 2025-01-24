@@ -74,7 +74,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
                 smooth_warp_sigma: float = 0.25,
                 smooth_grad_sigma: float = 1.0,
-                reduction: str = 'sum',
+                reduction: str = 'mean',
                 cc_kernel_size: float = 3,
                 loss_params: dict = {},
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10,

@@ -62,16 +62,18 @@ class DeformableMixin:
         # get the warp field
         fixed_image: BatchedImages = reg.fixed_images
         moving_image: BatchedImages = reg.moving_images
-        # get the moved coordinates
+
+        # get the moved coordinates and initial grid in pytorch space
         moved_coords = reg.get_warped_coordinates(fixed_image, moving_image)   # [B, H, W, [D], dim]
         init_grid = F.affine_grid(torch.eye(reg.dims, reg.dims+1, device=moved_coords.device)[None], \
                                     fixed_image.shape, align_corners=True)
         # this is now moved displacements
-        moved_coords = moved_coords - init_grid
+        moving_t2p = moving_image.get_torch2phy()
+        fixed_t2p = fixed_image.get_torch2phy()
 
-        # convert this grid into moving coordinates 
-        moving_t2p = moving_image.get_torch2phy()[:, :reg.dims, :reg.dims]
-        moved_coords = torch.einsum('bij, b...j->b...i', moving_t2p, moved_coords)
+        moved_coords = torch.einsum('bij, b...j->b...i', moving_t2p[:, :reg.dims, :reg.dims], moved_coords) + moving_t2p[:, :reg.dims, reg.dims]
+        init_grid = torch.einsum('bij, b...j->b...i', fixed_t2p[:, :reg.dims, :reg.dims], init_grid) + fixed_t2p[:, :reg.dims, reg.dims]
+        moved_coords = moved_coords - init_grid
         # save 
         for i in range(reg.opt_size):
             moved_disp = moved_coords[i].detach().cpu().numpy()  # [H, W, D, 3]

@@ -9,7 +9,11 @@ import numpy as np
 from typing import Any, Union, List, Tuple
 from time import time
 from fireants.types import devicetype
-from fireants.utils.imageutils import integer_to_onehot
+from fireants.utils.imageutils import integer_to_onehot, is_torch_float_type
+import logging
+# logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 class Image:
     '''`Image` is a class to handle medical images with SimpleITK backend and PyTorch tensor support.
@@ -44,14 +48,20 @@ class Image:
         phy2torch (torch.Tensor): Transform matrix from physical to normalized coordinates
         device (devicetype): Device where PyTorch tensors are stored
     '''
-    def __init__(self, itk_image: sitk.SimpleITK.Image, device: devicetype = 'cuda',
-            is_segmentation=False, max_seg_label=None, background_seg_label=0, seg_preprocessor=lambda x: x,
-            spacing=None, direction=None, origin=None, center=None) -> None:
+    def __init__(self, itk_image: sitk.SimpleITK.Image, 
+                 device: devicetype = 'cuda', 
+                 dtype: torch.dtype = None,
+                 is_segmentation=False, max_seg_label=None, 
+                 background_seg_label=0, seg_preprocessor=lambda x: x,
+                spacing=None, direction=None, origin=None, center=None) -> None:
+
         self.itk_image = itk_image
+        if dtype is None:
+            dtype = torch.float32
         # check for segmentation parameters
-        # if `is_segmentation` is False, then just treat this as a float image
+        # if `is_segmentation` is False, then just treat this as an image with given dtype
         if not is_segmentation:
-            self.array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(float)).to(device).float()
+            self.array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(float)).to(device).to(dtype)
             self.array = self.array[None, None]   # TODO: Change it to support multichannel images, right now just batchify and add a dummy channel to it
             channels = itk_image.GetNumberOfComponentsPerPixel()
             self.channels = channels
@@ -62,8 +72,8 @@ class Image:
             array = seg_preprocessor(array)
             if max_seg_label is not None:
                 array[array > max_seg_label] = background_seg_label
-            array = integer_to_onehot(array, background_label=background_seg_label, max_label=max_seg_label)[None]  # []
-            self.array = array.float()
+            array = integer_to_onehot(array, background_label=background_seg_label, max_label=max_seg_label, dtype=dtype)[None]  # [1, C, H, W, D]
+            self.array = array
             self.channels = array.shape[1]
         # initialize matrix for pixel to physical
         dims = itk_image.GetDimension()
@@ -120,6 +130,16 @@ class Image:
         '''
         return self.array.shape
     
+    @property
+    def is_array_present(self) -> bool:
+        '''Check if the PyTorch tensor representation of the image is present.
+        This is needed because the BatchedImages may delete the array of the image.
+
+        Returns:
+            bool: True if the PyTorch tensor representation of the image is present, False otherwise
+        '''
+        return hasattr(self, 'array')
+
     def delete_array(self):
         '''Delete the PyTorch tensor representation of the image.
 
@@ -130,7 +150,8 @@ class Image:
     def __del__(self):
         '''Delete the SimpleITK image and all intermediate variables.'''
         del self.itk_image
-        del self.array
+        if self.is_array_present:
+            del self.array
         del self.torch2phy
         del self.phy2torch
         del self._torch2px
@@ -166,26 +187,42 @@ class BatchedImages:
         self.images = images
         if len(self.images) == 0:
             raise ValueError("BatchedImages must have at least one image")
+        # check if all images have a PyTorch tensor representation
+        if not all([image.is_array_present for image in self.images]):
+            raise ValueError("All images must have a PyTorch tensor representation")
+        # Check if all images are of type Image
         for image in self.images:
             if not isinstance(image, Image):
                 raise TypeError("All images must be of type Image")
+        # check if all images have the same shape
         shapes = [x.array.shape for x in self.images]
         if all([x == shapes[0] for x in shapes]):
             pass
         else:
             raise ValueError("All images must have the same shape")
+        # set the number of images
         self.n_images = len(self.images)
         self.interpolate_mode = 'bilinear' if len(self.images[0].shape) == 4 else 'trilinear'
         self.broadcasted = False
+        # create a batch tensor
+        self.batch_tensor = torch.cat([x.array for x in self.images], dim=0) if self.n_images > 1 else self.images[0].array
+        # delete the arrays of the images if multiple images
+        if optimize_memory and len(self.images) > 1:
+            logger.info("Deleting the arrays of the images")
+            for image in self.images:
+                image.delete_array()
+        # create metadata
+        self.torch2phy = torch.cat([x.torch2phy for x in self.images], dim=0)
+        self.phy2torch = torch.cat([x.phy2torch for x in self.images], dim=0)
 
     def __call__(self):
         '''Get the batch of images.
         '''
         if self.broadcasted:
             minusones = [-1] * (len(self.images[0].shape) - 1)
-            return self.images[0].array.expand(self.n_images, *minusones)
+            return self.batch_tensor.expand(self.n_images, *minusones)
         else:
-            return torch.cat([x.array for x in self.images], dim=0)
+            return self.batch_tensor
     
     def broadcast(self, n):
         '''Broadcast the batch to n channels.
@@ -203,6 +240,9 @@ class BatchedImages:
     
     def __del__(self):
         '''Delete all Image objects in the batch.'''
+        del self.batch_tensor
+        del self.torch2phy
+        del self.phy2torch
         for image in self.images:
             del image
     
@@ -228,10 +268,10 @@ class BatchedImages:
         return shape
     
     def get_torch2phy(self):
-        return torch.cat([x.torch2phy for x in self.images], dim=0)
+        return self.torch2phy
     
     def get_phy2torch(self):
-        return torch.cat([x.phy2torch for x in self.images], dim=0)
+        return self.phy2torch
 
 
 if __name__ == '__main__':

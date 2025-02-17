@@ -7,6 +7,16 @@ from fireants.utils.util import catchtime
 from typing import Optional, List
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.types import ItemOrList
+from enum import Enum
+
+class TorchFloatType(Enum):
+    FLOAT16 = torch.float16
+    FLOAT32 = torch.float32
+    FLOAT64 = torch.float64
+    BFLOAT16 = torch.bfloat16
+
+def is_torch_float_type(dtype: torch.dtype):
+    return any([dtype == t.value for t in TorchFloatType])
 
 def lie_bracket(u: torch.Tensor, v: torch.Tensor):
     if len(u.shape) == 4:
@@ -188,7 +198,7 @@ def image_gradient(image, normalize=False):
     else:
         raise NotImplementedError('Multichannel images not supported yet')
 
-def integer_to_onehot(image: torch.Tensor, background_label:int=0, max_label=None):
+def integer_to_onehot(image: torch.Tensor, background_label:int=0, max_label=None, dtype = torch.float32):
     ''' convert an integer map into one hot mapping
     assumed the image is of size [H, W, [D]] and we convert it into [C, H, W, [D]]
 
@@ -204,12 +214,12 @@ def integer_to_onehot(image: torch.Tensor, background_label:int=0, max_label=Non
         num_labels = max_label
     else:
         num_labels = max_label + 1
-    onehot = torch.zeros((num_labels, *image.shape), dtype=torch.float32, device=image.device)
+    onehot = torch.zeros((num_labels, *image.shape), dtype=dtype, device=image.device)
     count = 0
     for i in range(num_labels+1):
         if i == background_label:
             continue
-        onehot[count, ...] = (image == i)
+        onehot[count, ...] = (image == i).to(dtype)
         count += 1
     return onehot
 

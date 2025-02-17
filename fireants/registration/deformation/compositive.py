@@ -32,6 +32,7 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
                 init_scale: int = 1, 
                 smoothing_grad_sigma: float = 0.5, smoothing_warp_sigma: float = 0.5, optimize_inverse_warp: bool = False,
                 freeform: bool = False,
+                dtype: torch.dtype = torch.float32,
                 ) -> None:
         super().__init__()
         self.num_images = num_images = max(fixed_images.size(), moving_images.size())
@@ -51,25 +52,25 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
         # set size
         if init_scale > 1:
             spatial_dims = [max(int(s / init_scale), MIN_IMG_SIZE) for s in spatial_dims]
-        warp = torch.zeros([num_images, *spatial_dims, self.n_dims], dtype=torch.float32, device=fixed_images.device)  # [N, HWD, dims]
+        warp = torch.zeros([num_images, *spatial_dims, self.n_dims], dtype=dtype, device=fixed_images.device)  # [N, HWD, dims]
         self.register_parameter('warp', nn.Parameter(warp))
         if self.optimize_inverse_warp:
-            inv = torch.zeros([num_images, *spatial_dims, self.n_dims], dtype=torch.float32, device=fixed_images.device)  # [N, HWD, dims]
+            inv = torch.zeros([num_images, *spatial_dims, self.n_dims], dtype=dtype, device=fixed_images.device)  # [N, HWD, dims]
         else:
-            inv = torch.zeros([1], dtype=torch.float32, device=fixed_images.device)  # dummy
+            inv = torch.zeros([1], dtype=dtype, device=fixed_images.device)  # dummy
         self.register_buffer('inv', inv)
 
         # attach grad hook if smooothing of the gradient is required
         self.smoothing_grad_sigma = smoothing_grad_sigma
         if smoothing_grad_sigma > 0:
-            self.smoothing_grad_gaussians = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=fixed_images.device) + smoothing_grad_sigma)]
+            self.smoothing_grad_gaussians = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=fixed_images.device, dtype=dtype) + smoothing_grad_sigma)]
         self.attach_grad_hook()
 
         # if the warp is also to be smoothed, add this constraint to the optimizer (in the optimizer_params dict)
         oparams = deepcopy(optimizer_params)
         self.smoothing_warp_sigma = smoothing_warp_sigma
         if self.smoothing_warp_sigma > 0:
-            smoothing_warp_gaussians = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=fixed_images.device) + smoothing_warp_sigma)]
+            smoothing_warp_gaussians = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=fixed_images.device, dtype=dtype) + smoothing_warp_sigma)]
             oparams['smoothing_gaussians'] = smoothing_warp_gaussians
 
         oparams['optimize_inverse_warp'] = optimize_inverse_warp
@@ -80,9 +81,9 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
         # add optimizer
         optimizer = optimizer.lower()
         if optimizer == 'sgd':
-            self.optimizer = WarpSGD(self.warp, lr=optimizer_lr, **oparams)
+            self.optimizer = WarpSGD(self.warp, lr=optimizer_lr, dtype=dtype, **oparams)
         elif optimizer == 'adam':
-            self.optimizer = WarpAdam(self.warp, lr=optimizer_lr, **oparams)
+            self.optimizer = WarpAdam(self.warp, lr=optimizer_lr, dtype=dtype, **oparams)
         else:
             raise NotImplementedError(f'Optimizer {optimizer} not implemented')
     

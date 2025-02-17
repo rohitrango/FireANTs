@@ -15,6 +15,10 @@ from fireants.registration.deformation.compositive import CompositiveWarp
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 ## Deformable utils 
 from fireants.registration.deformablemixin import DeformableMixin
 
@@ -96,11 +100,14 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         self.displacement_reg = displacement_reg
         # specify deformation type
         if deformation_type == 'geodesic':
-            warp = StationaryVelocity(fixed_images, moving_images, integrator_n=integrator_n, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params,
+            logger.warn(f"Use compositive deformation for better performance")
+            logger.info(f"Using geodesic deformation with {integrator_n} integration steps")
+            warp = StationaryVelocity(fixed_images, moving_images, integrator_n=integrator_n, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params, dtype=self.dtype,
                                     smoothing_grad_sigma=smooth_grad_sigma, init_scale=scales[0])
         elif deformation_type == 'compositive':
             warp = CompositiveWarp(fixed_images, moving_images, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params, \
-                                   smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma, init_scale=scales[0])
+                dtype=self.dtype,
+                smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma, init_scale=scales[0])
             smooth_warp_sigma = 0  # this work is delegated to compositive warp
         else:
             raise ValueError('Invalid deformation type: {}'.format(deformation_type))
@@ -108,8 +115,8 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         self.smooth_warp_sigma = smooth_warp_sigma   # in voxels
         # initialize affine
         if init_affine is None:
-            init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, D, D+1]
-        self.affine = init_affine.detach()
+            init_affine = torch.eye(self.dims+1, device=fixed_images.device, dtype=self.dtype).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, D, D+1]
+        self.affine = init_affine.detach().to(self.dtype)
     
     def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None, displacement=False):
         """Get transformed coordinates for warping the moving image.
@@ -137,28 +144,29 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         else:
             shape = [fixed_arrays.shape[0], 1] + list(shape) 
 
-        fixed_t2p = fixed_images.get_torch2phy()
-        moving_p2t = moving_images.get_phy2torch()
+        fixed_t2p = fixed_images.get_torch2phy().to(self.dtype)
+        moving_p2t = moving_images.get_phy2torch().to(self.dtype)
         # save initial affine transform to initialize grid 
         affine_map_init = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]
         # set affine coordinates
-        fixed_image_affinecoords = F.affine_grid(affine_map_init, shape, align_corners=True)
-        warp_field = self.warp.get_warp().clone()  # [N, HWD, 3]
+        moved_coords = F.affine_grid(affine_map_init, shape, align_corners=True)
+        warp_field = self.warp.get_warp()
+
+        # resize the warp field if needed
         if tuple(warp_field.shape[1:-1]) != tuple(shape[2:]):
             # interpolate this
             warp_field = F.interpolate(warp_field.permute(*self.warp.permute_vtoimg), size=shape[2:], mode='trilinear', align_corners=True).permute(*self.warp.permute_imgtov)
 
         # smooth out the warp field if asked to 
         if self.smooth_warp_sigma > 0:
-            warp_gaussian = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.dims, device=fixed_arrays.device) + self.smooth_warp_sigma)]
+            warp_gaussian = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.dims, device=fixed_arrays.device, dtype=self.dtype) + self.smooth_warp_sigma)]
             warp_field = separable_filtering(warp_field.permute(*self.warp.permute_vtoimg), warp_gaussian).permute(*self.warp.permute_imgtov)
         # move these coordinates, and return them
-        moved_coords = fixed_image_affinecoords + warp_field  # affine transform + warp field   
+        moved_coords = moved_coords + warp_field  # affine transform + warp field   
         if displacement:
-            init_grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=moved_coords.device)[None], \
+            init_grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=moved_coords.device, dtype=self.dtype)[None], \
                             fixed_images.shape, align_corners=True)
             moved_coords = moved_coords - init_grid
-
         return moved_coords
 
     def optimize(self, save_transformed=False):
@@ -178,8 +186,8 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         """
         fixed_arrays = self.fixed_images()
         moving_arrays = self.moving_images()
-        fixed_t2p = self.fixed_images.get_torch2phy()
-        moving_p2t = self.moving_images.get_phy2torch()
+        fixed_t2p = self.fixed_images.get_torch2phy().to(self.dtype)
+        moving_p2t = self.moving_images.get_phy2torch().to(self.dtype)
         fixed_size = fixed_arrays.shape[2:]
         # save initial affine transform to initialize grid 
         affine_map_init = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]
@@ -187,14 +195,14 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         # to save transformed images
         transformed_images = []
         # gaussian filter for smoothing the velocity field
-        warp_gaussian = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.dims, device=fixed_arrays.device) + self.smooth_warp_sigma)]
+        warp_gaussian = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.dims, device=fixed_arrays.device, dtype=self.dtype) + self.smooth_warp_sigma)]
         # multi-scale optimization
         for scale, iters in zip(self.scales, self.iterations):
             self.convergence_monitor.reset()
             # resize images 
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
             if self.blur and scale > 1:
-                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device)
+                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device, dtype=fixed_arrays.dtype)
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
                 fixed_image_down = downsample(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
                 moving_image_blur = separable_filtering(moving_arrays, gaussians)
@@ -222,7 +230,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                 moved_coords = fixed_image_affinecoords + warp_field  # affine transform + warp field
                 # moved_coords.retain_grad()
                 # move the image
-                moved_image = F.grid_sample(moving_image_blur, moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+                moved_image = F.grid_sample(moving_image_blur, moved_coords.to(moving_image_blur.dtype), mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
                 loss = self.loss_fn(moved_image, fixed_image_down)
                 # apply regularization on the warp field
                 if self.displacement_reg is not None:
@@ -248,21 +256,52 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
 
 if __name__ == '__main__':
     from fireants.io.image import Image
-    img1 = Image.load_file('/data/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
-    img2 = Image.load_file('/data/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz')
-    fixed = BatchedImages([img1, ])
-    moving = BatchedImages([img2,])
-    # get registration
+    from fireants.utils.util import get_gpu_memory
     from time import time
-
-    ## affine step
     from fireants.registration.affine import AffineRegistration
-    transform = AffineRegistration([8, 4, 2, 1], [200, 100, 50, 20], fixed, moving, \
-        loss_type='cc', optimizer='Adam', optimizer_lr=3e-4, optimizer_params={'momentum': 0.9})
-    transform.optimize(save_transformed=False)
+    import gc
 
-    reg = GreedyRegistration(scales=[4, 2, 1], iterations=[100, 50, 20], fixed_images=fixed, moving_images=moving,
-                                optimizer='Adam', optimizer_lr=1e-3, init_affine=transform.get_affine_matrix().detach())
-    a = time()
-    reg.optimize()
-    print(time() - a)
+    for img_dtype in [torch.bfloat16, torch.float32]:
+        # Record starting memory
+        start_mem = get_gpu_memory(clear=True)
+        img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz', dtype=img_dtype)
+        img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz', dtype=img_dtype)
+        fixed = BatchedImages([img1, ])
+        moving = BatchedImages([img2,])
+        transform = 0
+
+        image_mem = get_gpu_memory(clear=True)
+        print(f"Memory for loading images {img_dtype}: {image_mem - start_mem} MB")
+        start_mem = image_mem
+
+        transform = AffineRegistration([8, 4, 2, 1], [200, 100, 50, 20], fixed, moving, \
+            dtype=img_dtype,
+            loss_type='cc', optimizer='Adam', optimizer_lr=3e-4) #, optimizer_params={'momentum': 0.9})
+        transform.optimize(save_transformed=False)
+        # get memory after affine registration
+        aff_mem = get_gpu_memory(clear=True)
+
+        print(f"Memory for affine registration {img_dtype}: {aff_mem - start_mem} MB")
+        init_affine = transform.get_affine_matrix().detach()
+        del transform
+
+        start_mem = get_gpu_memory(clear=True)
+        reg = GreedyRegistration(scales=[4, 2, 1], iterations=[100, 50, 20], fixed_images=fixed, moving_images=moving, dtype=img_dtype,
+                                    optimizer='Adam', optimizer_lr=0.5, init_affine=init_affine)
+        a = time()
+        reg.optimize()
+        print(time() - a)
+
+        end = get_gpu_memory(clear=True)
+        print(f"Memory used for {img_dtype}: {end - start_mem} MB\n")
+
+        # from fireants.utils.util import get_tensor_memory_details
+        # details = get_tensor_memory_details()[:20]
+        # for tensor, size, description, name in details:
+        #     print(f"{name} {description}: {size} MB")
+
+        del reg
+        del fixed
+        del moving
+        del img1
+        del img2

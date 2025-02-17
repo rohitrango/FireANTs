@@ -81,9 +81,12 @@ class AffineRegistration(AbstractRegistration):
                 raise ValueError(f"init_rigid must have shape [N, {dims}, {dims+1}] or [N, {dims+1}, {dims+1}], got {init_rigid.shape}")
         else:
             affine = torch.eye(dims, dims+1).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, D, D+1]
-        self.affine = nn.Parameter(affine.to(device))  # [N, D]
-        self.row = torch.zeros((self.opt_size, 1, dims+1), device=device)   # keep this to append to affine matrix
+
+        # set parameters
+        self.affine = nn.Parameter(affine.to(device).to(self.dtype))  # [N, D]
+        self.row = torch.zeros((self.opt_size, 1, dims+1), device=device, dtype=self.dtype)   # keep this to append to affine matrix
         self.row[:, 0, -1] = 1.0
+        # TODO: change this to move it 
         self.moved_mask = moved_mask
         # optimizer
         if optimizer == 'SGD':
@@ -124,17 +127,17 @@ class AffineRegistration(AbstractRegistration):
                 Shape: [N, H, W, [D], dims]
         """
         # get coordinates of shape fixed image
-        fixed_t2p = fixed_images.get_torch2phy()
-        moving_p2t = moving_images.get_phy2torch()
+        fixed_t2p = fixed_images.get_torch2phy().to(self.dtype)
+        moving_p2t = moving_images.get_phy2torch().to(self.dtype)
         affinemat = self.get_affine_matrix()
         if shape is None:
             shape = fixed_images.shape
-        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device).unsqueeze(0).repeat(affinemat.shape[0], 1, 1)  # [N, dims, dims+1]
-        fixed_image_coords = F.affine_grid(init_grid, shape, align_corners=True)  # [N, H, W, [D], dims+1]
-        fixed_image_coords_homo = torch.cat([fixed_image_coords, torch.ones(list(fixed_image_coords.shape[:-1]) + [1], device=fixed_image_coords.device)], dim=-1)
-        fixed_image_coords_homo = torch.einsum('ntd, n...d->n...t', fixed_t2p, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]  
-        # modify 
-        coords = torch.einsum('ntd, n...d->n...t', affinemat, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]
+        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device, self.dtype).unsqueeze(0).repeat(affinemat.shape[0], 1, 1)  # [N, dims, dims+1]
+        coords = F.affine_grid(init_grid, shape, align_corners=True)  # [N, H, W, [D], dims+1]
+        coords = torch.cat([coords, torch.ones(list(coords.shape[:-1]) + [1], device=coords.device, dtype=self.dtype)], dim=-1)
+        # modify coords to be in physical space -> moving_p2t
+        coords = torch.einsum('ntd, n...d->n...t', fixed_t2p, coords)  # [N, H, W, [D], dims+1]  
+        coords = torch.einsum('ntd, n...d->n...t', affinemat, coords)  # [N, H, W, [D], dims+1]
         coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
         return coords[..., :-1]
 
@@ -156,11 +159,11 @@ class AffineRegistration(AbstractRegistration):
         verbose = self.progress_bar
         fixed_arrays = self.fixed_images()
         moving_arrays = self.moving_images()
-        fixed_t2p = self.fixed_images.get_torch2phy()
-        moving_p2t = self.moving_images.get_phy2torch()
+        fixed_t2p = self.fixed_images.get_torch2phy().to(self.dtype)
+        moving_p2t = self.moving_images.get_phy2torch().to(self.dtype)
         fixed_size = fixed_arrays.shape[2:]
         # save initial affine transform to initialize grid 
-        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, dims, dims+1]
+        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device, self.dtype).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, dims, dims+1]
 
         if save_transformed:
             transformed_images = []
@@ -173,7 +176,7 @@ class AffineRegistration(AbstractRegistration):
 
             ## create fixed downsampled image, and blurred moving image
             if self.blur and scale > 1:
-                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device)
+                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device, dtype=moving_arrays.dtype)
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
                 fixed_image_down = downsample(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
                 moving_image_blur = separable_filtering(moving_arrays, gaussians)
@@ -182,8 +185,8 @@ class AffineRegistration(AbstractRegistration):
                 moving_image_blur = moving_arrays
 
             fixed_image_coords = F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)  # [N, H, W, [D], dims+1]
-            fixed_image_coords_homo = torch.cat([fixed_image_coords, torch.ones(list(fixed_image_coords.shape[:-1]) + [1], device=fixed_image_coords.device)], dim=-1)
-            fixed_image_coords_homo = torch.einsum('ntd, n...d->n...t', fixed_t2p, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]  
+            fixed_image_coords = torch.cat([fixed_image_coords, torch.ones(list(fixed_image_coords.shape[:-1]) + [1], device=fixed_image_coords.device, dtype=self.dtype)], dim=-1)
+            fixed_image_coords = torch.einsum('ntd, n...d->n...t', fixed_t2p, fixed_image_coords)  # [N, H, W, [D], dims+1]  
             # print(fixed_image_down.min(), fixed_image_down.max())
             # this is in physical space
             pbar = tqdm(range(iters)) if verbose else range(iters)
@@ -191,12 +194,12 @@ class AffineRegistration(AbstractRegistration):
             for i in pbar:
                 self.optimizer.zero_grad()
                 affinemat = self.get_affine_matrix()
-                coords = torch.einsum('ntd, n...d->n...t', affinemat, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]
+                coords = torch.einsum('ntd, n...d->n...t', affinemat, fixed_image_coords)  # [N, H, W, [D], dims+1]
                 coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
                 # sample from these coords
-                moved_image = F.grid_sample(moving_image_blur, coords[..., :-1], mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+                moved_image = F.grid_sample(moving_image_blur, coords[..., :-1].to(moving_image_blur.dtype), mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
                 if self.moved_mask:
-                    moved_mask = F.grid_sample(torch.ones_like(moving_image_blur), coords[..., :-1], mode='nearest', align_corners=True)
+                    moved_mask = F.grid_sample(torch.ones_like(moving_image_blur), coords[..., :-1].to(moving_image_blur.dtype), mode='nearest', align_corners=True)
                 else:
                     moved_mask = None
 
@@ -226,10 +229,11 @@ class AffineRegistration(AbstractRegistration):
 
 if __name__ == '__main__':
     from fireants.io.image import Image, BatchedImages
-    img1 = Image.load_file('/data/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t2.nii.gz')
-    img2 = Image.load_file('/data/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t2.nii.gz')
+    img_dtype = torch.float32
+    img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t2.nii.gz', dtype=img_dtype)
+    img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t2.nii.gz', dtype=img_dtype)
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2,])
-    transform = AffineRegistration([8, 4, 2, 1], [1000, 500, 250, 100], fixed, moving, loss_type='cc', optimizer='SGD', optimizer_lr=1e-3, tolerance=0)
+    transform = AffineRegistration([8, 4, 2, 1], [1000, 500, 250, 100], fixed, moving, loss_type='cc', optimizer='SGD', optimizer_lr=1e-3, tolerance=1e-3, dtype=torch.float32)
     transform.optimize()
     print(np.around(transform.affine.data.cpu().numpy(), 4))

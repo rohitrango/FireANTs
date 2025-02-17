@@ -4,11 +4,7 @@ import os
 from glob import glob
 import torch
 import gc
-
-def get_gpu_memory():
-    """Get current GPU memory usage in MB"""
-    torch.cuda.synchronize()
-    return torch.cuda.memory_allocated() / 1024 / 1024
+from fireants.utils.util import get_gpu_memory
 
 def profile_memory_usage(dirpath, dtype=torch.float32, num_images=16):
     """Profile memory usage with and without optimization"""

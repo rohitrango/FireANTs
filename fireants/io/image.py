@@ -243,8 +243,6 @@ class BatchedImages:
         del self.batch_tensor
         del self.torch2phy
         del self.phy2torch
-        for image in self.images:
-            del image
     
     @property
     def device(self):

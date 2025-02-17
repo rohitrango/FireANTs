@@ -30,18 +30,22 @@ def gaussian_1d(
     Returns:
         1D torch tensor
     """
-    sigma = torch.as_tensor(sigma, dtype=torch.float, device=sigma.device if isinstance(sigma, torch.Tensor) else None)
-    device = sigma.device
+    device, dtype = None, None
+    if isinstance(sigma, torch.Tensor):
+        device = sigma.device
+        dtype = sigma.dtype
+
+    sigma = torch.as_tensor(sigma, dtype=dtype , device=device)
     if truncated <= 0.0:
         raise ValueError(f"truncated must be positive, got {truncated}.")
     tail = int(max(float(sigma) * truncated, 0.5) + 0.5)
     if approx.lower() == "erf":
-        x = torch.arange(-tail, tail + 1, dtype=torch.float, device=device)
+        x = torch.arange(-tail, tail + 1, dtype=dtype, device=device)
         t = 0.70710678 / torch.abs(sigma)
         out = 0.5 * ((t * (x + 0.5)).erf() - (t * (x - 0.5)).erf())
         out = out.clamp(min=0)
     elif approx.lower() == "sampled":
-        x = torch.arange(-tail, tail + 1, dtype=torch.float, device=sigma.device)
+        x = torch.arange(-tail, tail + 1, dtype=dtype, device=device)
         out = torch.exp(-0.5 / (sigma * sigma) * x**2)
         if not normalize:  # compute the normalizer
             out = out / (2.5066282 * sigma)

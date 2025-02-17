@@ -15,6 +15,7 @@ from fireants.utils.util import grad_smoothing_hook
 from fireants.utils.imageutils import compute_inverse_warp_exp
 from fireants.utils.globals import MIN_IMG_SIZE
 from copy import deepcopy
+import gc
 
 class StationaryVelocity(nn.Module, AbstractDeformation):
     '''
@@ -25,9 +26,11 @@ class StationaryVelocity(nn.Module, AbstractDeformation):
                 optimizer: str = 'Adam', optimizer_lr: float = 1e-2, optimizer_params: dict = {},
                 smoothing_grad_sigma: float = 0.5,
                 init_scale: int = 1,
+                dtype: torch.dtype = torch.float32,
                 ) -> None:
         super().__init__()
         # if we are here, it means the overarching registration function hasnt thrown an error
+        self.dtype = dtype
         self.num_images = num_images = max(fixed_images.size(), moving_images.size())
         spatial_dims = fixed_images.shape[2:]  # [H, W, [D]]
         if init_scale > 1:
@@ -38,11 +41,11 @@ class StationaryVelocity(nn.Module, AbstractDeformation):
         self.permute_imgtov = (0, *range(2, self.n_dims+2), 1)  # [N, HWD, dims] -> [N, HWD, dims] -> [N, dims, HWD]
         self.permute_vtoimg = (0, self.n_dims+1, *range(1, self.n_dims+1))  # [N, dims, HWD] -> [N, HWD, dims]
         # define velocity field
-        velocity_field = torch.zeros([num_images, *spatial_dims, self.n_dims], dtype=torch.float32, device=fixed_images.device)  # [N, HWD, dims]
+        velocity_field = torch.zeros([num_images, *spatial_dims, self.n_dims], dtype=dtype, device=fixed_images.device)  # [N, HWD, dims]
         # attach grad hook if smoothing is required
         self.smoothing_grad_sigma = smoothing_grad_sigma
         if smoothing_grad_sigma > 0:
-            self.smoothing_grad_gaussians = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=fixed_images.device) + smoothing_grad_sigma)]
+            self.smoothing_grad_gaussians = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=fixed_images.device, dtype=dtype) + smoothing_grad_sigma)]
         # init grid, velocity field and grad hook
         self.initialize_grid(spatial_dims)
         self.register_parameter('velocity_field', nn.Parameter(velocity_field))
@@ -62,7 +65,7 @@ class StationaryVelocity(nn.Module, AbstractDeformation):
     
     def initialize_grid(self, size):
         ''' initialize grid to a size '''
-        grid = F.affine_grid(torch.eye(self.n_dims, self.n_dims+1, device=self.device)[None].expand(self.num_images, -1, -1), \
+        grid = F.affine_grid(torch.eye(self.n_dims, self.n_dims+1, device=self.device, dtype=self.dtype)[None].expand(self.num_images, -1, -1), \
                                   [self.num_images, self.n_dims, *size], align_corners=True)
         self.register_buffer('grid', grid)
         # self.grid = grid
@@ -123,12 +126,17 @@ class StationaryVelocity(nn.Module, AbstractDeformation):
         self.optimizer.load_state_dict(old_optimizer_state)
 
 
+def get_gpu_memory():
+    """Get current GPU memory usage in MB"""
+    torch.cuda.synchronize()
+    return torch.cuda.memory_allocated() / 1024 / 1024
+
 if __name__ == '__main__':
-    img1 = Image.load_file('/data/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
-    img2 = Image.load_file('/data/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz')
+    img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
+    img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz')
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2,])
-    deformation = StationaryVelocity(fixed, moving )
+    deformation = StationaryVelocity(fixed, moving, dtype=torch.float64)
     for i in range(100):
         deformation.set_zero_grad() 
         w = deformation.get_warp()
@@ -136,3 +144,23 @@ if __name__ == '__main__':
         print(loss)
         loss.backward()
         deformation.step()
+
+    print(f"GPU memory after float64: {get_gpu_memory()}")
+    del fixed, moving, deformation, img1, img2, w, loss
+    torch.cuda.empty_cache()
+    gc.collect()
+    print(f"GPU memory after float64: {get_gpu_memory()}")
+
+    img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
+    img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz')
+    fixed = BatchedImages([img1, ])
+    moving = BatchedImages([img2,])
+    deformation = StationaryVelocity(fixed, moving, dtype=torch.float32)
+    for i in range(100):
+        deformation.set_zero_grad() 
+        w = deformation.get_warp()
+        loss = ((w-1/155)**2).mean()
+        print(loss)
+        loss.backward()
+        deformation.step()
+    print(f"GPU memory after float32: {get_gpu_memory()}")

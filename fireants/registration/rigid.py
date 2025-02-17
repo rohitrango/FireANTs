@@ -64,7 +64,8 @@ class RigidRegistration(AbstractRegistration):
                 init_moment: Optional[torch.Tensor] = None,
                 scaling: bool = False,
                 custom_loss: nn.Module = None, 
-                blur: bool = True, **kwargs
+                blur: bool = True, 
+                **kwargs
                 ) -> None:
         super().__init__(scales=scales, iterations=iterations, fixed_images=fixed_images, moving_images=moving_images, 
                          loss_type=loss_type, mi_kernel_type=mi_kernel_type, cc_kernel_type=cc_kernel_type, custom_loss=custom_loss, 
@@ -75,26 +76,26 @@ class RigidRegistration(AbstractRegistration):
         device = fixed_images.device
         self.dims = dims = self.moving_images.dims
         self.rotation_dims = rotation_dims = dims * (dims - 1) // 2
-        self.rotation = nn.Parameter(torch.zeros((self.opt_size, rotation_dims), device=device))  # [N, Rd]
+        self.rotation = nn.Parameter(torch.zeros((self.opt_size, rotation_dims), device=device, dtype=self.dtype))  # [N, Rd]
         # introduce some scaling parameter
         self.scaling = scaling
         if self.scaling:
-            self.logscale = nn.Parameter(torch.zeros((self.opt_size, fixed_images.dims), device=device))
+            self.logscale = nn.Parameter(torch.zeros((self.opt_size, fixed_images.dims), device=device, dtype=self.dtype))
         else:
-            self.logscale = torch.zeros((self.opt_size, fixed_images.dims), device=device)
+            self.logscale = torch.zeros((self.opt_size, fixed_images.dims), device=device, dtype=self.dtype)
 
         self.blur = blur
         # first three params are so(n) variables, last three are translation
         if init_translation is not None:
-            transl = init_translation
+            transl = init_translation.to(device, dtype=self.dtype)
         else:
-            transl = torch.zeros((self.opt_size, fixed_images.dims))  # [N, D]
-        self.transl = nn.Parameter(transl.to(device))  # [N, D]
+            transl = torch.zeros((self.opt_size, fixed_images.dims), dtype=self.dtype)  # [N, D]
+        self.transl = nn.Parameter(transl.to(device, self.dtype))  # [N, D]
         # set init moment
         if init_moment is not None:
-            self.moment = init_moment.to(device)
+            self.moment = init_moment.to(device, self.dtype)
         else:
-            self.moment = torch.eye(dims, device=device).unsqueeze(0).repeat(self.opt_size, 1, 1)
+            self.moment = torch.eye(dims, device=device, dtype=self.dtype).unsqueeze(0).repeat(self.opt_size, 1, 1)
         # optimizer
         params = [self.rotation, self.transl]
         if scaling:
@@ -117,7 +118,7 @@ class RigidRegistration(AbstractRegistration):
             torch.Tensor: Batch of rotation matrices [N, dim+1, dim+1]
         """
         if self.dims == 2:
-            rotmat = torch.zeros((self.opt_size, 3, 3), device=self.rotation.device)
+            rotmat = torch.zeros((self.opt_size, 3, 3), device=self.rotation.device, dtype=self.dtype)
             rotmat[:, 2, 2] = 1
             cos, sin = torch.cos(self.rotation[:, 0]), torch.sin(self.rotation[:, 0])
             rotmat[:, 0, 0] = cos
@@ -125,8 +126,8 @@ class RigidRegistration(AbstractRegistration):
             rotmat[:, 1, 0] = sin
             rotmat[:, 1, 1] = cos
         elif self.dims == 3:
-            rotmat = torch.zeros((self.opt_size, 4, 4), device=self.rotation.device)
-            skew = torch.zeros((self.opt_size, 3, 3), device=self.rotation.device)
+            rotmat = torch.zeros((self.opt_size, 4, 4), device=self.rotation.device, dtype=self.dtype)
+            skew = torch.zeros((self.opt_size, 3, 3), device=self.rotation.device, dtype=self.dtype)
             norm = torch.norm(self.rotation, dim=-1)+1e-8  # [N, 1]
             angle = norm[:, None, None]
             skew[:, 0, 1] = -self.rotation[:, 2]/norm
@@ -135,13 +136,14 @@ class RigidRegistration(AbstractRegistration):
             skew[:, 1, 2] = -self.rotation[:, 0]/norm
             skew[:, 2, 0] = -self.rotation[:, 1]/norm
             skew[:, 2, 1] = self.rotation[:, 0]/norm
-            rotmat[:, :3, :3] = torch.eye(3, device=self.rotation.device)[None] + torch.sin(angle) * skew + torch.matmul(skew, skew) * (1 - torch.cos(angle))
+            rotmat[:, :3, :3] = torch.eye(3, device=self.rotation.device, dtype=self.dtype)[None] + torch.sin(angle) * skew + torch.matmul(skew, skew) * (1 - torch.cos(angle))
             rotmat[:, 3, 3] = 1
         else:
             raise ValueError(f"Dimensions {self.dims} not supported")
         
         # premulitply by moment
         rotmat[:, :self.dims, :self.dims] = rotmat[:, :self.dims, :self.dims] @ self.moment
+        rotmat = rotmat.to(self.rotation.device, self.rotation.dtype)
         return rotmat 
     
     def get_rigid_matrix(self, homogenous=True):
@@ -182,19 +184,19 @@ class RigidRegistration(AbstractRegistration):
             torch.Tensor: Transformed coordinates in normalized [-1,1] space
                          Shape: [N, H, W, [D], dims]
         """
-        fixed_t2p = fixed_images.get_torch2phy()
-        moving_p2t = moving_images.get_phy2torch()
+        fixed_t2p = fixed_images.get_torch2phy().to(self.dtype)
+        moving_p2t = moving_images.get_phy2torch().to(self.dtype)
         rigid_matrix = self.get_rigid_matrix()
         if shape is None:
             shape = fixed_images.shape
         # init grid and apply rigid transformation
-        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device).unsqueeze(0).repeat(rigid_matrix.shape[0], 1, 1)  # [N, dims, dims+1]
-        fixed_image_coords = F.affine_grid(init_grid, shape, align_corners=True)  # [N, H, W, [D], dims+1]
-        fixed_image_coords_homo = torch.cat([fixed_image_coords, torch.ones(list(fixed_image_coords.shape[:-1]) + [1], device=fixed_image_coords.device)], dim=-1)
-        fixed_image_coords_homo = torch.einsum('ntd, n...d->n...t', fixed_t2p, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]  
-        coords = torch.einsum('ntd, n...d->n...t', rigid_matrix, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]
+        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device, self.dtype).unsqueeze(0).repeat(rigid_matrix.shape[0], 1, 1)  # [N, dims, dims+1]
+        coords = F.affine_grid(init_grid, shape, align_corners=True)  # [N, H, W, [D], dims+1]
+        coords = torch.cat([coords, torch.ones(list(coords.shape[:-1]) + [1], device=coords.device, dtype=self.dtype)], dim=-1)
+        coords = torch.einsum('ntd, n...d->n...t', fixed_t2p, coords)  # [N, H, W, [D], dims+1]  
+        coords = torch.einsum('ntd, n...d->n...t', rigid_matrix, coords)  # [N, H, W, [D], dims+1]
         coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
-        return coords[..., :-1]
+        return coords[..., :-1].to(self.dtype)
     
     def optimize(self, save_transformed=False):
         """Optimize the rigid registration parameters.
@@ -213,11 +215,11 @@ class RigidRegistration(AbstractRegistration):
         ''' Given fixed and moving images, optimize rigid registration '''
         fixed_arrays = self.fixed_images()
         moving_arrays = self.moving_images()
-        fixed_t2p = self.fixed_images.get_torch2phy()
-        moving_p2t = self.moving_images.get_phy2torch()
+        fixed_t2p = self.fixed_images.get_torch2phy().to(self.dtype)
+        moving_p2t = self.moving_images.get_phy2torch().to(self.dtype)
         fixed_size = fixed_arrays.shape[2:]
         # save initial affine transform to initialize grid 
-        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, dims, dims+1]
+        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device, self.dtype).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, dims, dims+1]
         if save_transformed:
             transformed_images = []
 
@@ -229,7 +231,7 @@ class RigidRegistration(AbstractRegistration):
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
             # downsample
             if self.blur and scale > 1:
-                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device)
+                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device, dtype=moving_arrays.dtype)
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
                 fixed_image_down = downsample(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
                 moving_image_blur = separable_filtering(moving_arrays, gaussians)
@@ -238,18 +240,18 @@ class RigidRegistration(AbstractRegistration):
                 moving_image_blur = moving_arrays
 
             fixed_image_coords = F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)  # [N, H, W, [D], dims+1]
-            fixed_image_coords_homo = torch.cat([fixed_image_coords, torch.ones(list(fixed_image_coords.shape[:-1]) + [1], device=fixed_image_coords.device)], dim=-1)
-            fixed_image_coords_homo = torch.einsum('ntd, n...d->n...t', fixed_t2p, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]  
+            fixed_image_coords = torch.cat([fixed_image_coords, torch.ones(list(fixed_image_coords.shape[:-1]) + [1], device=fixed_image_coords.device, dtype=self.dtype)], dim=-1)
+            fixed_image_coords = torch.einsum('ntd, n...d->n...t', fixed_t2p, fixed_image_coords)  # [N, H, W, [D], dims+1]  
             # print(fixed_image_down.min(), fixed_image_down.max())
             # this is in physical space
             pbar = tqdm(range(iters)) if self.progress_bar else range(iters)
             for i in pbar:
                 self.optimizer.zero_grad()
                 rigid_matrix = self.get_rigid_matrix()
-                coords = torch.einsum('ntd, n...d->n...t', rigid_matrix, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]
+                coords = torch.einsum('ntd, n...d->n...t', rigid_matrix, fixed_image_coords)  # [N, H, W, [D], dims+1]
                 coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
                 # sample from these coords
-                moved_image = F.grid_sample(moving_image_blur, coords[..., :-1], mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+                moved_image = F.grid_sample(moving_image_blur, coords[..., :-1].to(moving_image_blur.dtype), mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
                 loss = self.loss_fn(moved_image, fixed_image_down) 
                 loss.backward()
                 self.optimizer.step()
@@ -275,6 +277,6 @@ if __name__ == '__main__':
     moving = BatchedImages([img2,])
     transform = RigidRegistration([8, 4, 2, 1], [1000, 500, 250, 100], fixed, moving, loss_type='cc', 
                                   scaling=False,
-                                  optimizer='SGD', optimizer_lr=5e-3)
+                                  optimizer='SGD', optimizer_lr=5e-3, dtype=torch.float32)
     transform.optimize()
-    print(transform.rotation.data.cpu().numpy(), transform.transl.data.cpu().numpy(), torch.exp(transform.logscale.data))
+    print(transform.rotation.data.float().cpu().numpy(), transform.transl.data.float().cpu().numpy(), torch.exp(transform.logscale.data.float()))

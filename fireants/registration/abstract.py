@@ -10,6 +10,11 @@ from typing import Optional
 from fireants.utils.util import ConvergenceMonitor
 from torch.nn import functional as F
 from functools import partial
+from fireants.utils.imageutils import is_torch_float_type
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 def dummy_loss(*args):
     return 0
@@ -75,6 +80,7 @@ class AbstractRegistration(ABC):
                 reduction: str = 'mean',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
                 progress_bar: bool = True,
+                dtype: torch.dtype = torch.float32,
                 ) -> None:
         '''
         Initialize abstract registration class
@@ -99,6 +105,10 @@ class AbstractRegistration(ABC):
         self.convergence_monitor = ConvergenceMonitor(self.max_tolerance_iters, self.tolerance)
 
         self.device = fixed_images.device
+        self.dtype = dtype
+        if not is_torch_float_type(self.dtype):
+            raise ValueError(f"non-float dtype {self.dtype} is not supported for registration")
+
         self.dims = self.fixed_images.dims
         self.progress_bar = progress_bar        # variable to show or hide progress bar
 
@@ -117,6 +127,10 @@ class AbstractRegistration(ABC):
             self.loss_fn = MeanSquaredError(reduction=reduction)
         else:
             raise ValueError(f"Loss type {loss_type} not supported")
+        self.print_init_msg()
+
+    def print_init_msg(self):
+        logger.info(f"Registration of type {self.__class__.__name__} initiazed with dtype {self.dtype}")
 
     @abstractmethod
     def optimize(self):

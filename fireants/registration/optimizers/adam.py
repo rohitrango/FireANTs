@@ -14,8 +14,10 @@ class WarpAdam:
                  scaledown=False, multiply_jacobian=False,
                  smoothing_gaussians=None, 
                  freeform=False,
+                 dtype: torch.dtype = torch.float32,
                  optimize_inverse_warp=False):
         # init
+        self.dtype = dtype
         if beta1 < 0.0 or beta1 >= 1.0:
             raise ValueError("Invalid beta1 value: {}".format(beta1))
         if beta2 < 0.0 or beta2 >= 1.0:
@@ -46,7 +48,7 @@ class WarpAdam:
         # set grid
         self.batch_size = batch_size = warp.shape[0]
         # init grid
-        self.affine_init = torch.eye(self.n_dims, self.n_dims+1, device=warp.device)[None].expand(batch_size, -1, -1)
+        self.affine_init = torch.eye(self.n_dims, self.n_dims+1, device=warp.device, dtype=dtype)[None].expand(batch_size, -1, -1)
         self.initialize_grid(warp.shape[1:-1])
         # gaussian smoothing parameters (if any)
         self.smoothing_gaussians = smoothing_gaussians

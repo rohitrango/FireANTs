@@ -100,8 +100,8 @@ class Image:
         torch2px[:dims, :dims] = np.diag(scaleterm)
         torch2px[:dims, -1] = scaleterm
         # save the mapping from physical to torch and vice versa
-        self.torch2phy = torch.from_numpy(np.matmul(px2phy, torch2px)).to(device).float().unsqueeze(0)
-        self.phy2torch = torch.inverse(self.torch2phy[0]).float().unsqueeze(0)
+        self.torch2phy = torch.from_numpy(np.matmul(px2phy, torch2px)).to(device).float().unsqueeze_(0)
+        self.phy2torch = torch.inverse(self.torch2phy[0]).float().unsqueeze_(0)
         # also save intermediates just in case (as numpy arrays)
         self._torch2px = torch2px
         self._px2phy = px2phy

@@ -171,7 +171,7 @@ def image_gradient_singlechannel(image, normalize=False):
             facx, facy = (W-1)/2, (H-1)/2
         else:
             facx, facy = 1, 1 
-        k = torch.cuda.FloatTensor([[-1.0, 0.0, 1.0]], device=device, dtype=image.dtype)[None, None] / 2
+        k = torch.tensor([[-1.0, 0.0, 1.0]], device=device, dtype=image.dtype)[None, None] / 2
         gradx = F.conv2d(image, facx * k, padding=(0, 1))
         grady = F.conv2d(image, facy * k.permute(0, 1, 3, 2), padding=(1, 0))
         grad = torch.cat([gradx, grady], dim=1)
@@ -181,7 +181,7 @@ def image_gradient_singlechannel(image, normalize=False):
             facx, facy, facz = (W-1)/2, (H-1)/2, (D-1)/2
         else:
             facx, facy, facz = 1, 1, 1
-        k = torch.cuda.FloatTensor([[[-1.0, 0.0, 1.0]]], device=device, dtype=image.dtype)[None, None] / 2
+        k = torch.tensor([[[-1.0, 0.0, 1.0]]], device=device, dtype=image.dtype)[None, None] / 2
         gradx = F.conv3d(image, facx * k, padding=(0, 0, 1))
         grady = F.conv3d(image, facy * k.permute(0, 1, 2, 4, 3), padding=(0, 1, 0))
         gradz = F.conv3d(image, facz * k.permute(0, 1, 4, 2, 3), padding=(1, 0, 0))

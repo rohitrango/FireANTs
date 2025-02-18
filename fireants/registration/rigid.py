@@ -230,14 +230,19 @@ class RigidRegistration(AbstractRegistration):
             prev_loss = np.inf
             # downsample fixed array and retrieve coords
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
+            mov_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_arrays.shape[2:]]
             # downsample
             if self.blur and scale > 1:
                 sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device, dtype=moving_arrays.dtype)
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
                 fixed_image_down = downsample(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
-                moving_image_blur = separable_filtering(moving_arrays, gaussians)
+                moving_image_blur = downsample(moving_arrays, size=mov_size_down, mode=self.moving_images.interpolate_mode, gaussians=gaussians)
+                moving_image_blur = separable_filtering(moving_image_blur, gaussians)
             else:
-                fixed_image_down = F.interpolate(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True)
+                if scale > 1:
+                    fixed_image_down = F.interpolate(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True)
+                else:
+                    fixed_image_down = fixed_arrays
                 moving_image_blur = moving_arrays
 
             fixed_image_coords = F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)  # [N, H, W, [D], dims+1]

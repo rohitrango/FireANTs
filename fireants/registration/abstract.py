@@ -200,6 +200,6 @@ class AbstractRegistration(ABC):
             to maintain consistency with the optimization process.
         '''
         moving_arrays = moving_images()
-        moved_coords = self.get_warped_coordinates(fixed_images, moving_images, shape=shape)
+        moved_coords = self.get_warped_coordinates(fixed_images, moving_images, shape=shape).to(moving_arrays.device, moving_arrays.dtype)
         moved_image = F.grid_sample(moving_arrays, moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
         return moved_image

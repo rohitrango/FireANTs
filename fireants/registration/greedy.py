@@ -299,7 +299,6 @@ if __name__ == '__main__':
         # details = get_tensor_memory_details()[:20]
         # for tensor, size, description, name in details:
         #     print(f"{name} {description}: {size} MB")
-
         del reg
         del fixed
         del moving

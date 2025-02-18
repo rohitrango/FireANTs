@@ -61,8 +61,9 @@ class Image:
         # check for segmentation parameters
         # if `is_segmentation` is False, then just treat this as an image with given dtype
         if not is_segmentation:
-            self.array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(float)).to(device).to(dtype)
-            self.array = self.array[None, None]   # TODO: Change it to support multichannel images, right now just batchify and add a dummy channel to it
+            self.array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(float)).to(device, dtype)
+            self.array.unsqueeze_(0).unsqueeze_(0)
+            # self.array = self.array[None, None]   # TODO: Change it to support multichannel images, right now just batchify and add a dummy channel to it
             channels = itk_image.GetNumberOfComponentsPerPixel()
             self.channels = channels
             assert channels == 1, "Only single channel images supported"
@@ -273,10 +274,19 @@ class BatchedImages:
 
 
 if __name__ == '__main__':
+    from fireants.utils.util import get_tensor_memory_details
     from glob import glob
-    files = sorted(glob("/data/IBSR_braindata/IBSR_01/*nii.gz"))
-    image = Image.load_file(files[2])
-    print(image.array.shape, image.array.min(), image.array.max())
-    # get label
-    label = Image.load_file(files[-1], is_segmentation=True)
-    print(label.array.shape, label.array.min(), label.array.max())
+    # files = sorted(glob("/data/rohitrango/IBSR_braindata/IBSR_01/*nii.gz"))
+    file = "/mnt/rohit_data2/fMOST/subject/15257_red_mm_IRA.nii.gz"
+    # torch.cuda.memory._record_memory_history()
+
+    image = Image.load_file(file)
+    details = get_tensor_memory_details()
+    for tensor, size, _, _ in details:
+        print(tensor.shape, size)
+    
+    # torch.cuda.memory._dump_snapshot("image.pkl")
+    # print(image.array.shape, image.array.min(), image.array.max())
+    # # get label
+    # label = Image.load_file(files[-1], is_segmentation=True)
+    # print(label.array.shape, label.array.min(), label.array.max())

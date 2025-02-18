@@ -100,7 +100,7 @@ def lie_bracket_3d(u: torch.Tensor, v: torch.Tensor):
     lie_bracket = J_u_v - J_v_u
     return lie_bracket
 
-def downsample(image: ItemOrList[torch.Tensor], size: List[int], mode: str, sigma: Optional[torch.Tensor]=None,
+def downsample(image: torch.Tensor, size: List[int], mode: str, sigma: Optional[torch.Tensor]=None,
                gaussians: Optional[torch.Tensor] = None) -> torch.Tensor:
     ''' 
     this function is to downsample the image to the given size

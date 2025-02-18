@@ -193,6 +193,7 @@ class RigidRegistration(AbstractRegistration):
         init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device, self.dtype).unsqueeze(0).repeat(rigid_matrix.shape[0], 1, 1)  # [N, dims, dims+1]
         coords = F.affine_grid(init_grid, shape, align_corners=True)  # [N, H, W, [D], dims+1]
         coords = torch.cat([coords, torch.ones(list(coords.shape[:-1]) + [1], device=coords.device, dtype=self.dtype)], dim=-1)
+        # coords = torch.einsum('ntd, n...d->n...t', moving_p2t @ rigid_matrix @ fixed_t2p, coords)  # [N, H, W, [D], dims+1]  
         coords = torch.einsum('ntd, n...d->n...t', fixed_t2p, coords)  # [N, H, W, [D], dims+1]  
         coords = torch.einsum('ntd, n...d->n...t', rigid_matrix, coords)  # [N, H, W, [D], dims+1]
         coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
@@ -271,6 +272,9 @@ class RigidRegistration(AbstractRegistration):
 
 if __name__ == '__main__':
     from fireants.io.image import Image, BatchedImages
+    import torch
+    torch.cuda.memory._record_memory_history()
+
     img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
     img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t1.nii.gz')
     fixed = BatchedImages([img1, ])
@@ -280,3 +284,4 @@ if __name__ == '__main__':
                                   optimizer='SGD', optimizer_lr=5e-3, dtype=torch.float32)
     transform.optimize()
     print(transform.rotation.data.float().cpu().numpy(), transform.transl.data.float().cpu().numpy(), torch.exp(transform.logscale.data.float()))
+    torch.cuda.memory._dump_snapshot("rigid.pkl")

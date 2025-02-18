@@ -193,10 +193,10 @@ class RigidRegistration(AbstractRegistration):
         init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device, self.dtype).unsqueeze(0).repeat(rigid_matrix.shape[0], 1, 1)  # [N, dims, dims+1]
         coords = F.affine_grid(init_grid, shape, align_corners=True)  # [N, H, W, [D], dims+1]
         coords = torch.cat([coords, torch.ones(list(coords.shape[:-1]) + [1], device=coords.device, dtype=self.dtype)], dim=-1)
-        # coords = torch.einsum('ntd, n...d->n...t', moving_p2t @ rigid_matrix @ fixed_t2p, coords)  # [N, H, W, [D], dims+1]  
-        coords = torch.einsum('ntd, n...d->n...t', fixed_t2p, coords)  # [N, H, W, [D], dims+1]  
-        coords = torch.einsum('ntd, n...d->n...t', rigid_matrix, coords)  # [N, H, W, [D], dims+1]
-        coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
+        coords = torch.einsum('ntd, n...d->n...t', moving_p2t @ rigid_matrix @ fixed_t2p, coords)  # [N, H, W, [D], dims+1]  
+        # coords = torch.einsum('ntd, n...d->n...t', fixed_t2p, coords)  # [N, H, W, [D], dims+1]  
+        # coords = torch.einsum('ntd, n...d->n...t', rigid_matrix, coords)  # [N, H, W, [D], dims+1]
+        # coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
         return coords[..., :-1].to(self.dtype)
     
     def optimize(self, save_transformed=False):
@@ -249,8 +249,9 @@ class RigidRegistration(AbstractRegistration):
             for i in pbar:
                 self.optimizer.zero_grad()
                 rigid_matrix = self.get_rigid_matrix()
-                coords = torch.einsum('ntd, n...d->n...t', rigid_matrix, fixed_image_coords)  # [N, H, W, [D], dims+1]
-                coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
+                # coords = torch.einsum('ntd, n...d->n...t', rigid_matrix, fixed_image_coords)  # [N, H, W, [D], dims+1]
+                # coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
+                coords = torch.einsum('ntd, n...d->n...t', moving_p2t @ rigid_matrix, fixed_image_coords)  # [N, H, W, [D], dims+1]
                 # sample from these coords
                 moved_image = F.grid_sample(moving_image_blur, coords[..., :-1].to(moving_image_blur.dtype), mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
                 loss = self.loss_fn(moved_image, fixed_image_down) 

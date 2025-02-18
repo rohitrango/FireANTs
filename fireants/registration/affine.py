@@ -136,9 +136,11 @@ class AffineRegistration(AbstractRegistration):
         coords = F.affine_grid(init_grid, shape, align_corners=True)  # [N, H, W, [D], dims+1]
         coords = torch.cat([coords, torch.ones(list(coords.shape[:-1]) + [1], device=coords.device, dtype=self.dtype)], dim=-1)
         # modify coords to be in physical space -> moving_p2t
-        coords = torch.einsum('ntd, n...d->n...t', fixed_t2p, coords)  # [N, H, W, [D], dims+1]  
-        coords = torch.einsum('ntd, n...d->n...t', affinemat, coords)  # [N, H, W, [D], dims+1]
-        coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
+        # coords = torch.einsum('ntd, n...d->n...t', fixed_t2p, coords)  # [N, H, W, [D], dims+1]  
+        # coords = torch.einsum('ntd, n...d->n...t', affinemat, coords)  # [N, H, W, [D], dims+1]
+        # coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
+        # modify coords to be in physical space -> moving_p2t
+        coords = torch.einsum('ntd, n...d->n...t', moving_p2t @ affinemat @ fixed_t2p, coords)  # [N, H, W, [D], dims+1]
         return coords[..., :-1]
 
     def optimize(self, save_transformed=False):
@@ -194,8 +196,9 @@ class AffineRegistration(AbstractRegistration):
             for i in pbar:
                 self.optimizer.zero_grad()
                 affinemat = self.get_affine_matrix()
-                coords = torch.einsum('ntd, n...d->n...t', affinemat, fixed_image_coords)  # [N, H, W, [D], dims+1]
-                coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
+                # coords = torch.einsum('ntd, n...d->n...t', affinemat, fixed_image_coords)  # [N, H, W, [D], dims+1]
+                # coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
+                coords = torch.einsum('ntd, n...d->n...t', moving_p2t @ affinemat, fixed_image_coords)  # [N, H, W, [D], dims+1]
                 # sample from these coords
                 moved_image = F.grid_sample(moving_image_blur, coords[..., :-1].to(moving_image_blur.dtype), mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
                 if self.moved_mask:

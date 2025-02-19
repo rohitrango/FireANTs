@@ -132,16 +132,17 @@ class AffineRegistration(AbstractRegistration):
         affinemat = self.get_affine_matrix()
         if shape is None:
             shape = fixed_images.shape
-        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device, self.dtype).unsqueeze(0).repeat(affinemat.shape[0], 1, 1)  # [N, dims, dims+1]
-        coords = F.affine_grid(init_grid, shape, align_corners=True)  # [N, H, W, [D], dims+1]
-        coords = torch.cat([coords, torch.ones(list(coords.shape[:-1]) + [1], device=coords.device, dtype=self.dtype)], dim=-1)
+        # coords = F.affine_grid(init_grid, shape, align_corners=True)  # [N, H, W, [D], dims+1]
+        # coords = torch.cat([coords, torch.ones(list(coords.shape[:-1]) + [1], device=coords.device, dtype=self.dtype)], dim=-1)
         # modify coords to be in physical space -> moving_p2t
         # coords = torch.einsum('ntd, n...d->n...t', fixed_t2p, coords)  # [N, H, W, [D], dims+1]  
         # coords = torch.einsum('ntd, n...d->n...t', affinemat, coords)  # [N, H, W, [D], dims+1]
         # coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
         # modify coords to be in physical space -> moving_p2t
-        coords = torch.einsum('ntd, n...d->n...t', moving_p2t @ affinemat @ fixed_t2p, coords)  # [N, H, W, [D], dims+1]
-        return coords[..., :-1]
+        # coords = torch.einsum('ntd, n...d->n...t', moving_p2t @ affinemat @ fixed_t2p, coords)  # [N, H, W, [D], dims+1]
+        affine = (moving_p2t @ affinemat @ fixed_t2p)[:, :-1]
+        coords = F.affine_grid(affine, shape, align_corners=True)  # [N, H, W, [D], dims+1]
+        return coords
 
     def optimize(self, save_transformed=False):
         """Optimize the affine registration parameters.
@@ -191,23 +192,24 @@ class AffineRegistration(AbstractRegistration):
                 moving_image_blur = moving_arrays
 
 
-            fixed_image_coords = F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)  # [N, H, W, [D], dims+1]
-            fixed_image_coords = torch.cat([fixed_image_coords, torch.ones(list(fixed_image_coords.shape[:-1]) + [1], device=fixed_image_coords.device, dtype=self.dtype)], dim=-1)
-            fixed_image_coords = torch.einsum('ntd, n...d->n...t', fixed_t2p, fixed_image_coords)  # [N, H, W, [D], dims+1]  
+            # fixed_image_coords = F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)  # [N, H, W, [D], dims+1]
+            # fixed_image_coords = torch.cat([fixed_image_coords, torch.ones(list(fixed_image_coords.shape[:-1]) + [1], device=fixed_image_coords.device, dtype=self.dtype)], dim=-1)
+            # fixed_image_coords = torch.einsum('ntd, n...d->n...t', fixed_t2p, fixed_image_coords)  # [N, H, W, [D], dims+1]  
             # print(fixed_image_down.min(), fixed_image_down.max())
             # this is in physical space
             pbar = tqdm(range(iters)) if verbose else range(iters)
             torch.cuda.empty_cache()
             for i in pbar:
                 self.optimizer.zero_grad()
-                affinemat = self.get_affine_matrix()
+                affinemat = (moving_p2t @ self.get_affine_matrix() @ fixed_t2p)[:, :-1]
                 # coords = torch.einsum('ntd, n...d->n...t', affinemat, fixed_image_coords)  # [N, H, W, [D], dims+1]
                 # coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
-                coords = torch.einsum('ntd, n...d->n...t', moving_p2t @ affinemat, fixed_image_coords)  # [N, H, W, [D], dims+1]
+                # coords = torch.einsum('ntd, n...d->n...t', moving_p2t @ affinemat, fixed_image_coords)  # [N, H, W, [D], dims+1]
+                coords = F.affine_grid(affinemat, fixed_image_down.shape, align_corners=True)  # [N, H, W, [D], dims+1]
                 # sample from these coords
-                moved_image = F.grid_sample(moving_image_blur, coords[..., :-1].to(moving_image_blur.dtype), mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+                moved_image = F.grid_sample(moving_image_blur, coords.to(moving_image_blur.dtype), mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
                 if self.moved_mask:
-                    moved_mask = F.grid_sample(torch.ones_like(moving_image_blur), coords[..., :-1].to(moving_image_blur.dtype), mode='nearest', align_corners=True)
+                    moved_mask = F.grid_sample(torch.ones_like(moving_image_blur), coords.to(moving_image_blur.dtype), mode='nearest', align_corners=True)
                 else:
                     moved_mask = None
 
@@ -237,11 +239,25 @@ class AffineRegistration(AbstractRegistration):
 
 if __name__ == '__main__':
     from fireants.io.image import Image, BatchedImages
-    img_dtype = torch.float32
-    img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t2.nii.gz', dtype=img_dtype)
-    img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t2.nii.gz', dtype=img_dtype)
+    import torch
+    import traceback
+    torch.cuda.memory._record_memory_history()
+    img_dtype = torch.bfloat16
+    # img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t2.nii.gz', dtype=img_dtype)
+    # img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t2.nii.gz', dtype=img_dtype)
+
+    ### works at native resolution with bf16 and PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:512" and mse loss
+    img1 = Image.load_file("/mnt/rohit_data2/fMOST/subject/15257_red_mm_IRA.nii.gz", dtype=img_dtype)
+    img2 = Image.load_file("/mnt/rohit_data2/fMOST/subject/17109_red_mm_SLA.nii.gz", dtype=img_dtype)
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2,])
-    transform = AffineRegistration([8, 4, 2, 1], [1000, 500, 250, 100], fixed, moving, loss_type='cc', optimizer='SGD', optimizer_lr=1e-3, tolerance=1e-3, dtype=torch.float32)
-    transform.optimize()
+    # iterations = [1000, 500, 250, 100]
+    iterations = [100, 50, 20, 10]
+    transform = AffineRegistration([8, 4, 2, 1], iterations, fixed, moving, loss_type='mse', optimizer='Adam', optimizer_lr=1e-3, tolerance=1e-3, dtype=torch.float32)
+    try:
+        transform.optimize()
+    except torch.OutOfMemoryError as e:
+        print(e)
+        traceback.print_exc()
     print(np.around(transform.affine.data.cpu().numpy(), 4))
+    torch.cuda.memory._dump_snapshot("affine_big.pkl")

@@ -4,6 +4,39 @@ from torch.nn import functional as F
 from fireants.utils.imageutils import compute_inverse_warp_displacement
 from fireants.utils.imageutils import jacobian as jacobian_fn
 from fireants.losses.cc import separable_filtering
+# import triton
+# import triton.language as tl
+
+# @triton.jit
+# def adam_update_kernel(grad_ptr, a_ptr, b_ptr, a_0, b_0, eps, N, BLOCK_SIZE: tl.constexpr):
+#     pid = tl.program_id(axis=0)
+#     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+#     mask = offsets < N
+    
+#     a = tl.load(a_ptr + offsets, mask=mask)
+#     b = tl.load(b_ptr + offsets, mask=mask)
+    
+#     grad_val = a / ((b / b_0).sqrt() + eps) / a_0
+#     tl.store(grad_ptr + offsets, grad_val, mask=mask)
+
+# def adam_update_fused(grad, tensor_a, tensor_b, a_0, b_0, eps):
+#     print("using fused adam update")
+#     N = tensor_a.numel()
+#     assert tensor_a.shape == tensor_b.shape == grad.shape, "Shapes must match"
+    
+#     BLOCK_SIZE = 512  # Tune this based on hardware
+#     grid = (N + BLOCK_SIZE - 1) // BLOCK_SIZE
+
+#     a_0 = torch.tensor(a_0, dtype=torch.float32, device=tensor_a.device)
+#     b_0 = torch.tensor(b_0, dtype=torch.float32, device=tensor_a.device)
+#     eps = torch.tensor(eps, dtype=torch.float32, device=tensor_a.device)
+
+    
+#     adam_update_kernel[grid](
+#         grad.data_ptr(), tensor_a.data_ptr(), tensor_b.data_ptr(),
+#         a_0, b_0, eps, N, BLOCK_SIZE=BLOCK_SIZE
+#     )
+
 
 class WarpAdam:
     ''' at the moment we only support a single warp function 
@@ -102,13 +135,20 @@ class WarpAdam:
         # bias correction
         beta_correction1 = 1 - self.beta1 ** self.step_t
         beta_correction2 = 1 - self.beta2 ** self.step_t
+
+        # adam_update_fused(grad, self.exp_avg, self.exp_avg_sq, beta_correction1, beta_correction2, self.eps)
         denom = (self.exp_avg_sq / beta_correction2).sqrt().add_(self.eps)
         # get updated gradient (this will be normalized and passed in)
         grad = self.exp_avg / beta_correction1 / denom
+        del denom
+        # grad.data.copy_(self.exp_avg / beta_correction1)
+        # grad.data.div_(denom)
         # renormalize and update warp
         if self.freeform:
             grad.mul_(-self.lr)
-            w = grad + self.warp.data
+            self.warp.data.copy_(grad + self.warp.data)
+            if self.smoothing_gaussians is not None:
+                self.warp.data = separable_filtering(self.warp.data.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)
         else:
             # This is the diffeomorphic update
             # gradmax = self.eps + grad.reshape(grad.shape[0], -1).abs().max(1).values  # [B,]
@@ -123,11 +163,10 @@ class WarpAdam:
             # print(grad.abs().max().item(), self.half_resolution, self.warp.shape)
             # compositional update
             w = grad + F.grid_sample(self.warp.data.permute(*self.permute_vtoimg), self.grid + grad, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
-        
-        # smooth result if asked for
-        if self.smoothing_gaussians is not None:
-            w = separable_filtering(w.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)
-        self.warp.data.copy_(w)
+            # smooth result if asked for
+            if self.smoothing_gaussians is not None:
+                w = separable_filtering(w.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)
+            self.warp.data.copy_(w)
         # add to inverse if exists
         if self.optimize_inverse_warp and self.warpinv is not None:
             invwarp = compute_inverse_warp_displacement(self.warp.data, self.grid, self.warpinv.data, iters=5)

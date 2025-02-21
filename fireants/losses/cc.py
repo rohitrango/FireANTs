@@ -9,7 +9,7 @@ from torch.nn import functional as F
 from typing import Union, Tuple, List, Optional, Dict, Any, Callable
 from fireants.types import ItemOrList
 
-@torch.jit.script
+# @torch.jit.script
 def gaussian_1d(
     sigma: torch.Tensor, truncated: float = 4.0, approx: str = "erf", normalize: bool = True
 ) -> torch.Tensor:
@@ -54,11 +54,11 @@ def gaussian_1d(
     return out / out.sum() if normalize else out  # type: ignore
 
 
-@torch.jit.script
+# @torch.jit.script
 def make_rectangular_kernel(kernel_size: int) -> torch.Tensor:
     return torch.ones(kernel_size)
 
-@torch.jit.script
+# @torch.jit.script
 def make_triangular_kernel(kernel_size: int) -> torch.Tensor:
     fsize = (kernel_size + 1) // 2
     if fsize % 2 == 0:
@@ -67,7 +67,7 @@ def make_triangular_kernel(kernel_size: int) -> torch.Tensor:
     padding = (kernel_size - fsize) // 2 + fsize // 2
     return F.conv1d(f, f, padding=padding).reshape(-1)
 
-@torch.jit.script
+# @torch.jit.script
 def make_gaussian_kernel(kernel_size: int) -> torch.Tensor:
     sigma = torch.tensor(kernel_size / 3.0)
     kernel = gaussian_1d(sigma=sigma, truncated=(kernel_size // 2) * 1.0, approx="sampled", normalize=False) * (
@@ -75,7 +75,7 @@ def make_gaussian_kernel(kernel_size: int) -> torch.Tensor:
     )
     return kernel[:kernel_size]
 
-@torch.jit.script
+# @torch.jit.script
 def _separable_filtering_conv(
     input_: torch.Tensor,
     kernels: List[torch.Tensor],
@@ -119,7 +119,7 @@ def _separable_filtering_conv(
             raise NotImplementedError(f"Unsupported spatial_dims: {spatial_dims}.")
     return input_
 
-@torch.jit.script
+# @torch.jit.script
 def separable_filtering(x: torch.Tensor, kernels: ItemOrList[torch.Tensor], mode: str = "zeros") -> torch.Tensor:
 # def separable_filtering(x: torch.Tensor, kernels: ItemOrList[torch.Tensor], mode: str = "zeros") -> torch.Tensor:
     """
@@ -243,7 +243,7 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
             raise ValueError(f"ground truth has differing shape ({target.shape}) from pred ({pred.shape})")
 
         # sum over kernel
-        def cc_checkpoint_fn(target, pred, kernel, kernel_vol):
+        def cc_checkpoint_fn(target, pred, kernel, kernel_vol, checkpointing=False):
             '''
             This function is used to compute the intermediate results of the loss.
             '''
@@ -254,14 +254,32 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
             kernels_t = kernels_p = kernels
             kernel_vol_t = kernel_vol_p = kernel_vol
             # compute intermediates
-            t_sum = separable_filtering(target, kernels=kernels_t)
-            p_sum = separable_filtering(pred, kernels=kernels_p)
-            t2_sum = separable_filtering(t2, kernels=kernels_t)
-            p2_sum = separable_filtering(p2, kernels=kernels_p)
-            tp_sum = separable_filtering(tp, kernels=kernels_t)  # use target device's output
+            def avg_filter(target, kernels_t, kernel_vol_t):
+                t_sum = separable_filtering(target, kernels=kernels_t)
+                t_avg = t_sum / kernel_vol_t
+                return t_sum, t_avg
+            
+            if checkpointing:
+                t_sum, t_avg = checkpoint(avg_filter, target, kernels_t, kernel_vol_t, use_reentrant=False)
+                p_sum, p_avg = checkpoint(avg_filter, pred, kernels_p, kernel_vol_p, use_reentrant=False)
+            else:
+                t_sum, t_avg = avg_filter(target, kernels_t, kernel_vol_t)
+                p_sum, p_avg = avg_filter(pred, kernels_p, kernel_vol_p)
+
+            def sum_filter(target, kernels_t):
+                sumfilt = separable_filtering(target, kernels=kernels_t)
+                return sumfilt
+            
+            if checkpointing:
+                t2_sum = checkpoint(sum_filter, t2, kernels_t, use_reentrant=False)
+                p2_sum = checkpoint(sum_filter, p2, kernels_p, use_reentrant=False)
+                tp_sum = checkpoint(sum_filter, tp, kernels_t, use_reentrant=False)
+            else:
+                t2_sum = sum_filter(t2, kernels_t)
+                p2_sum = sum_filter(p2, kernels_p)
+                tp_sum = sum_filter(tp, kernels_t)
+
             # average over kernel
-            t_avg = t_sum / kernel_vol_t
-            p_avg = p_sum / kernel_vol_p
             # normalized cross correlation between t and p
             # sum[(t - mean[t]) * (p - mean[p])] / std[t] / std[p]
             # denoted by num / denom
@@ -271,23 +289,50 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
             #     = sum[t*p] - sum[t] * sum[p] / N
             #     = sum[t*p] - sum[t] * mean[p] = cross
             # the following is actually squared ncc
-            cross = (tp_sum.to(pred) - p_avg * t_sum.to(pred))  # on pred device
-            t_var = torch.max(
-                t2_sum - t_avg * t_sum, torch.as_tensor(self.smooth_dr, dtype=t2_sum.dtype, device=t2_sum.device)
-            ).to(pred)
-            p_var = torch.max(
-                p2_sum - p_avg * p_sum, torch.as_tensor(self.smooth_dr, dtype=p2_sum.dtype, device=p2_sum.device)
-            )
-            if self.unsigned:
-                ncc: torch.Tensor = (cross * cross + self.smooth_nr) / ((t_var * p_var) + self.smooth_dr)
+            def cross_filter(tp_sum, p_avg, t_sum):
+                return (tp_sum.to(pred) - p_avg * t_sum.to(pred))  # on pred device
+            
+            if checkpointing:
+                cross = checkpoint(cross_filter, tp_sum, p_avg, t_sum, use_reentrant=False)
             else:
-                ncc: torch.Tensor = (cross + self.smooth_nr) / ((torch.sqrt(t_var) * torch.sqrt(p_var)) + self.smooth_dr)
+                cross = cross_filter(tp_sum, p_avg, t_sum)
+            
+            def var_filter(t2sum, tavg, tsum):
+                return torch.max(
+                    t2sum - tavg * tsum, torch.as_tensor(self.smooth_dr, dtype=t2sum.dtype, device=t2sum.device)
+                ).to(pred)
+            
+            if checkpointing:
+                t_var = checkpoint(var_filter, t2_sum, t_avg, t_sum, use_reentrant=False)
+                p_var = checkpoint(var_filter, p2_sum, p_avg, p_sum, use_reentrant=False)
+            else:
+                t_var = var_filter(t2_sum, t_avg, t_sum)
+                p_var = var_filter(p2_sum, p_avg, p_sum)
+
+            if self.unsigned:
+                def ncc_filter(cross, t_var, p_var):
+                    ncc: torch.Tensor = (cross * cross + self.smooth_nr) / ((t_var * p_var) + self.smooth_dr)
+                    return ncc
+                if checkpointing:
+                    ncc = checkpoint(ncc_filter, cross, t_var, p_var, use_reentrant=False)
+                else:
+                    ncc = ncc_filter(cross, t_var, p_var)
+            else:
+                def ncc_filter(cross, t_var, p_var):
+                    ncc: torch.Tensor = (cross + self.smooth_nr) / ((torch.sqrt(t_var) * torch.sqrt(p_var)) + self.smooth_dr)
+                    return ncc
+
+                if checkpointing:
+                    ncc = checkpoint(ncc_filter, cross, t_var, p_var, use_reentrant=False)
+                else:
+                    ncc = ncc_filter(cross, t_var, p_var)
             return ncc
         
-        if self.checkpointing:
-            ncc = checkpoint(cc_checkpoint_fn, target, pred, self.kernel, self.kernel_vol)
-        else:
-            ncc = cc_checkpoint_fn(target, pred, self.kernel, self.kernel_vol)
+        # if self.checkpointing:
+        #     ncc = checkpoint(cc_checkpoint_fn, target, pred, self.kernel, self.kernel_vol)
+        # else:
+        #     ncc = cc_checkpoint_fn(target, pred, self.kernel, self.kernel_vol)
+        ncc = cc_checkpoint_fn(target, pred, self.kernel, self.kernel_vol, checkpointing=self.checkpointing)
         
         # clamp
         ncc = ncc.clamp(min=-1, max=1)

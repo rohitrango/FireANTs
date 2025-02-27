@@ -334,7 +334,7 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         #     ncc = cc_checkpoint_fn(target, pred, self.kernel, self.kernel_vol)
         ncc = cc_checkpoint_fn(target, pred, self.kernel, self.kernel_vol, checkpointing=self.checkpointing)
         
-        # clamp
+        # clamp (dont really need this because the offending pixels are very sparse)
         ncc = ncc.clamp(min=-1, max=1)
 
         if mask is not None:

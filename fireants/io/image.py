@@ -33,6 +33,7 @@ class Image:
             Set to None by default, meaning no label clipping is done.
         background_seg_label (int, optional): Label value representing background in segmentations. Defaults to 0.
         seg_preprocessor (callable, optional): Function to preprocess segmentation arrays. Defaults to identity function.
+        orientation (str, optional): Reorient the image to this orientation. Defaults to None.
         spacing (array-like, optional): Custom spacing for the image. If None, uses SimpleITK values.
         direction (array-like, optional): Custom direction matrix. If None, uses SimpleITK values.
         origin (array-like, optional): Custom origin point. If None, uses SimpleITK values.
@@ -53,7 +54,11 @@ class Image:
                  dtype: torch.dtype = None,
                  is_segmentation=False, max_seg_label=None, 
                  background_seg_label=0, seg_preprocessor=lambda x: x,
+                 orientation: str = None,
                 spacing=None, direction=None, origin=None, center=None) -> None:
+
+        if orientation is not None:
+            itk_image = sitk.DICOMOrient(itk_image, orientation)
 
         self.itk_image = itk_image
         if dtype is None:

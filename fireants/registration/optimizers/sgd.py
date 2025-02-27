@@ -14,6 +14,7 @@ class WarpSGD:
     '''
     def __init__(self, warp, lr, warpinv=None, momentum=0, dampening=0, weight_decay=0, 
                  dtype: torch.dtype = torch.float32,
+                 freeform=False,
                  nesterov=False, scaledown=False, multiply_jacobian=False,
                  smoothing_gaussians=None, optimize_inverse_warp=False):
         # init

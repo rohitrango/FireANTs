@@ -130,7 +130,7 @@ class AbstractRegistration(ABC):
         self.print_init_msg()
 
     def print_init_msg(self):
-        logger.info(f"Registration of type {self.__class__.__name__} initiazed with dtype {self.dtype}")
+        logger.info(f"Registration of type {self.__class__.__name__} initialized with dtype {self.dtype}")
 
     @abstractmethod
     def optimize(self):

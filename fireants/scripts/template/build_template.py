@@ -9,6 +9,7 @@ from typing import List
 import os
 import logging
 logging.basicConfig()
+import numpy as np
 
 import torch
 from torch import distributed as dist
@@ -25,6 +26,9 @@ from fireants.utils.warputils import shape_averaging_invwarp
 
 logger = logging.getLogger("build_template")
 logger.setLevel(logging.INFO)
+
+def normalize(img):
+    return (img - img.min()*1.0) / (img.max()*1.0 - img.min())
 
 def setup_distributed(local_rank, world_size):
     '''
@@ -46,6 +50,18 @@ def add_shape(avg_warp: torch.Tensor, reg):
     avg_warp = avg_warp + reg.get_warped_coordinates(reg.fixed_images, reg.moving_images).sum(0, keepdim=True)
     return avg_warp
 
+def try_add_to_config(args, key, default):
+    ''' 
+    args: hydra args object 
+    key: string key to check
+    default: default value to add if key is not found
+    '''
+    try:
+        _ = args[key]
+    except:
+        OmegaConf.update(args, key, default, force_add=True)
+        
+
 @hydra.main(version_base="1.2", config_path="./configs", config_name="oasis_deformable")
 def main(args):
     '''
@@ -54,6 +70,8 @@ def main(args):
     global logger
     local_rank = int(os.environ.get('LOCAL_RANK', 0))
     world_size = int(os.environ.get('WORLD_SIZE', 1))
+
+    try_add_to_config(args, 'orientation', None)
 
     if local_rank == 0:
         logger.info(f"Working directory: {os.getcwd()}")
@@ -102,7 +120,10 @@ def main(args):
     otherwise we will chunk the images, and create averages across all processes
     '''
     if args.init_template_path is not None:
-        init_template = Image.load_file(args.init_template_path, device=device)
+        init_template = Image.load_file(args.init_template_path, device=device, orientation=args.orientation)
+        if args.normalize_images:
+            init_template.array = normalize(init_template.array.data)
+
         logger.info(f'Using provided template: {args.init_template_path}')
         # init image files
         image_files = image_files[local_rank::world_size]
@@ -112,14 +133,20 @@ def main(args):
         # create template from average
         # Run timer
         with Timer('Averaging all images for initial template', logger_zero):
-            init_template = Image.load_file(image_files[0], device=device)
+            init_template = Image.load_file(image_files[0], device=device, orientation=args.orientation)
+            if args.normalize_images:
+                init_template.array = normalize(init_template.array.data)
+
             # chunk files
             image_files = image_files[local_rank::world_size]
             logger.info(f"Process {local_rank} has {len(image_files)}/{total_file_count} images.")
             # build template from average
             init_template_arr = None
             for imgfile in image_files:
-                img = Image.load_file(imgfile, device=device)
+                img = Image.load_file(imgfile, device=device, orientation=args.orientation)
+                if args.normalize_images:
+                    img.array = normalize(img.array.data)
+
                 if init_template_arr is None:
                     init_template_arr = img.array
                 else:
@@ -129,11 +156,19 @@ def main(args):
             # add template across all processes
             dist.all_reduce(init_template_arr, op=dist.ReduceOp.SUM)
             init_template.delete_array()
-            init_template.array = init_template_arr + 0
+            init_template.array = init_template_arr.detach()
+            del init_template_arr
 
     # save initial template if specified
     if args.save_init_template and local_rank == 0:
         torch.save(init_template.array.cpu(), f"{args.save_dir}/init_template.pt")
+        img_array = init_template.array.cpu().numpy()[0, 0]
+        if args.save_as_uint8:
+            img_array = (normalize(img_array) * 255.0).astype(np.uint8)
+        itk_img = sitk.GetImageFromArray(img_array)
+        itk_img.CopyInformation(init_template.itk_image)
+        sitk.WriteImage(itk_img, f"{args.save_dir}/init_template.nii.gz")
+        logger.info(f"Saved initial template to {args.save_dir}/init_template.nii.gz")
 
     logger.debug((init_template.shape, init_template.array.min(), init_template.array.max()))
 
@@ -170,7 +205,11 @@ def main(args):
 
         # run through batches
         for batchid, batch in enumerate(imgbatches):
-            imgs = [Image.load_file(imgfile, device=device) for imgfile in batch]
+            imgs = [Image.load_file(imgfile, device=device, orientation=args.orientation) for imgfile in batch]
+            if args.normalize_images:
+                for img in imgs:
+                    img.array = normalize(img.array.data)
+
             moving_images_batch = BatchedImages(imgs)
             init_template_batch.broadcast(len(imgs))
             # variables to keep track of 
@@ -272,17 +311,28 @@ def main(args):
         # apply laplacian filter
         for _ in range(args.num_laplacian):
             updated_template_arr = laplace(updated_template_arr)
+        
+        if args.normalize_images:
+            updated_template_arr = normalize(updated_template_arr)
 
         logger.debug("Template updated...")
         logger.debug((local_rank, init_template.array.min(), init_template.array.mean(), init_template.array.max()))
         logger.debug((local_rank, updated_template_arr.min(), updated_template_arr.mean(), updated_template_arr.max()))
 
         # update the template array to new template
-        init_template.array = updated_template_arr + 0
+        init_template.array = updated_template_arr.detach()
+        del updated_template_arr
 
         # save here
         if ((epoch % args.save_every == 0) or is_last_epoch) and local_rank == 0:
-            torch.save(updated_template_arr, f"{args.save_dir}/template_{epoch}.pt")
+            torch.save(init_template.array.cpu(), f"{args.save_dir}/template_{epoch}.pt")
+            img_array = init_template.array.cpu().numpy()[0, 0]
+            if args.save_as_uint8:
+                img_array = (normalize(img_array) * 255.0).astype(np.uint8)
+            itk_img = sitk.GetImageFromArray(img_array)
+            itk_img.CopyInformation(init_template.itk_image)
+            sitk.WriteImage(itk_img, f"{args.save_dir}/template_{epoch}.nii.gz")
+            logger.info(f"Saved template {epoch} to {args.save_dir}/template_{epoch}.nii.gz")
 
     # cleanup
     dist_cleanup(world_size)

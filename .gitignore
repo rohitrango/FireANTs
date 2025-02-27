@@ -21,3 +21,4 @@ fireants/baselines
 docs/site
 .vscode
 fireants/scripts/template/evaltemplate/
+fireants/scripts/template/saved_*

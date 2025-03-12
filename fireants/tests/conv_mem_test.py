@@ -7,6 +7,7 @@ from fireants.losses.cc import gaussian_1d
 from typing import Union, Tuple, List, Optional, Dict, Any, Callable
 from fireants.types import ItemOrList
 
+
 def separable_filtering(x: torch.Tensor, kernels: ItemOrList[torch.Tensor], mode: str = "zeros") -> torch.Tensor:
 # def separable_filtering(x: torch.Tensor, kernels: ItemOrList[torch.Tensor], mode: str = "zeros") -> torch.Tensor:
     """

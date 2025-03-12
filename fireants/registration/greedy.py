@@ -189,6 +189,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         fixed_t2p = self.fixed_images.get_torch2phy().to(self.dtype)
         moving_p2t = self.moving_images.get_phy2torch().to(self.dtype)
         fixed_size = fixed_arrays.shape[2:]
+        moving_size = moving_arrays.shape[2:]
         # save initial affine transform to initialize grid 
         affine_map_init = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]
 
@@ -201,14 +202,20 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
             self.convergence_monitor.reset()
             # resize images 
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
+            moving_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_size]
             if self.blur and scale > 1:
                 sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device, dtype=fixed_arrays.dtype)
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
                 fixed_image_down = downsample(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
-                moving_image_blur = separable_filtering(moving_arrays, gaussians)
+                moving_image_blur = downsample(moving_arrays, size=moving_size_down, mode=self.moving_images.interpolate_mode, gaussians=gaussians)
+                #moving_image_blur = separable_filtering(moving_image_down, gaussians)
             else:
-                fixed_image_down = F.interpolate(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True)
-                moving_image_blur = moving_arrays
+                if scale > 1:
+                    fixed_image_down = F.interpolate(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True)
+                    moving_image_blur = F.interpolate(moving_arrays, size=moving_size_down, mode=self.moving_images.interpolate_mode, align_corners=True)
+                else:
+                    fixed_image_down = fixed_arrays
+                    moving_image_blur = moving_arrays
 
             #### Set size for warp field
             self.warp.set_size(size_down)

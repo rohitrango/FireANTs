@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 from time import perf_counter
 from contextlib import contextmanager
 import torch
@@ -6,6 +6,47 @@ from torch.nn import functional as F
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from collections import deque
 import numpy as np
+import gc
+import inspect
+
+def get_tensor_memory_details() -> List[Tuple[torch.Tensor, float, str, str]]:
+    """Get details of all tensors currently in memory.
+    
+    Returns:
+        List of tuples containing (tensor, size_in_mb, tensor_description, variable_name)
+    """
+    tensor_details = []
+    for obj in gc.get_objects():
+        try:
+            if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+                tensor = obj if torch.is_tensor(obj) else obj.data
+                size_mb = tensor.element_size() * tensor.nelement() / (1024 * 1024)
+                description = f"{tensor.shape} {tensor.dtype} {tensor.device}"
+                # Try to find the variable name
+                var_name = "unknown"
+                for frame in inspect.stack():
+                    frame_locals = frame.frame.f_locals
+                    for var, val in frame_locals.items():
+                        if val is obj:
+                            var_name = var
+                            break
+                    if var_name != "unknown":
+                        break
+                
+                tensor_details.append((tensor, size_mb, description, var_name))
+        except Exception as e:
+            # print(e)
+            pass
+    return sorted(tensor_details, key=lambda x: x[1], reverse=True)
+
+
+def get_gpu_memory(clear: bool = False):
+    """Get current GPU memory usage in MB"""
+    if clear:
+        torch.cuda.empty_cache()
+        gc.collect()
+    torch.cuda.synchronize()
+    return torch.cuda.memory_allocated() / 1024 / 1024
 
 class ConvergenceMonitor:
     def __init__(self, N, slope):
@@ -122,3 +163,7 @@ def collate_fireants_fn(batch):
     collate batch of arbitrary lists/tuples/dicts with collating the Images into BatchedImages object 
     '''
     raise NotImplementedError
+
+def check_and_raise_cond(cond: bool, msg: str, error_type: Exception):
+    if not cond:
+        raise error_type(msg)

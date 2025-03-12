@@ -10,6 +10,12 @@ from typing import Any, Union, List, Tuple
 from time import time
 from fireants.types import devicetype
 from fireants.utils.imageutils import integer_to_onehot
+from fireants.utils.util import check_and_raise_cond
+import logging
+from copy import deepcopy
+# logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 class Image:
     '''`Image` is a class to handle medical images with SimpleITK backend and PyTorch tensor support.
@@ -29,6 +35,7 @@ class Image:
             Set to None by default, meaning no label clipping is done.
         background_seg_label (int, optional): Label value representing background in segmentations. Defaults to 0.
         seg_preprocessor (callable, optional): Function to preprocess segmentation arrays. Defaults to identity function.
+        orientation (str, optional): Reorient the image to this orientation. Defaults to None.
         spacing (array-like, optional): Custom spacing for the image. If None, uses SimpleITK values.
         direction (array-like, optional): Custom direction matrix. If None, uses SimpleITK values.
         origin (array-like, optional): Custom origin point. If None, uses SimpleITK values.
@@ -44,15 +51,26 @@ class Image:
         phy2torch (torch.Tensor): Transform matrix from physical to normalized coordinates
         device (devicetype): Device where PyTorch tensors are stored
     '''
-    def __init__(self, itk_image: sitk.SimpleITK.Image, device: devicetype = 'cuda',
-            is_segmentation=False, max_seg_label=None, background_seg_label=0, seg_preprocessor=lambda x: x,
-            spacing=None, direction=None, origin=None, center=None) -> None:
+    def __init__(self, itk_image: sitk.SimpleITK.Image, 
+                 device: devicetype = 'cuda', 
+                 dtype: torch.dtype = None,
+                 is_segmentation=False, max_seg_label=None, 
+                 background_seg_label=0, seg_preprocessor=lambda x: x,
+                 orientation: str = None,
+                spacing=None, direction=None, origin=None, center=None) -> None:
+
+        if orientation is not None:
+            itk_image = sitk.DICOMOrient(itk_image, orientation)
+
         self.itk_image = itk_image
+        if dtype is None:
+            dtype = torch.float32
         # check for segmentation parameters
-        # if `is_segmentation` is False, then just treat this as a float image
+        # if `is_segmentation` is False, then just treat this as an image with given dtype
         if not is_segmentation:
-            self.array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(float)).to(device).float()
-            self.array = self.array[None, None]   # TODO: Change it to support multichannel images, right now just batchify and add a dummy channel to it
+            self.array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(float)).to(device, dtype)
+            self.array.unsqueeze_(0).unsqueeze_(0)
+            # self.array = self.array[None, None]   # TODO: Change it to support multichannel images, right now just batchify and add a dummy channel to it
             channels = itk_image.GetNumberOfComponentsPerPixel()
             self.channels = channels
             assert channels == 1, "Only single channel images supported"
@@ -62,8 +80,8 @@ class Image:
             array = seg_preprocessor(array)
             if max_seg_label is not None:
                 array[array > max_seg_label] = background_seg_label
-            array = integer_to_onehot(array, background_label=background_seg_label, max_label=max_seg_label)[None]  # []
-            self.array = array.float()
+            array = integer_to_onehot(array, background_label=background_seg_label, max_label=max_seg_label, dtype=dtype)[None]  # [1, C, H, W, D]
+            self.array = array
             self.channels = array.shape[1]
         # initialize matrix for pixel to physical
         dims = itk_image.GetDimension()
@@ -89,8 +107,8 @@ class Image:
         torch2px[:dims, :dims] = np.diag(scaleterm)
         torch2px[:dims, -1] = scaleterm
         # save the mapping from physical to torch and vice versa
-        self.torch2phy = torch.from_numpy(np.matmul(px2phy, torch2px)).to(device).float().unsqueeze(0)
-        self.phy2torch = torch.inverse(self.torch2phy[0]).float().unsqueeze(0)
+        self.torch2phy = torch.from_numpy(np.matmul(px2phy, torch2px)).to(device).float().unsqueeze_(0)
+        self.phy2torch = torch.inverse(self.torch2phy[0]).float().unsqueeze_(0)
         # also save intermediates just in case (as numpy arrays)
         self._torch2px = torch2px
         self._px2phy = px2phy
@@ -120,22 +138,74 @@ class Image:
         '''
         return self.array.shape
     
+    @property
+    def is_array_present(self) -> bool:
+        '''Check if the PyTorch tensor representation of the image is present.
+        This is needed because the BatchedImages may delete the array of the image.
+
+        Returns:
+            bool: True if the PyTorch tensor representation of the image is present, False otherwise
+        '''
+        return hasattr(self, 'array')
+
     def delete_array(self):
         '''Delete the PyTorch tensor representation of the image.
 
         This is a placeholder function to be replaced with batched images.
         '''
-        del self.array
+        if self.is_array_present:
+            del self.array
     
+    def concatenate(self, *others, optimize_memory: bool = True):
+        ''' 
+        others is a list of Images or list of lists (in which case the user accidentally passed a list of images) 
+
+            optimize_memory: if True, delete the arrays of the other images after concatenation
+
+        Example:
+            t1 = Image.load_file(t1_path)
+            t2 = Image.load_file(t2_path)
+            flair = Image.load_file(flair_path)
+            t1.concatenate(t2, flair, optimize_memory=True)   # deletes the arrays of t2 and flair after concatenation
+
+        '''
+        check_and_raise_cond(self.is_array_present, "Image must have a PyTorch tensor representation to concatenate", ValueError)
+        if isinstance(others[0], list) and len(others) == 1:
+            others = others[0]
+        else:
+            check_and_raise_cond(all([isinstance(other, Image) for other in others]), "All elements of others must be of type Image", TypeError)
+        # check if all images have the same shape
+        shapes = [x.array.shape[2:] for x in others]
+        base_shape = self.array.shape[2:]
+        check_and_raise_cond(all([x == base_shape for x in shapes]), "All images must have the same shape", ValueError)
+        check_and_raise_cond(all([x.is_array_present for x in others]), "All images must have a PyTorch tensor representation", ValueError)
+        check_and_raise_cond(all([self.array.device == other.array.device for other in others]), "Images must be on the same device", ValueError)
+        check_and_raise_cond(all([torch.allclose(self.phy2torch, other.phy2torch) for other in others]), "Images reside in different physical spaces, using the first image's physical space", logger.warning)
+
+        self.array = torch.cat([self.array] + [other.array for other in others], dim=1)
+        if optimize_memory:
+            logger.debug("Deleting the arrays of the other images after concatenation")
+            for other in others:
+                other.delete_array()
+
     def __del__(self):
         '''Delete the SimpleITK image and all intermediate variables.'''
         del self.itk_image
-        del self.array
+        if self.is_array_present:
+            del self.array
         del self.torch2phy
         del self.phy2torch
         del self._torch2px
         del self._px2phy
 
+def concat(*images, optimize_memory: bool = True):
+    ''' Creates a copy of the images and concatenates them along the channel dimension
+    '''
+    check_and_raise_cond(len(images) > 0, "At least one image must be provided", ValueError)
+    check_and_raise_cond(all([isinstance(image, Image) for image in images]), "All images must be of type Image", TypeError)
+    img0 = images[0] if optimize_memory else deepcopy(images[0])
+    img0.concatenate(*images[1:], optimize_memory=optimize_memory)
+    return img0
 
 class BatchedImages:
     '''A class to handle batches of Image objects efficiently.
@@ -166,26 +236,36 @@ class BatchedImages:
         self.images = images
         if len(self.images) == 0:
             raise ValueError("BatchedImages must have at least one image")
-        for image in self.images:
-            if not isinstance(image, Image):
-                raise TypeError("All images must be of type Image")
-        shapes = [x.array.shape for x in self.images]
-        if all([x == shapes[0] for x in shapes]):
-            pass
-        else:
-            raise ValueError("All images must have the same shape")
+        # check if all images have a PyTorch tensor representation
+        check_and_raise_cond(all([image.is_array_present for image in self.images]), "All images must have a PyTorch tensor representation", ValueError)
+        # Check if all images are of type Image
+        check_and_raise_cond(all([isinstance(image, Image) for image in self.images]), "All images must be of type Image", TypeError)
+        # check if all images have the same shape
+        shapes = [x.array.shape[2:] for x in self.images]
+        check_and_raise_cond(all([x == shapes[0] for x in shapes]), "All images must have the same shape", ValueError)
+        # set the number of images
         self.n_images = len(self.images)
         self.interpolate_mode = 'bilinear' if len(self.images[0].shape) == 4 else 'trilinear'
         self.broadcasted = False
+        # create a batch tensor
+        self.batch_tensor = torch.cat([x.array for x in self.images], dim=0) if self.n_images > 1 else self.images[0].array
+        # delete the arrays of the images if multiple images
+        if optimize_memory and len(self.images) > 1:
+            logger.info("Deleting the arrays of the images")
+            for image in self.images:
+                image.delete_array()
+        # create metadata
+        self.torch2phy = torch.cat([x.torch2phy for x in self.images], dim=0)
+        self.phy2torch = torch.cat([x.phy2torch for x in self.images], dim=0)
 
     def __call__(self):
         '''Get the batch of images.
         '''
         if self.broadcasted:
             minusones = [-1] * (len(self.images[0].shape) - 1)
-            return self.images[0].array.expand(self.n_images, *minusones)
+            return self.batch_tensor.expand(self.n_images, *minusones)
         else:
-            return torch.cat([x.array for x in self.images], dim=0)
+            return self.batch_tensor
     
     def broadcast(self, n):
         '''Broadcast the batch to n channels.
@@ -203,8 +283,9 @@ class BatchedImages:
     
     def __del__(self):
         '''Delete all Image objects in the batch.'''
-        for image in self.images:
-            del image
+        del self.batch_tensor
+        del self.torch2phy
+        del self.phy2torch
     
     @property
     def device(self):
@@ -228,17 +309,44 @@ class BatchedImages:
         return shape
     
     def get_torch2phy(self):
-        return torch.cat([x.torch2phy for x in self.images], dim=0)
+        return self.torch2phy
     
     def get_phy2torch(self):
-        return torch.cat([x.phy2torch for x in self.images], dim=0)
+        return self.phy2torch
 
 
 if __name__ == '__main__':
+    from fireants.utils.util import get_tensor_memory_details
     from glob import glob
-    files = sorted(glob("/data/IBSR_braindata/IBSR_01/*nii.gz"))
-    image = Image.load_file(files[2])
-    print(image.array.shape, image.array.min(), image.array.max())
-    # get label
-    label = Image.load_file(files[-1], is_segmentation=True)
-    print(label.array.shape, label.array.min(), label.array.max())
+    # files = sorted(glob("/data/rohitrango/IBSR_braindata/IBSR_01/*nii.gz"))
+    file = "/mnt/rohit_data2/fMOST/subject/15257_red_mm_IRA.nii.gz"
+    # torch.cuda.memory._record_memory_history()
+
+    image = Image.load_file(file)
+    details = get_tensor_memory_details()
+    for tensor, size, _, _ in details:
+        print(tensor.shape, size)
+    
+    # torch.cuda.memory._dump_snapshot("image.pkl")
+    # print(image.array.shape, image.array.min(), image.array.max())
+    # # get label
+    # label = Image.load_file(files[-1], is_segmentation=True)
+    # print(label.array.shape, label.array.min(), label.array.max())
+
+    # Check concatenation
+    mem_start = torch.cuda.memory_allocated()
+    t1 = Image.load_file("/data/rohitrango/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t1.nii.gz")
+    t2 = Image.load_file("/data/rohitrango/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t2.nii.gz")
+    t1ce = Image.load_file("/data/rohitrango/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t1ce.nii.gz")
+    flair = Image.load_file("/data/rohitrango/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_flair.nii.gz")
+    t1.concatenate(t2, t1ce, flair)
+    print(t1.array.shape)
+    print(t2.is_array_present, t1ce.is_array_present, flair.is_array_present)
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
+    mem_end = torch.cuda.memory_allocated()
+    print(f"Memory allocated: {(mem_end - mem_start)/1024**2:.4f} MB")
+    details = get_tensor_memory_details()
+    for tensor, size, _, _ in details:
+        print(tensor.shape, size)
+

@@ -10,6 +10,7 @@ from typing import Union, Tuple, List, Optional, Dict, Any, Callable
 from fireants.types import ItemOrList
 import fireants_fused_ops as ffo
 from fireants.losses.cc import LocalNormalizedCrossCorrelationLoss
+from fireants.tests.cc_mem_test import fast_lncc
 
 reduction_table = {
     'none': ffo.Reduction.NONE,
@@ -22,16 +23,16 @@ class FusedNCC3d(torch.autograd.Function):
     def forward(ctx, input_img, target_img, kernel_size, nr, dr, reduction):
         reduction = reduction_table[reduction.lower()]
         B, C, H, W, D = input_img.shape
-        interm = torch.zeros(B, 5 * C, H, W, D, device=input_img.device)
-        interm[:, :C, :, :, :].data.copy_(input_img)
-        interm[:, C:2*C, :, :, :].data.copy_(target_img)
-        interm[:, 2*C:3*C, :, :, :].data.copy_(input_img).mul_(input_img)
-        interm[:, 3*C:4*C, :, :, :].data.copy_(target_img).mul_(target_img)
-        interm[:, 4*C:, :, :, :].data.copy_(input_img).mul_(target_img)  # [B, 5C, H, W, D]
-        print(interm.device)
+        interm = torch.zeros(B, 5 * C, H, W, D, device=input_img.device, dtype=input_img.dtype)
+        interm[:, :C, :, :, :] = input_img
+        interm[:, C:2*C, :, :, :] = target_img
+        interm[:, 2*C:3*C, :, :, :] = input_img * input_img
+        interm[:, 3*C:4*C, :, :, :] = target_img * target_img
+        interm[:, 4*C:, :, :, :] = input_img * target_img  # [B, 5C, H, W, D]
+        # torch.cat uses more memory
         # compute kernel 
         kernel_vol = kernel_size ** 3
-        avg_filt = torch.ones(5*C, 1, kernel_size, kernel_size, kernel_size, device=input_img.device) / kernel_vol
+        avg_filt = torch.ones(5*C, 1, kernel_size, kernel_size, kernel_size, device=input_img.device, dtype=input_img.dtype) / kernel_vol
         padding = (kernel_size - 1) // 2
         interm = F.conv3d(interm, avg_filt, padding=padding, stride=1, groups=interm.shape[1])
         out = ffo.cc3d_fwd_interm_v1(interm, int(kernel_vol), reduction, nr, dr)
@@ -136,13 +137,25 @@ if __name__ == '__main__':
         out_baseline_time = time() - start
         baseline_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory  # Subtract input memory
 
+        # baseline 2
+        torch.cuda.reset_peak_memory_stats()
+        start = time()
+        out_baseline2 = fast_lncc(img1, img2, 3)
+        torch.cuda.synchronize()
+        out_baseline2_time = time() - start
+        baseline2_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory  # Subtract input memory
+
         out1 = -out.item()
         out2 = out_baseline.item()
+        out3 = out_baseline2.item()
         rel_err = abs(out1 - out2) / abs(out2)
-        print(f"N: {N}, rel_err: {rel_err}")
+        rel_err2 = abs(out1 - out3) / abs(out3)
+        print(f"N: {N}, rel_err: {rel_err}, rel_err2: {rel_err2}")
+        print(f"out: {out1}, out_baseline: {out2}, out_baseline2: {out3}")
         print(f"out_time: {out_time:.4f}, out_baseline_time: {out_baseline_time:.4f}, speed up: {out_baseline_time / out_time:.2f}x")
+        print(f"out_time2: {out_baseline2_time:.4f}, out_baseline_time2: {out_baseline2_time:.4f}, speed up: {out_baseline2_time / out_time:.2f}x")
         print(f"Input memory: {input_memory:.2f}MB")
-        print(f"Fused memory (excluding input): {fused_memory:.2f}MB, Baseline memory (excluding input): {baseline_memory:.2f}MB")
-        print(f"Memory reduction: {baseline_memory/fused_memory:.4f}x")
+        print(f"Fused memory (excluding input): {fused_memory:.2f}MB, Baseline memory (excluding input): {baseline_memory:.2f}MB, Baseline2 memory (excluding input): {baseline2_memory:.2f}MB")
+        print(f"Memory reduction: {baseline_memory/fused_memory:.4f}x, {baseline2_memory/fused_memory:.4f}x")
         print()
 

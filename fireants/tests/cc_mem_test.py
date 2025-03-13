@@ -27,7 +27,7 @@ def fast_lncc(Ii:torch.Tensor, Ji:torch.Tensor, win:Optional[int]=3):
         win = [win] * ndims
 
     # compute filters
-    sum_filt = torch.ones([5, 1, *win], device='cuda')
+    sum_filt = torch.ones([5, 1, *win], device=Ii.device, dtype=Ii.dtype)
     pad_no = math.floor(win[0] / 2)
 
     if ndims == 1:

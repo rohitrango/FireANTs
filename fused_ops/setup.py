@@ -19,10 +19,10 @@ setup(
             ],
             include_dirs=[include_dir] + torch.utils.cpp_extension.include_paths(),
             library_dirs=torch.utils.cpp_extension.library_paths(),
-            extra_compile_args={
-                'cxx': ['-O3'],
-                'nvcc': ['-O3']
-            }
+            # extra_compile_args={
+            #     'cxx': ['-O3'],
+            #     'nvcc': ['-O3']
+            # }
         )
     ],
     cmdclass={'build_ext': cpp_extension.BuildExtension},

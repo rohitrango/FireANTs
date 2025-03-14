@@ -14,5 +14,9 @@ PYBIND11_MODULE(fireants_fused_ops, m) {
     m.def("cc3d_fwd_interm_v1", &cc3d_fwd_interm_v1, "Forward pass of cross-correlation given intermediates", 
     py::arg("intermediates"), py::arg("kernel_volume"), py::arg("reduction") = Reduction::MEAN, py::arg("nr") = 0.0, py::arg("dr") = 1e-5);
 
+    m.def("cc3d_bwd_interm_v1", &cc3d_bwd_interm_v1, "Backward pass of cross-correlation given intermediates", 
+    py::arg("intermediates"), py::arg("input_img"), py::arg("target_img"), py::arg("grad_output"), py::arg("grad_input_img"), py::arg("grad_target_img"), py::arg("kernel_size"), py::arg("nr") = 0.0, py::arg("dr") = 1e-5, py::arg("reduction") = Reduction::MEAN);
 
+    m.def("create_intermediates", &create_intermediates, "Create intermediates for cross-correlation",
+        py::arg("input_img"), py::arg("target_img"), py::arg("intermediates"));
 }

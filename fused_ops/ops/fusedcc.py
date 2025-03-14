@@ -6,11 +6,13 @@ import torch
 from torch.utils.checkpoint import checkpoint
 from torch import nn
 from torch.nn import functional as F
+import sys
 from typing import Union, Tuple, List, Optional, Dict, Any, Callable
 from fireants.types import ItemOrList
 import fireants_fused_ops as ffo
 from fireants.losses.cc import LocalNormalizedCrossCorrelationLoss
 from fireants.tests.cc_mem_test import fast_lncc
+
 
 reduction_table = {
     'none': ffo.Reduction.NONE,
@@ -24,11 +26,12 @@ class FusedNCC3d(torch.autograd.Function):
         reduction = reduction_table[reduction.lower()]
         B, C, H, W, D = input_img.shape
         interm = torch.zeros(B, 5 * C, H, W, D, device=input_img.device, dtype=input_img.dtype)
-        interm[:, :C, :, :, :] = input_img
-        interm[:, C:2*C, :, :, :] = target_img
-        interm[:, 2*C:3*C, :, :, :] = input_img * input_img
-        interm[:, 3*C:4*C, :, :, :] = target_img * target_img
-        interm[:, 4*C:, :, :, :] = input_img * target_img  # [B, 5C, H, W, D]
+        # interm[:, :C, :, :, :] = input_img
+        # interm[:, C:2*C, :, :, :] = target_img
+        # interm[:, 2*C:3*C, :, :, :] = input_img * input_img
+        # interm[:, 3*C:4*C, :, :, :] = target_img * target_img
+        # interm[:, 4*C:, :, :, :] = input_img * target_img  # [B, 5C, H, W, D]
+        ffo.create_intermediates(input_img, target_img, interm)
         # torch.cat uses more memory
         # compute kernel 
         kernel_vol = kernel_size ** 3
@@ -36,17 +39,29 @@ class FusedNCC3d(torch.autograd.Function):
         padding = (kernel_size - 1) // 2
         interm = F.conv3d(interm, avg_filt, padding=padding, stride=1, groups=interm.shape[1])
         out = ffo.cc3d_fwd_interm_v1(interm, int(kernel_vol), reduction, nr, dr)
-        ctx.save_for_backward(interm, input_img, target_img, kernel_size, nr, dr, reduction)
+        ctx.save_for_backward(interm, input_img, target_img, out)
+        ctx.kernel_size = kernel_size
+        ctx.nr = nr
+        ctx.dr = dr 
+        ctx.reduction = reduction
         return out
     
     @staticmethod
     def backward(ctx, grad_output):
-        interm, input_img, target_img, kernel_size, nr, dr, reduction = ctx.saved_tensors
-        # B, C, H, W, D = input_img.shape
-        # grad_input_img = torch.zeros(B, C, H, W, D, device=input_img.device)
-        # grad_target_img = torch.zeros(B, C, H, W, D, device=input_img.device)
-        # ffo.cc3d_bwd_interm_v1(interm, input_img, target_img, grad_output, grad_input_img, grad_target_img, kernel_size, nr, dr, reduction)
-        return None, None, None, None, None, None, None
+        # retrieve saved tensors
+        interm, input_img, target_img, out = ctx.saved_tensors
+        kernel_size, nr, dr, reduction = ctx.kernel_size, ctx.nr, ctx.dr, ctx.reduction
+        B, C, H, W, D = input_img.shape
+        # initialize gradients
+        grad_input_img = None
+        grad_target_img = None
+        if input_img.requires_grad:
+            grad_input_img = torch.zeros(B, C, H, W, D, device=input_img.device, dtype=input_img.dtype)
+        if target_img.requires_grad:
+            grad_target_img = torch.zeros(B, C, H, W, D, device=input_img.device, dtype=input_img.dtype)
+        ffo.cc3d_bwd_interm_v1(interm, input_img, target_img, grad_output, grad_input_img, grad_target_img, kernel_size, nr, dr, reduction)
+        return grad_input_img, grad_target_img, None, None, None, None
+
 
 class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
     """
@@ -106,6 +121,24 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         return FusedNCC3d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction)
 
 if __name__ == '__main__':
+    # check backward
+    # N = 32
+    # img1 = torch.randn(1, 1, N, N, N).cuda()
+    # img2 = torch.randn(1, 1, N, N, N).cuda().requires_grad_(True)
+    # # tensor = img2 
+    # # print(tensor.shape)
+    # # print(tensor.is_contiguous())
+    # # print(tensor.storage().data_ptr())  # Check memory address
+    # # print(tensor.is_contiguous(memory_format=torch.contiguous_format))
+    # # print("--------------------------------")
+
+    # loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=3, reduction='mean').cuda()
+    # out = loss(img1, img2)
+    # print(out)
+    # out.backward()
+    # print(img2.grad)
+    # sys.exit()
+
     for i in range(4, 10):
         N = 2 ** i
         img1 = torch.rand(1, 1, N, N, N).cuda()

@@ -1,8 +1,8 @@
 from fireants.registration.abstract import AbstractRegistration
-from typing import List, Optional
+from typing import List, Optional, Union
 import torch
 from torch import nn
-from fireants.io.image import BatchedImages
+from fireants.io.image import BatchedImages, FakeBatchedImages
 from torch.optim import SGD, Adam
 from torch.nn import functional as F
 from tqdm import tqdm
@@ -167,7 +167,10 @@ class RigidRegistration(AbstractRegistration):
         matclone[:, :-1, -1] = self.transl  # [N, dim+1, dim+1]
         return matclone if homogenous else matclone[:, :-1, :]  # [N, dim, dim+1]
     
-    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
+    def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
+        pass
+    
+    def get_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         """Compute transformed coordinates for the rigid registration.
 
         Applies the rigid transformation (rotation, translation, scaling) to map

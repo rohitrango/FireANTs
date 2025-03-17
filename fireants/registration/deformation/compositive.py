@@ -15,8 +15,6 @@ from fireants.utils.util import grad_smoothing_hook
 from fireants.utils.imageutils import jacobian
 from fireants.registration.optimizers.sgd import WarpSGD
 from fireants.registration.optimizers.adam import WarpAdam
-from fireants.utils.imageutils import compute_inverse_warp_exp
-from fireants.utils.imageutils import compute_inverse_warp_displacement
 from fireants.utils.globals import MIN_IMG_SIZE
 
 from logging import getLogger
@@ -30,7 +28,7 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
     def __init__(self, fixed_images: BatchedImages, moving_images: BatchedImages,
                 optimizer: str = 'Adam', optimizer_lr: float = 1e-2, optimizer_params: dict = {},
                 init_scale: int = 1, 
-                smoothing_grad_sigma: float = 0.5, smoothing_warp_sigma: float = 0.5, optimize_inverse_warp: bool = False,
+                smoothing_grad_sigma: float = 0.5, smoothing_warp_sigma: float = 0.5, 
                 freeform: bool = False,
                 ) -> None:
         super().__init__()
@@ -46,18 +44,11 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
             getLogger("CompositiveWarp").warning(f'optimizer_lr is {optimizer_lr}, which is very high. Unexpected registration may occur.')
 
         # define warp and register it as a parameter
-        # define inverse warp and register it as a buffer
-        self.optimize_inverse_warp = optimize_inverse_warp
         # set size
         if init_scale > 1:
             spatial_dims = [max(int(s / init_scale), MIN_IMG_SIZE) for s in spatial_dims]
         warp = torch.zeros([num_images, *spatial_dims, self.n_dims], dtype=torch.float32, device=fixed_images.device)  # [N, HWD, dims]
         self.register_parameter('warp', nn.Parameter(warp))
-        if self.optimize_inverse_warp:
-            inv = torch.zeros([num_images, *spatial_dims, self.n_dims], dtype=torch.float32, device=fixed_images.device)  # [N, HWD, dims]
-        else:
-            inv = torch.zeros([1], dtype=torch.float32, device=fixed_images.device)  # dummy
-        self.register_buffer('inv', inv)
 
         # attach grad hook if smooothing of the gradient is required
         self.smoothing_grad_sigma = smoothing_grad_sigma
@@ -71,10 +62,10 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
         if self.smoothing_warp_sigma > 0:
             smoothing_warp_gaussians = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=fixed_images.device) + smoothing_warp_sigma)]
             oparams['smoothing_gaussians'] = smoothing_warp_gaussians
+        # if self.smoothing_grad_sigma > 0:
+        #     smoothing_grad_gaussians = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=fixed_images.device) + smoothing_grad_sigma)]
+        #     oparams['grad_gaussians'] = smoothing_grad_gaussians
 
-        oparams['optimize_inverse_warp'] = optimize_inverse_warp
-        if optimize_inverse_warp:
-            oparams['warpinv'] = self.inv
         if oparams.get('freeform') is None:
             oparams['freeform'] = freeform
         # add optimizer
@@ -110,15 +101,26 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
         warp = self.warp
         return warp
     
-    def get_inverse_warp(self, n_iters:int=20, debug: bool = False, lr=0.1):
-        ''' run an optimization procedure to get the inverse warp '''
-        if self.optimize_inverse_warp:
-            invwarp = self.inv
-            invwarp = compute_inverse_warp_displacement(self.warp.data, self.grid, invwarp, iters=n_iters)
-        else:
-            # no invwarp is defined, start from scratch
-            invwarp = compute_inverse_warp_displacement(self.warp.data, self.grid, -self.warp.data, iters=n_iters)
-        return invwarp
+    def get_inverse_warp(self):
+        raise NotImplementedError('Inverse warp not implemented for compositive warp, use `compositive_warp_inverse` from warputils.py instead')
+    
+    # def get_inverse_warp(self, n_iters:int=20, debug: bool = False, lr=0.01, optimizer='SGD'):
+    #     ''' run an optimization procedure to get the inverse warp '''
+    #     warp_gaussian = None
+    #     grad_gaussian = None
+    #     print("using lr", lr)
+    #     if self.smoothing_warp_sigma > 0:
+    #         warp_gaussian = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=self.device) + self.smoothing_warp_sigma)]
+    #     if self.smoothing_grad_sigma > 0:
+    #         grad_gaussian = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=self.device) + self.smoothing_grad_sigma)]
+
+    #     if self.optimize_inverse_warp:
+    #         invwarp = self.inv
+    #         invwarp = compute_inverse_warp_displacement(self.warp.data.detach(), self.grid, invwarp, iters=n_iters, lr=lr, warp_gaussian=warp_gaussian, grad_gaussian=grad_gaussian, debug=debug, optimizer=optimizer)
+    #     else:
+    #         # no invwarp is defined, start from scratch
+    #         invwarp = compute_inverse_warp_displacement(self.warp.data.detach(), self.grid, -self.warp.data, iters=n_iters, lr=lr, warp_gaussian=warp_gaussian, grad_gaussian=grad_gaussian, debug=debug, optimizer=optimizer)
+    #     return invwarp
 
     def set_size(self, size):
         # print(f"Setting size to {size}")
@@ -129,10 +131,10 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
                     ).permute(*self.permute_imgtov)
         self.register_parameter('warp', nn.Parameter(warp))
         # set new inverse displacement field
-        if len(self.inv.shape) > 1:
-            self.inv = F.interpolate(self.inv.permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True).permute(*self.permute_imgtov)
+        # if len(self.inv.shape) > 1:
+        #     self.inv = F.interpolate(self.inv.permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True).permute(*self.permute_imgtov)
         self.attach_grad_hook()
-        self.optimizer.set_data_and_size(self.warp, size, warpinv=self.inv if self.optimize_inverse_warp else None)
+        self.optimizer.set_data_and_size(self.warp, size)
         # interpolate inverse warp if it exists
         self.initialize_grid()
 
@@ -151,4 +153,4 @@ if __name__ == '__main__':
             print(loss)
         loss.backward()
         deformation.step()
-    w = deformation.get_inverse_warp(debug=True)
+    # w = deformation.get_inverse_warp(debug=True)

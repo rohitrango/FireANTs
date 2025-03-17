@@ -11,9 +11,47 @@ from scipy.ndimage import zoom
 from fireants.io.image import BatchedImages, Image
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.types import ItemOrList
-from fireants.registration import GreedyRegistration
+
+# from fireants.registration import GreedyRegistration
+## using this to prevent circular import
+import fireants.registration as regmodule
 
 ## Will contain standard warp processing functions
+class InverseConsistencyOperator(nn.Module):
+    '''
+    Multi-scale inverse consistency operator (to compute inverse of warp)
+    '''
+    def __init__(self, ref_warp: torch.Tensor):
+        super().__init__()
+        self.ref_warp = ref_warp.detach()
+        self.dims = len(ref_warp.shape) - 2
+        if self.dims == 3:  
+            self.permute_vtoimg = (0, 4, 1, 2, 3)       # [b, h, w, d, c] -> [b, c, h, w, d]
+            self.permute_imgtov = (0, 2, 3, 4, 1)
+        elif self.dims == 2:
+            self.permute_vtoimg = (0, 3, 1, 2)
+            self.permute_imgtov = (0, 2, 3, 1)
+        else:
+            raise ValueError('Only 2D and 3D warps are supported')
+    
+    def forward(self, warp: torch.Tensor):
+        ''' compute the inverse consistency loss '''
+        shape = [1, 1] + list(warp.shape[1:-1])
+        ref_shape = [1, 1] + list(self.ref_warp.shape[1:-1])
+        if ref_shape != shape:
+            linear = 'bilinear' if self.dims == 2 else 'trilinear'
+            ref_warp_i = F.interpolate(self.ref_warp.permute(*self.permute_vtoimg), shape[2:], mode=linear, align_corners=True).permute(*self.permute_imgtov)
+        else:
+            ref_warp_i = self.ref_warp
+        # init grid
+        grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=warp.device)[None], shape, align_corners=True)
+        # psi(phi(x))
+        loss1 = F.grid_sample(warp.permute(*self.permute_vtoimg), ref_warp_i, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
+        loss1 = F.mse_loss(loss1, grid)
+        # phi(psi(y))
+        loss2 = F.grid_sample(ref_warp_i.permute(*self.permute_vtoimg), warp, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
+        loss2 = F.mse_loss(loss2, grid)
+        return loss1 + loss2
 
 class ShapeAveragingOperator(nn.Module):
     def __init__(self, ref_warp: torch.Tensor):
@@ -51,7 +89,7 @@ def shape_averaging_invwarp(
     ''' 
     Optimize the warp using the template image and the reference warp
     '''
-    reg = GreedyRegistration( 
+    reg = regmodule.GreedyRegistration( 
         scales=scales,
         iterations=iterations,
         fixed_images=template_image,
@@ -79,6 +117,34 @@ def shape_averaging_invwarp(
     # add the grid to the inverse warp
     inverse_warp = inverse_warp + grid
     return inverse_warp
+
+
+def compositive_warp_inverse(image: BatchedImages, ref_warp: torch.Tensor,
+                        scales: List[float] = [8, 4, 2, 1], 
+                        iterations: List[int] = [200, 200, 100, 50],
+                        smooth_grad_sigma: float = 2,
+                        smooth_warp_sigma: float = 2,
+                        displacement: bool = False,
+                        ):
+    '''
+    Utility to compute the inverse of a compositive warp
+    '''
+    reg = regmodule.GreedyRegistration( 
+        scales=scales,
+        iterations=iterations,
+        fixed_images=image,
+        moving_images=image,
+        loss_type='noop',
+        deformation_type='compositive',
+        optimizer='adam',
+        optimizer_lr=0.5,
+        warp_reg=InverseConsistencyOperator(ref_warp),
+        smooth_grad_sigma=smooth_grad_sigma,
+        smooth_warp_sigma=smooth_warp_sigma,
+    )
+    reg.optimize(False)
+    return reg.get_warped_coordinates(image, image, displacement=displacement)
+
 
 ### Utility to convert dense warp fields from pytorch format to scipy format
 ### Used to submit to learn2reg challenge 

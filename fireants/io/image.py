@@ -314,6 +314,39 @@ class BatchedImages:
     def get_phy2torch(self):
         return self.phy2torch
 
+class FakeBatchedImages:
+    '''     
+    A class to handle fake batches of images.
+    This is used to handle the case where the user passes a tensor to the registration class
+    instead of a BatchedImages object.
+
+    We will use the metadata of the BatchedImages object to create a FakeBatchedImages object.
+    with the content of the tensor.
+    '''
+    def __init__(self, tensor: torch.Tensor, batched_images: BatchedImages) -> None:
+        self.tensor = tensor
+        self.batched_images = batched_images
+    
+    def __call__(self):
+        return self.tensor
+    
+    def get_torch2phy(self):
+        return self.batched_images.torch2phy
+    
+    def get_phy2torch(self):
+        return self.batched_images.phy2torch
+    
+    @property
+    def device(self):
+        return self.tensor.device
+    
+    @property
+    def dims(self):
+        return self.tensor.ndim - 2
+    
+    @property
+    def shape(self):
+        return self.tensor.shape
 
 if __name__ == '__main__':
     from fireants.utils.util import get_tensor_memory_details

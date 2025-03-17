@@ -3,17 +3,17 @@ import numpy as np
 from typing import List, Optional, Union, Callable
 import torch
 from torch import nn
-from fireants.io.image import BatchedImages
+from fireants.io.image import BatchedImages, FakeBatchedImages
 from torch.optim import SGD, Adam
 from torch.nn import functional as F
 from fireants.utils.globals import MIN_IMG_SIZE
-from fireants.io.image import BatchedImages
 from fireants.registration.abstract import AbstractRegistration
 from fireants.registration.deformation.compositive import CompositiveWarp
 from fireants.registration.deformation.svf import StationaryVelocity
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 from fireants.utils.util import compose_warp
+from fireants.utils.warputils import compositive_warp_inverse
 
 from fireants.registration.deformablemixin import DeformableMixin
 
@@ -54,8 +54,6 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         displacement_reg (Optional[Union[Callable, nn.Module]], optional): Regularization on displacement field.
             Defaults to None.
         blur (bool, optional): Whether to blur images during downsampling. Defaults to True.
-        optimize_inverse_warp_rev (bool, optional): Whether to optimize inverse warp for reverse transform.
-            Defaults to True.
         custom_loss (nn.Module, optional): Custom loss module. Defaults to None.
 
     Attributes:
@@ -82,7 +80,6 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                 warp_reg: Optional[Union[Callable, nn.Module]] = None,
                 displacement_reg: Optional[Union[Callable, nn.Module]] = None,
                 blur: bool = True,
-                optimize_inverse_warp_rev: bool = True,
                 custom_loss: nn.Module = None, **kwargs) -> None:
         # initialize abstract registration
         # nn.Module.__init__(self)
@@ -106,9 +103,9 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                                         smoothing_grad_sigma=smooth_grad_sigma)
         elif deformation_type == 'compositive':
             fwd_warp = CompositiveWarp(fixed_images, moving_images, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params, \
-                                   smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma, optimize_inverse_warp=False)
+                                   smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma)
             rev_warp = CompositiveWarp(fixed_images, moving_images, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params, \
-                                   smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma, optimize_inverse_warp=optimize_inverse_warp_rev)
+                                   smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma)
             smooth_warp_sigma = 0  # this work is delegated to compositive warp
         else:
             raise ValueError('Invalid deformation type: {}'.format(deformation_type))
@@ -120,7 +117,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D+1, D+1]
         self.affine = init_affine.detach()
 
-    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None, displacement=False):
+    def get_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None, displacement=False):
         """Get transformed coordinates for warping the moving image.
 
         Computes the coordinate transformation from fixed to moving image space
@@ -143,7 +140,6 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         """
         fixed_arrays = fixed_images()
 
-        # TODO: use the shape
         if shape is None:
             shape = fixed_images.shape
         else:
@@ -159,7 +155,8 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         fixed_image_vgrid  = F.affine_grid(init_grid, fixed_arrays.shape, align_corners=True)
         # get warps
         fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
-        rev_inv_warp_field = self.rev_warp.get_inverse_warp(n_iters=50, debug=False, lr=0.1)
+        rev_inv_warp_field = compositive_warp_inverse(fixed_images, self.rev_warp.get_warp() + fixed_image_vgrid, displacement=True)
+
         # # smooth them out
         if self.smooth_warp_sigma > 0:
             warp_gaussian = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.dims, device=fixed_arrays.device) + self.smooth_warp_sigma)]
@@ -174,14 +171,9 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             moved_coords_final = moved_coords_final - init_grid
         return moved_coords_final
 
-    # def evaluate(self, fixed_images: BatchedImages, moving_images: BatchedImages):
-    #     '''
-    #     Evaluate on a pair of images (hopefully the same images or labels with same metadata) 
-    #     '''
-    #     moving_arrays = moving_images()
-    #     moved_coords_final = self.get_warped_coordinates(fixed_images, moving_images)
-    #     moved_image = F.grid_sample(moving_arrays, moved_coords_final, mode='bilinear', align_corners=True)
-    #     return moved_image
+    def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
+        raise NotImplementedError('Inverse warp not implemented for SyN registration')
+
 
     def optimize(self, save_transformed=False):
         """Optimize the symmetric deformation parameters.
@@ -283,7 +275,8 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             # save transformed image
             if save_transformed:
                 fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
-                rev_inv_warp_field = self.rev_warp.get_inverse_warp(n_iters=50, debug=True, lr=0.1)
+                # rev_inv_warp_field = self.rev_warp.get_inverse_warp(n_iters=50, debug=True, lr=0.1)
+                rev_inv_warp_field = compositive_warp_inverse(self.fixed_images, self.rev_warp.get_warp() + fixed_image_vgrid, displacement=True)
                 # # smooth them out
                 if self.smooth_warp_sigma > 0:
                     fwd_warp_field = separable_filtering(fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg), warp_gaussian).permute(*self.fwd_warp.permute_imgtov)

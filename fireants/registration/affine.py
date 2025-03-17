@@ -1,8 +1,8 @@
 from fireants.registration.abstract import AbstractRegistration
-from typing import List, Optional
+from typing import List, Optional, Union
 import torch
 from torch import nn
-from fireants.io.image import BatchedImages
+from fireants.io.image import BatchedImages, FakeBatchedImages
 from torch.optim import SGD, Adam
 from torch.nn import functional as F
 from fireants.utils.globals import MIN_IMG_SIZE
@@ -93,6 +93,9 @@ class AffineRegistration(AbstractRegistration):
         else:
             raise ValueError(f"Optimizer {optimizer} not supported")
     
+    def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
+        pass
+    
     def get_affine_matrix(self, homogenous=True):
         """Get the current affine transformation matrix.
 
@@ -107,7 +110,7 @@ class AffineRegistration(AbstractRegistration):
         """
         return torch.cat([self.affine, self.row], dim=1) if homogenous else self.affine
     
-    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
+    def get_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         """Get transformed coordinates for warping the moving image.
 
         Computes the coordinate transformation from fixed to moving image space

@@ -164,6 +164,25 @@ class AbstractRegistration(ABC):
         '''
         pass
 
+    def save_moved_images(self, moved_images: Union[BatchedImages, FakeBatchedImages, torch.Tensor], filenames: Union[str, List[str]], moving_to_fixed: bool = True):
+        '''
+        Save the moved images to disk.
+
+        Args:
+            moved_images (Union[BatchedImages, FakeBatchedImages, torch.Tensor]): The moved images to save.
+            filenames (Union[str, List[str]]): The filenames to save the moved images to.
+            moving_to_fixed (bool, optional): If True, the moving images are saved to the fixed image space. Defaults to True.
+                if False, we are dealing with an image that is moved from fixed space to moving space            
+        '''
+        if isinstance(moved_images, BatchedImages):
+            moved_images_save = FakeBatchedImages(moved_images(), moved_images)   # roundabout way to call the fakebatchedimages
+        elif isinstance(moved_images, torch.Tensor):
+            moved_images_save = FakeBatchedImages(moved_images, self.fixed_images if moving_to_fixed else self.moving_images)
+        else:
+            # if it is already a fakebatchedimages, we can just use it
+            moved_images_save = moved_images
+        moved_images_save.write_image(filenames)
+
 
     def evaluate_inverse(self, fixed_images: Union[BatchedImages, torch.Tensor], moving_images: Union[BatchedImages, torch.Tensor], shape=None, **kwargs):
         ''' Apply the inverse of the learned transformation to new images.

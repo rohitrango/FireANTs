@@ -189,7 +189,7 @@ def image_gradient(image, normalize=False):
     else:
         raise NotImplementedError('Multichannel images not supported yet')
 
-def integer_to_onehot(image: torch.Tensor, background_label:int=0, max_label=None):
+def integer_to_onehot(image: torch.Tensor, background_label:int=0, dtype: torch.dtype = None, max_label=None):
     ''' convert an integer map into one hot mapping
     assumed the image is of size [H, W, [D]] and we convert it into [C, H, W, [D]]
 
@@ -205,7 +205,8 @@ def integer_to_onehot(image: torch.Tensor, background_label:int=0, max_label=Non
         num_labels = max_label
     else:
         num_labels = max_label + 1
-    onehot = torch.zeros((num_labels, *image.shape), dtype=torch.float32, device=image.device)
+    dtype = dtype if dtype is not None else image.dtype
+    onehot = torch.zeros((num_labels, *image.shape), dtype=dtype, device=image.device)
     count = 0
     for i in range(num_labels+1):
         if i == background_label:

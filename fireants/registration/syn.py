@@ -115,7 +115,17 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         # initialize affine
         if init_affine is None:
             init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D+1, D+1]
-        self.affine = init_affine.detach()
+        B, D1, D2 = init_affine.shape
+        if D1 == self.dims+1 and D2 == self.dims+1:
+            self.affine = init_affine.detach()
+        elif D1 == self.dims and D2 == self.dims+1:
+            # attach row to affine
+            row = torch.zeros(self.opt_size, 1, self.dims+1, device=fixed_images.device)
+            row[:, 0, -1] = 1.0
+            self.affine = torch.cat([init_affine.detach(), row], dim=1)
+        else:
+            raise ValueError('Invalid initial affine shape: {}'.format(init_affine.shape))
+
 
     def get_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None, displacement=False):
         """Get transformed coordinates for warping the moving image.

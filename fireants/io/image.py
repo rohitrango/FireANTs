@@ -69,11 +69,19 @@ class Image:
         # if `is_segmentation` is False, then just treat this as an image with given dtype
         if not is_segmentation:
             self.array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(float)).to(device, dtype)
-            self.array.unsqueeze_(0).unsqueeze_(0)
             # self.array = self.array[None, None]   # TODO: Change it to support multichannel images, right now just batchify and add a dummy channel to it
             channels = itk_image.GetNumberOfComponentsPerPixel()
             self.channels = channels
-            assert channels == 1, "Only single channel images supported"
+            # assert channels == 1, "Only single channel images supported"
+            if channels > 1:
+                logger.warning("Image has multiple channels, make sure its not a spatial dimension")
+                # permute the channel dimension to the front
+                ndim = self.array.ndim
+                self.array = self.array.permute([ndim-1] + list(range(ndim-1))).contiguous() # permute to [C, H, W, D] from [H, W, D, C]
+            else:
+                self.array.unsqueeze_(0)
+            # add batch dimension
+            self.array.unsqueeze_(0)
         else:
             array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(int)).to(device).long()
             # preprocess segmentation if provided by user
@@ -167,7 +175,6 @@ class Image:
             t2 = Image.load_file(t2_path)
             flair = Image.load_file(flair_path)
             t1.concatenate(t2, flair, optimize_memory=True)   # deletes the arrays of t2 and flair after concatenation
-
         '''
         check_and_raise_cond(self.is_array_present, "Image must have a PyTorch tensor representation to concatenate", ValueError)
         if isinstance(others[0], list) and len(others) == 1:

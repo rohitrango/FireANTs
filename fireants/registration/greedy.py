@@ -84,6 +84,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                 warp_reg: Optional[Union[Callable, nn.Module]] = None,
                 displacement_reg: Optional[Union[Callable, nn.Module]] = None,
                 blur: bool = True,
+                freeform: bool = False,
                 custom_loss: nn.Module = None, **kwargs) -> None:
         # initialize abstract registration
         # nn.Module.__init__(self)
@@ -107,7 +108,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         elif deformation_type == 'compositive':
             warp = CompositiveWarp(fixed_images, moving_images, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params, \
                 dtype=self.dtype,
-                smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma, init_scale=scales[0])
+                smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma, init_scale=scales[0], freeform=freeform)
             smooth_warp_sigma = 0  # this work is delegated to compositive warp
         else:
             raise ValueError('Invalid deformation type: {}'.format(deformation_type))
@@ -115,7 +116,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         self.smooth_warp_sigma = smooth_warp_sigma   # in voxels
         # initialize affine
         if init_affine is None:
-            init_affine = torch.eye(self.dims+1, device=fixed_images.device, dtype=self.dtype).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, D, D+1]
+            init_affine = torch.eye(self.dims+1, device=fixed_images.device, dtype=self.dtype).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, D+1, D+1]
         self.affine = init_affine.detach().to(self.dtype)
     
     def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None, displacement=False):

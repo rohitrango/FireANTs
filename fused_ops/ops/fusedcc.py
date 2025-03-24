@@ -151,7 +151,7 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
 
 
 def test_fused_cc_fwd_and_mem():
-    for i in range(4, 10):
+    for i in range(6, 11):
     # torch.cuda.memory._record_memory_history()
     # for i in range(6, 7):
         N = 2 ** i
@@ -210,9 +210,7 @@ def test_fused_cc_fwd_and_mem():
 
 def test_fused_cc_bwd_and_mem():
     ''' check backward memory usage '''
-    for i in range(4, 10):
-    # torch.cuda.memory._record_memory_history()
-    # for i in range(8, 9):
+    for i in range(6, 11):
         N = 2 ** i
         eps = 1e-1
         img1 = (torch.rand(1, 1, N, N, N) + eps).cuda().requires_grad_(True)

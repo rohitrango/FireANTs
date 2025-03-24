@@ -83,6 +83,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                 displacement_reg: Optional[Union[Callable, nn.Module]] = None,
                 blur: bool = True,
                 optimize_inverse_warp_rev: bool = True,
+                freeform: bool = False,
                 custom_loss: nn.Module = None, **kwargs) -> None:
         # initialize abstract registration
         # nn.Module.__init__(self)
@@ -106,9 +107,9 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                                         smoothing_grad_sigma=smooth_grad_sigma)
         elif deformation_type == 'compositive':
             fwd_warp = CompositiveWarp(fixed_images, moving_images, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params, \
-                                   smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma, optimize_inverse_warp=False, dtype=self.dtype)
+                                   smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma, optimize_inverse_warp=False, dtype=self.dtype, freeform=freeform)
             rev_warp = CompositiveWarp(fixed_images, moving_images, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params, \
-                                   smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma, optimize_inverse_warp=optimize_inverse_warp_rev, dtype=self.dtype)
+                                   smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma, optimize_inverse_warp=optimize_inverse_warp_rev, dtype=self.dtype, freeform=freeform)
             smooth_warp_sigma = 0  # this work is delegated to compositive warp
         else:
             raise ValueError('Invalid deformation type: {}'.format(deformation_type))

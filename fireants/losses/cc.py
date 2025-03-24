@@ -228,8 +228,35 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         for _ in range(self.ndim - 1):
             vol = torch.matmul(vol.unsqueeze(-1), self.kernel.unsqueeze(0))
         return vol, torch.sum(vol)
-
+    
     def forward(self, pred: torch.Tensor, target: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Args:
+            pred: the shape should be BNH[WD].
+            target: the shape should be BNH[WD].
+        Raises:
+            ValueError: When ``self.reduction`` is not one of ["mean", "sum", "none"].
+        """
+        return self.forward_deprecated(pred, target, mask)
+
+        if pred.ndim - 2 != self.ndim:
+            raise ValueError(f"expecting pred with {self.ndim} spatial dimensions, got pred of shape {pred.shape}")
+        if target.shape != pred.shape:
+            raise ValueError(f"ground truth has differing shape ({target.shape}) from pred ({pred.shape})")
+
+        # 
+        t2, p2, tp = target * target, pred * pred, target * pred
+        # kernel, kernel_vol = kernel.to(pred), kernel_vol.to(pred)
+        kernel = self.kernel_nd.to(pred.dtype, device=pred.device)
+        # ksize = [self.kernel_size] * self.ndim
+        # kernel = torch.ones([1, 1, *ksize], device=pred.device, dtype=pred.dtype)
+        # pad_no = (self.kernel_size - 1) // 2
+        # # kernel_nd = self.kernel_nd.to(pred)
+        # kernels = [kernel] * self.ndim
+        # kernels_t = kernels_p = kernels
+        # kernel_vol_t = kernel_vol_p = kernel_vol
+
+    def forward_deprecated(self, pred: torch.Tensor, target: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Args:
             pred: the shape should be BNH[WD].

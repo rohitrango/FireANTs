@@ -34,6 +34,8 @@ def registration_results():
     # load images
     fixed_img = Image.load_file(str(test_data_dir / "oasis_157_image.nii.gz"))
     moving_img = Image.load_file(str(test_data_dir / "oasis_157_image_rotated.nii.gz"))
+    moving_img.array = moving_img.array * 1.0 / moving_img.array.max() * fixed_img.array.max()
+
     fixed_seg = Image.load_file(str(test_data_dir / "oasis_157_seg.nii.gz"), is_segmentation=True)
     moving_seg = Image.load_file(str(test_data_dir / "oasis_157_seg_rotated.nii.gz"), is_segmentation=True)
     

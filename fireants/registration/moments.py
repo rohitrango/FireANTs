@@ -10,9 +10,20 @@ import numpy as np
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 from fireants.utils.globals import MIN_IMG_SIZE
+from fireants.utils.util import check_and_raise_cond, augment_filenames, check_correct_ext, any_extension, savetxt
+from fireants.utils.globals import PERMITTED_ANTS_TXT_EXT, PERMITTED_ANTS_MAT_EXT
+from scipy.io import savemat
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 class MomentsRegistration(AbstractRegistration):
-
+    '''
+    Moments registration class.
+    TODO: 
+    - Add documentation
+    '''
     def __init__(self, scale: float, 
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 # moment matching params
@@ -156,6 +167,31 @@ class MomentsRegistration(AbstractRegistration):
         aff[:, :, :-1] = Rf
         aff[:, :, -1] = tf
         return aff
+    
+    def save_as_ants_transforms(self, filenames: Union[str, List[str]]):
+        ''' 
+        Save the registration as ANTs transforms (.mat file)
+        '''
+        if isinstance(filenames, str):
+            filenames = [filenames]
+
+        affine = self.get_affine_init()  # [N, d, d+1]
+        n = affine.shape[0]
+        check_and_raise_cond(len(filenames)==1 or len(filenames)==n, "Number of filenames must match the number of transforms")
+        check_and_raise_cond(check_correct_ext(filenames, PERMITTED_ANTS_TXT_EXT + PERMITTED_ANTS_MAT_EXT), "File extension must be one of {}".format(PERMITTED_ANTS_TXT_EXT + PERMITTED_ANTS_MAT_EXT))
+        filenames = augment_filenames(filenames, n, PERMITTED_ANTS_TXT_EXT + PERMITTED_ANTS_MAT_EXT)
+
+        for i in range(affine.shape[0]):
+            mat = affine[i]
+            mat = mat.cpu().numpy().astype(np.float32)
+            A = mat[:self.dims, :self.dims]
+            t = mat[:self.dims, -1]
+            if any_extension(filenames[i], PERMITTED_ANTS_MAT_EXT):
+                savemat(filenames[i], {'AffineTransform_float_3_3': mat, 'fixed': np.zeros((self.dims, 1)).astype(np.float32)})
+                raise NotImplementedError("This function does not work with ANTs mat files")
+            else:
+                savetxt(filenames[i], A, t)
+            logger.info(f"Saved transform to {filenames[i]}")
     
     def optimize_helper(self):
         ''' Optimize rigid registration for 3D images '''

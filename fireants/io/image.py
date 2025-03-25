@@ -10,10 +10,11 @@ from typing import Any, Union, List, Tuple
 from time import time
 from fireants.types import devicetype
 from fireants.utils.imageutils import integer_to_onehot
-from fireants.utils.util import check_and_raise_cond
+from fireants.utils.util import check_and_raise_cond, augment_filenames
 import logging
 from copy import deepcopy
 import os
+from fireants.utils.globals import PERMITTED_ANTS_WARP_EXT
 # logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -362,7 +363,7 @@ class FakeBatchedImages:
     def shape(self):
         return self.tensor.shape
     
-    def write_image(self, filenames: Union[str, List[str]]):
+    def write_image(self, filenames: Union[str, List[str]], permitted_ext: List[str] = PERMITTED_ANTS_WARP_EXT):
         """
         Save tensor elements to disk as SimpleITK images.
         
@@ -388,8 +389,8 @@ class FakeBatchedImages:
             filenames = [filenames]
         
         # Check if number of filenames matches number of images
-        if len(filenames) != batch_size and len(filenames) != 1:
-            raise ValueError(f"Number of filenames ({len(filenames)}) doesn't match number of images ({batch_size}) and is not 1.")
+        check_and_raise_cond(len(filenames)==1 or len(filenames)==batch_size, "Number of filenames must match the number of images or be 1", ValueError)
+        filenames = augment_filenames(filenames, batch_size, permitted_ext)
         
         # Process each image in the batch
         for i in range(batch_size):
@@ -426,23 +427,7 @@ class FakeBatchedImages:
             else:
                 raise ValueError("No corresponding BatchedImages object found for image {}".format(i))
             
-            # Determine the filename
-            if len(filenames) == 1:
-                # Split filename into base and extension
-                base, ext = os.path.splitext(filenames[0])
-                # Handle .nii.gz case
-                if ext == '.gz' and os.path.splitext(base)[1] == '.nii':
-                    base = os.path.splitext(base)[0]
-                    ext = '.nii.gz'
-                
-                # Create filename with index
-                if batch_size > 1:
-                    save_filename = f"{base}_img{i}{ext}"
-                else:
-                    save_filename = filenames[0]
-            else:
-                save_filename = filenames[i]
-            
+            save_filename = filenames[i]
             # Save the image
             sitk.WriteImage(itk_image, save_filename)
             logger.info(f"Saved image to {save_filename}")

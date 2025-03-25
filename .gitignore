@@ -26,4 +26,4 @@ fireants/scripts/template/evaltemplate/
 fireants/scripts/template/saved*/
 notepad
 **/*pkl
-
+tests/test_results/

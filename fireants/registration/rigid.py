@@ -3,6 +3,9 @@ from typing import List, Optional, Union
 import torch
 from torch import nn
 from fireants.io.image import BatchedImages, FakeBatchedImages
+from fireants.utils.util import check_and_raise_cond, augment_filenames, check_correct_ext, any_extension, savetxt
+from scipy.io import savemat
+from fireants.utils.globals import PERMITTED_ANTS_TXT_EXT, PERMITTED_ANTS_MAT_EXT
 from torch.optim import SGD, Adam
 from torch.nn import functional as F
 from tqdm import tqdm
@@ -10,6 +13,8 @@ import numpy as np
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 from fireants.utils.globals import MIN_IMG_SIZE
+import logging
+logger = logging.getLogger(__name__)
 
 class RigidRegistration(AbstractRegistration):
     """Rigid registration class for 2D and 3D image registration.
@@ -143,6 +148,30 @@ class RigidRegistration(AbstractRegistration):
         # premulitply by moment
         rotmat[:, :self.dims, :self.dims] = rotmat[:, :self.dims, :self.dims] @ self.moment
         return rotmat 
+    
+    def save_as_ants_transforms(self, filenames: Union[str, List[str]]):
+        ''' 
+        Save the registration as ANTs transforms (.mat file)
+        '''
+        if isinstance(filenames, str):
+            filenames = [filenames]
+
+        affine = self.get_rigid_matrix(homogenous=False)  # [N, dim, dim+1]
+        n = affine.shape[0]
+        check_and_raise_cond(len(filenames)==1 or len(filenames)==n, "Number of filenames must match the number of transforms")
+        check_and_raise_cond(check_correct_ext(filenames, PERMITTED_ANTS_TXT_EXT + PERMITTED_ANTS_MAT_EXT), "File extension must be one of {}".format(PERMITTED_ANTS_TXT_EXT + PERMITTED_ANTS_MAT_EXT))
+        filenames = augment_filenames(filenames, n, PERMITTED_ANTS_TXT_EXT + PERMITTED_ANTS_MAT_EXT)
+
+        for i in range(affine.shape[0]):
+            mat = affine[i].detach().cpu().numpy().astype(np.float32)
+            A = mat[:self.dims, :self.dims]
+            t = mat[:self.dims, -1]
+            if any_extension(filenames[i], PERMITTED_ANTS_MAT_EXT):
+                savemat(filenames[i], {'AffineTransform_float_3_3': mat, 'fixed': np.zeros((self.dims, 1)).astype(np.float32)})
+                raise NotImplementedError("This function does not work with ANTs mat files")
+            else:
+                savetxt(filenames[i], A, t)
+            logger.info(f"Saved transform to {filenames[i]}")
     
     def get_rigid_matrix(self, homogenous=True):
         """Compute the complete rigid transformation matrix.

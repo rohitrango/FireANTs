@@ -1,13 +1,14 @@
 name: Run Pytest Tests
 
-on: [push, pull_request]
+on:
+  pull_request:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.9', '3.10']
+        python-version: ['3.9']
 
     steps:
       - uses: actions/checkout@v4

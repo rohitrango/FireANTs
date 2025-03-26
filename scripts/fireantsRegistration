@@ -44,7 +44,11 @@ def is_compatible_next_transform(prev_transforms: List[str], transform_type: str
     return all([t in compat_table[transform_type] for t in prev_transforms])
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='FireANTs Registration Tool')
+    class CustomHelpFormatter(argparse.RawDescriptionHelpFormatter):
+        def format_help(self):
+            return show_help(None)
+    
+    parser = argparse.ArgumentParser(description='FireANTs Registration Tool', formatter_class=CustomHelpFormatter)
     # Required arguments
     parser.add_argument('--output', type=str, required=True,
                       help='Output prefix and warped image path [prefix,warped_image]')
@@ -70,7 +74,6 @@ def parse_args():
     parser.add_argument('--interpolation', type=str, default='Linear',
                       choices=['Linear', 'NearestNeighbor'],
                       help='Interpolation type for warped image')
-    parser.add_argument('--help', action='store_true', help='Show help')
     # extra args
     parser.add_argument('--smooth_warp_sigma', type=float, default=0.25, help='Smoothing sigma for the warp field')
     parser.add_argument('--smooth_grad_sigma', type=float, default=0.5, help='Smoothing sigma for the gradient field')
@@ -79,7 +82,6 @@ def parse_args():
     # device args
     parser.add_argument('--device', type=str, default='cuda:0',
                       help='Device to run the registration on. Default is cuda:0.')
-
 
     parser.add_argument('-x', '--mask', type=str,
                       help='Mask image or [fixed_mask,moving_mask]')
@@ -383,10 +385,6 @@ Notes:
 
 def main():
     args = parse_args()
-    if args.help:
-        show_help(args)
-        sys.exit(0)
-
     # check if all the append args are the same length
     len_transform = len(args.transform)
     len_metric = len(args.metric)

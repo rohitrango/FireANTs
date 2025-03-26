@@ -28,3 +28,4 @@ fireants/scripts/template/saved*/
 notepad
 **/*pkl
 tests/test_results/
+**/*.zip

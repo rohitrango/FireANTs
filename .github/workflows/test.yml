@@ -1,0 +1,44 @@
+name: Run Pytest Tests
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10']
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest requests  # Add requests for downloading
+
+      - name: Create test data directory
+        run: mkdir -p tests/test_data
+
+      - name: Download test data from Google Drive
+        env:
+          GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
+          GDRIVE_OUTPUT_PATH: tests/test_data/pytest.zip
+        run: |
+          if [ -z "$GDRIVE_FILE_ID" ]; then
+            echo "GDRIVE_FILE_ID secret is not set. Skipping data download."
+          else
+            echo "Downloading data from Google Drive..."
+            # Requires gdown (install with pip install gdown)
+            pip install gdown
+            gdown --id $GDRIVE_FILE_ID -O $GDRIVE_OUTPUT_PATH
+            echo "Data download complete."
+            tar -xvf tests/test_data/pytest.zip -C tests/test_data
+          fi
+
+      - name: Run pytest
+        run: pytest tests/

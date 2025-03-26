@@ -1,0 +1,609 @@
+#!/usr/bin/env python3
+
+import numpy as np
+import argparse
+import os
+import sys
+from pathlib import Path
+import torch
+import logging
+from typing import List, Optional, Union, Tuple
+
+from fireants.utils.globals import PERMITTED_ANTS_WARP_EXT
+from fireants.io.image import Image, BatchedImages, FakeBatchedImages
+from fireants.registration.rigid import RigidRegistration
+from fireants.registration.affine import AffineRegistration
+from fireants.registration.moments import MomentsRegistration
+from fireants.registration.greedy import GreedyRegistration
+from fireants.registration.syn import SyNRegistration
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def _guess_val(val):
+    ''' for a key-value pair, if the value is an integer, convert it to an int, else float, else string '''
+    try:
+        v = float(val)
+        if v.is_integer():
+            v = int(v)
+    except:
+        v = val
+    return v
+
+def is_compatible_next_transform(prev_transforms: List[str], transform_type: str) -> bool:
+    ''' check if the transform type is compatible with the previous transforms '''
+    if len(prev_transforms) == 0:
+        return True
+    compat_table = {
+        'Rigid': ['Rigid'],
+        'Affine': ['Rigid', 'Affine'],
+        'SyN': ['Rigid', 'Affine'],
+        'Greedy': ['Rigid', 'Affine'],
+    }
+    return all([t in compat_table[transform_type] for t in prev_transforms])
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='FireANTs Registration Tool')
+    # Required arguments
+    parser.add_argument('--output', type=str, required=True,
+                      help='Output prefix and warped image path [prefix,warped_image]')
+    parser.add_argument('--winsorize-image-intensities', type=str, default=None,
+                      help='Winsorize image intensities [lower,upper]')
+    parser.add_argument('--initial-moving-transform', type=str,
+                      help='Initial transform [fixed,moving,type] or transform file')
+    # these are all the rigid/affine/deformable params
+    parser.add_argument('--transform', type=str, action='append', required=True,
+                      help='Transform type and parameters [type,params]. Can be specified multiple times.')
+    parser.add_argument('--metric', type=str, action='append', required=True,
+                      help='Similarity metric [fixed,moving,weight,params]. One per transform.')
+    parser.add_argument('--convergence', type=str, action='append', required=True,
+                      help='Convergence parameters [iterations,tolerance,window]. One per transform.')
+    parser.add_argument('--shrink-factors', type=str, action='append', required=True,
+                      help='Shrink factors for multi-resolution. One per transform.')
+
+    # unused args (kept for compatibility only)
+    parser.add_argument('--use-histogram-matching', type=int, default=0,
+                      help='Use histogram matching (0 or 1)')
+    parser.add_argument('--smoothing-sigmas', type=str, action='append', required=False,
+                      help='Smoothing sigmas for multi-resolution. One per transform (ignored, kept for compatibility).')
+    parser.add_argument('--interpolation', type=str, default='Linear',
+                      choices=['Linear', 'NearestNeighbor'],
+                      help='Interpolation type for warped image')
+    parser.add_argument('--help', action='store_true', help='Show help')
+    # extra args
+    parser.add_argument('--smooth_warp_sigma', type=float, default=0.25, help='Smoothing sigma for the warp field')
+    parser.add_argument('--smooth_grad_sigma', type=float, default=0.5, help='Smoothing sigma for the gradient field')
+    parser.add_argument('--normalize-image-intensities', action='store_true', help="Normalize image intensities to [0,1]")
+
+    # device args
+    parser.add_argument('--device', type=str, default='cuda:0',
+                      help='Device to run the registration on. Default is cuda:0.')
+
+
+    parser.add_argument('-x', '--mask', type=str,
+                      help='Mask image or [fixed_mask,moving_mask]')
+    parser.add_argument('--verbose', action='store_true',
+                      help='Enable verbose output')
+    
+    return parser.parse_args()
+
+def preprocess_images(fixed_image, moving_image, normalize_image_intensities, winsorize_image_intensities):
+    ''' preprocess the images '''
+    def normalize(array):
+        return (array - array.min()) / (array.max() - array.min())
+    if winsorize_image_intensities:
+        w1, w2 = [float(x) for x in winsorize_image_intensities.split(',')]
+        fixed_image.array = winsorize(fixed_image.array, w1, w2)
+        moving_image.array = winsorize(moving_image.array, w1, w2)
+    if normalize_image_intensities:
+        fixed_image.array = normalize(fixed_image.array)
+        moving_image.array = normalize(moving_image.array)
+    return fixed_image, moving_image
+
+def winsorize(array: torch.Tensor, w1: float, w2: float) -> torch.Tensor:
+    ''' winsorize the image intensities 
+    
+    doing this in numpy because torch percentile breaks for large tensors
+    '''
+    nparray = array.cpu().numpy()
+    if w1 <= 1 and w2 <= 1:  # probably in fractions [0, 1]
+        w1 = np.percentile(nparray, w1 * 100)
+        w2 = np.percentile(nparray, w2 * 100)
+    elif w1 <= 100 and w2 > 1 and w2 <= 100:  # probably in fraction
+        w1 = np.percentile(nparray, w1)
+        w2 = np.percentile(nparray, w2)
+    else:
+        raise ValueError(f"Unsupported winsorize parameters: {w1}, {w2}")
+    nparray[nparray < w1] = w1
+    nparray[nparray > w2] = w2
+    nparray = (nparray - w1) 
+    return torch.from_numpy(nparray).to(array.device).to(array.dtype)
+
+def parse_moment_transform(transform_type: str) -> Tuple[bool, str]:
+    ''' transform the moment matching params into a number (which order moments) and a string (which orientation) '''
+    if transform_type == '1':
+        return 1, 'rot'
+    elif transform_type == '2':
+        return 2, 'rot'
+    elif transform_type == '3':
+        return 2, 'antirot'
+    elif transform_type == '4':
+        return 2, 'both'
+    else:
+        raise ValueError(f"Unsupported moment transform type: {transform_type}")
+
+def parse_transform(transform_str: str, args: argparse.Namespace) -> Tuple[str, List[float]]:
+    """Parse transform string like 'Rigid[0.1]' or 'SyN[0.1,3,0]'."""
+    transform_type = transform_str.split('[')[0]
+    params = [float(x) if x.replace('.','').isdigit() else x for x in transform_str.split('[')[1].rstrip(']').split(',')]
+    # convert params to dict appropriately
+    pd = {}
+    opt_id = None
+    if transform_type == 'Rigid':
+        pd['optimizer_lr'] = float(params[0])
+        pd['optimizer'] = 'Adam' if len(params) < 2 else params[1]
+        pd['scaling'] = False if len(params) < 3 else bool(params[2])
+        opt_id = 3
+    elif transform_type == 'Affine':
+        pd['optimizer_lr'] = float(params[0])
+        pd['optimizer'] = 'Adam' if len(params) < 2 else params[1]
+        opt_id = 2
+    elif transform_type == 'SyN' or transform_type == 'Greedy':
+        pd['optimizer_lr'] = float(params[0])
+        pd['optimizer'] = 'Adam' if len(params) < 2 else params[1]
+        pd['smooth_warp_sigma'] = params[2] if len(params) > 2 else args.smooth_warp_sigma
+        pd['smooth_grad_sigma'] = params[3] if len(params) > 3 else args.smooth_grad_sigma
+        opt_id = 4
+    # add other keyword arguments if necessary
+    for i in range(opt_id, len(params)):
+        if "=" in params[i]:
+            k, v = params[i].split('=')
+            v = _guess_val(v)
+            pd[k] = v
+        else:
+            logger.warning(f"Unsupported transform parameter: {params[i]}, skipping...")
+    return transform_type, pd
+
+def parse_metric(metric_str: str) -> Tuple[str, List[Union[str, float]]]:
+    """Parse metric string like 'CC[fixed,moving,1,4]' or 'MI[fixed,moving,1,32,Regular,0.25]'."""
+    metric_type = metric_str.split('[')[0]
+    params = metric_str.split('[')[1].rstrip(']').split(',')
+    # Convert numeric parameters to float
+    params = [float(x) if x.replace('.','').isdigit() else x for x in params]
+    pd = {}
+    pd['fixed'] = params[0]
+    pd['moving'] = params[1]
+    # if metric_type == 'MSE' or metric_type == 'MeanSquares' or metric_type == 'L2':
+    opt_id = None
+    if metric_type in ['MSE', 'MeanSquares', 'L2']:
+        pd['loss_type'] = 'mse'
+        opt_id = 2
+    elif metric_type in ['CC', 'Correlation']:
+        pd['loss_type'] = 'cc'
+        pd['cc_kernel_size'] = int(params[2]) if len(params) > 2 else 5
+        opt_id = 3
+    elif metric_type in ['MI', 'MutualInformation']:
+        pd['loss_type'] = 'mi'
+        pd['mi_kernel_type'] = params[2] if len(params) > 2 else 'gaussian'
+        pd['loss_params'] = {
+            'num_bins': int(params[3]) if len(params) > 3 else 32,
+        }
+        opt_id = 4
+    elif metric_type in ['Custom']:
+        pd['loss_type'] = 'custom'
+        # Parse module path and import class
+        module_path = params[2].split('.')
+        module_name = '.'.join(module_path[:-1])
+        class_name = module_path[-1]
+        module = __import__(module_name, fromlist=[class_name])
+        loss_class = getattr(module, class_name)
+
+        # Build kwargs from remaining params
+        kwargs = {}
+        for param in params[3:]:
+            if "=" in param:
+                key, value = param.split('=')
+                # Convert value to float/int if numeric
+                value = _guess_val(value)
+                kwargs[key] = value
+        # Instantiate loss class with kwargs
+        pd['custom_loss'] = loss_class(**kwargs)
+        opt_id = len(params)  # we dont want to parse any more params
+
+    # add other keyword arguments if necessary
+    for i in range(opt_id, len(params)):
+        if "=" in params[i]:
+            k, v = params[i].split('=')
+            pd[k] = _guess_val(v)
+
+    return metric_type, pd
+
+def prepare_prev_transform(prev_transform, prev_transform_type, transform_type):
+    ''' prepare the previous transform for the next transform '''
+    if prev_transform_type == 'Moments':
+        if transform_type == 'Rigid':
+            return {
+                'init_translation': prev_transform.get_rigid_transl_init().detach(),
+                'init_moment': prev_transform.get_rigid_moment_init().detach(),
+            }
+        else:
+            key = 'init_rigid' if transform_type == 'Affine' else 'init_affine'
+            return {
+                key: prev_transform.get_affine_init().detach(),
+            }
+    elif prev_transform_type == 'Rigid':
+        rigidmat = prev_transform.get_rigid_matrix(homogenous=False).detach()
+        if transform_type == 'Rigid':
+            dims = rigidmat.shape[1]
+            return {
+                'init_translation': rigidmat[:, :dims, -1].contiguous(),
+                'init_moment': rigidmat[:, :dims, :dims].contiguous(),
+            }
+        else:
+            key = 'init_rigid' if transform_type == 'Affine' else 'init_affine'
+            return {
+                key: rigidmat
+            }
+    elif prev_transform_type == 'Affine':
+        key = 'init_rigid' if transform_type == 'Affine' else 'init_affine'
+        return {
+            'init_affine': prev_transform.get_affine_matrix(homogenous=False).detach()
+        }
+    else:
+        raise ValueError(f"Unsupported transform type combination: {prev_transform_type} -> {transform_type}")
+                
+def parse_convergence(conv_str: str) -> Tuple[List[int], float, int]:
+    """Parse convergence string like '[1000x500x250x100,1e-6,10]'."""
+    iterations = [int(x) for x in conv_str.split('[')[1].split(',')[0].split('x')]
+    tolerance = float(conv_str.split(',')[1])
+    window = int(conv_str.split(',')[2].rstrip(']'))
+    return iterations, tolerance, window
+
+def parse_list_arg(arg: str) -> List[float]:
+    """Parse comma-separated list argument."""
+    return [float(x) for x in arg.split(',')]
+
+def load_image(path: str, is_mask: bool = False, device: str = 'cuda:0') -> Image:
+    """Load an image from path."""
+    try:
+        return Image.load_file(path, is_segmentation=is_mask, device=device)
+    except Exception as e:
+        logger.error(f"Error loading image {path}: {e}")
+        sys.exit(1)
+
+def show_help(args: argparse.Namespace):
+    ''' show a verbose help message '''
+    help_text = """
+FireANTs Registration Tool
+=========================
+
+This tool provides a command-line interface for medical image registration, similar to ANTs' antsRegistration.
+
+Required Arguments:
+------------------
+--output [prefix,warped_image]
+    Output prefix for transforms and warped image path. If only prefix is provided, warped image will be saved as prefix_warped.nii.gz
+
+--transform [type,params]
+    Transform type and parameters. Can be specified multiple times for multi-stage registration.
+    Supported types:
+    - Rigid[gradient_step,optimizer=Adam,scaling=False]
+    - Affine[gradient_step,optimizer=Adam]
+    - SyN[gradient_step,optimizer=Adam,smooth_warp_sigma,smooth_grad_sigma]
+    - Greedy[gradient_step,optimizer=Adam,smooth_warp_sigma,smooth_grad_sigma]
+
+--metric [type,fixed,moving,params]
+    Similarity metric for registration. Must be specified once per transform.
+    Supported types:
+    - MSE[fixed,moving] or MeanSquares[fixed,moving] or L2[fixed,moving]
+    - CC[fixed,moving,kernel_size=5]
+    - MI[fixed,moving,kernel_type=gaussian,num_bins=32]
+    - Custom[fixed,moving,module.path.ClassName,param1=value1,...]
+
+--convergence [iterations,tolerance,window]
+    Convergence parameters. Must be specified once per transform.
+    Format: [100x50x25x10,1e-6,10] where:
+    - iterations: comma-separated list of iterations per scale
+    - tolerance: convergence tolerance
+    - window: number of iterations to check for convergence
+
+--shrink-factors [factors]
+    Shrink factors for multi-resolution optimization. Must be specified once per transform.
+    Format: 8x4x2x1 (must match number of iterations in --convergence)
+
+Optional Arguments:
+-----------------
+--initial-moving-transform [fixed,moving,type]
+    Initial transform to align images before registration.
+    type can be:
+    - 1: match by center of mass
+    - 2: match by mid-point
+    - 3: match by point of origin
+
+--winsorize-image-intensities [lower,upper]
+    Clip image intensities to specified quantiles [0,1] or percentiles [0,100]
+
+--normalize-image-intensities
+    Normalize image intensities to [0,1] range
+
+--mask [fixed_mask,moving_mask]
+    Mask images for registration. Must provide both fixed and moving masks.
+
+--device [cuda:0]
+    Device to run registration on. Default is cuda:0.
+
+--smooth_warp_sigma [0.25]
+    Smoothing sigma for the warp field (for SyN/Greedy)
+
+--smooth_grad_sigma [0.5]
+    Smoothing sigma for the gradient field (for SyN/Greedy)
+
+--verbose
+    Enable verbose output
+
+Deprecated/Unused Options (kept for compatibility):
+-----------------------------------------------
+--use-histogram-matching [0]
+    Not implemented yet, will be ignored
+
+--smoothing-sigmas [sigmas]
+    Not used, kept for compatibility with ANTs
+
+--interpolation [Linear]
+    Not used, kept for compatibility with ANTs
+
+Example Usage:
+------------
+./fireantsRegistration \\
+  --output demo_output/fireantsTransform \\
+  --initial-moving-transform [fixed.nii.gz,moving.nii.gz,2] \\
+  --transform Rigid[3e-2] \\
+  --metric MI[fixed.nii.gz,moving.nii.gz,gaussian,16] \\
+  --convergence [100x50x25x10,1e-6,10] \\
+  --shrink-factors 8x4x2x1 \\
+  --transform Affine[3e-2] \\
+  --metric CC[fixed.nii.gz,moving.nii.gz,5] \\
+  --convergence [100x50x25x10,1e-4,10] \\
+  --shrink-factors 8x4x2x1 \\
+  --transform SyN[0.2] \\
+  --metric MSE[fixed.nii.gz,moving.nii.gz] \\
+  --convergence [100x70x50x20,1e-4,10] \\
+  --shrink-factors 8x4x2x1
+
+Notes:
+-----
+1. Transforms must be specified in order: Rigid -> Affine -> SyN/Greedy
+2. Each transform requires its own metric, convergence, and shrink-factors
+3. Number of shrink factors must match number of iterations in convergence
+4. For SyN/Greedy registration, smooth_warp_sigma and smooth_grad_sigma can be specified
+   either in the transform parameters or as command-line arguments
+"""
+    print(help_text)
+
+def main():
+    args = parse_args()
+    if args.help:
+        show_help(args)
+        sys.exit(0)
+
+    # check if all the append args are the same length
+    len_transform = len(args.transform)
+    len_metric = len(args.metric)
+    len_convergence = len(args.convergence)
+    len_shrink_factors = len(args.shrink_factors)
+    for l in [len_metric, len_convergence, len_shrink_factors]:
+        if l != len_transform:
+            logger.error("All transform, metric, convergence, shrink_factors must be the same length")
+            sys.exit(1)
+
+    # check if transforms are in order
+    prev_transforms = []
+    for i, transform_str in enumerate(args.transform):
+        transform_type, _ = parse_transform(transform_str, args)
+        assert transform_type in ['Rigid', 'Affine', 'SyN', 'Greedy'], f"Unsupported transform type: {transform_type}"
+        if not is_compatible_next_transform(prev_transforms, transform_type):
+            logger.error(f"Transforms must be in order, {transform_str} is not compatible with {prev_transforms}")
+        prev_transforms.append(transform_type)
+    
+    # check if number of scales are consistent in convergence, shrink_factors
+    for i, (conv_str, shrink_str) in enumerate(zip(args.convergence, args.shrink_factors)):
+        iterations, tolerance, window = parse_convergence(conv_str)
+        shrink_factors = [float(x) for x in shrink_str.split('x')]
+        if len(shrink_factors) != len(iterations):
+            logger.error(f"Shrink factors and iterations must be the same length, {shrink_str} and {conv_str} are not the same length")
+            sys.exit(1)
+
+    # TODO: implement histogram matching
+    if args.use_histogram_matching:
+        logger.warning("Histogram matching not implemented yet, ignoring this parameter...")
+    
+    # Set up logging
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logger.setLevel(logging.DEBUG)
+    
+    # Parse output paths
+    try:
+        output_prefix, warped_image_file = args.output.split(',')
+        if not any([warped_image_file.endswith(ext) for ext in PERMITTED_ANTS_WARP_EXT]):
+            warped_image_file = output_prefix + "_warped.nii.gz"   # save as nii.gz by default
+    except:
+        # maybe only prefix was provided
+        output_prefix = args.output
+        warped_image_file = output_prefix + "_warped.nii.gz"
+    
+    # Load masks if provided
+    if args.mask:
+        if ',' in args.mask:
+            fixed_mask_path, moving_mask_path = args.mask.split(',')
+            fixed_mask = load_image(fixed_mask_path, is_mask=True, device=args.device)
+            moving_mask = load_image(moving_mask_path, is_mask=True, device=args.device)
+        else:
+            raise ValueError(f"Either include both fixed and moving masks or none")
+    else:
+        fixed_mask = moving_mask = None
+
+    # Find an initial transform if provided
+    moments_reg = None
+    if args.initial_moving_transform:
+        fixed_image, moving_image, transform_type = args.initial_moving_transform.replace("[", "").replace("]", "").split(',')
+        fixed_image = load_image(fixed_image, device=args.device)
+        moving_image = load_image(moving_image, device=args.device)
+        fixed_image, moving_image = preprocess_images(fixed_image, moving_image, args.normalize_image_intensities, args.winsorize_image_intensities)
+        # apply masks if provided
+        if fixed_mask is not None:
+            fixed_image.array = fixed_image.array * fixed_mask.array
+            moving_image.array = moving_image.array * moving_mask.array
+        # initialize the batch
+        fixed_batch = BatchedImages([fixed_image])
+        moving_batch = BatchedImages([moving_image])
+        # initialize the transform type    
+        moments, ori = parse_moment_transform(transform_type)
+        # run moment matching
+        moments_reg = MomentsRegistration(
+            scale=1,
+            fixed_images=fixed_batch,
+            moving_images=moving_batch,
+            moments=moments,
+            orientation=ori
+        )
+        moments_reg.optimize()
+        # if no other transforms are provided, this is the final transform, save
+        del fixed_batch, moving_batch
+        del fixed_image, moving_image
+
+    # initialize previous transform
+    prev_transform = moments_reg
+    prev_transform_type = 'Moments' if moments_reg is not None else None
+    
+    # Process each transform in sequence
+    for i, (transform_str, metric_str, conv_str, shrink_str) in enumerate(zip(args.transform, args.metric, args.convergence, args.shrink_factors)):
+    # Parse multi-resolution parameters
+        # Parse transform parameters
+        transform_type, transform_params = parse_transform(transform_str, args)
+        # Parse metric parameters
+        metric_type, metric_params = parse_metric(metric_str)
+        fixed_path = metric_params['fixed']
+        moving_path = metric_params['moving']
+        del metric_params['fixed'], metric_params['moving']
+
+        # load images
+        fixed_image = load_image(fixed_path, device=args.device)
+        moving_image = load_image(moving_path, device=args.device)
+        fixed_image, moving_image = preprocess_images(fixed_image, moving_image, args.normalize_image_intensities, args.winsorize_image_intensities)
+        # apply masks if provided
+        if fixed_mask is not None:
+            fixed_image.array = fixed_image.array * fixed_mask.array
+            moving_image.array = moving_image.array * moving_mask.array
+        # initialize the batch
+        fixed_batch = BatchedImages([fixed_image])
+        moving_batch = BatchedImages([moving_image])
+
+        # Parse multi-resolution parameters
+        shrink_factors = [float(x) for x in shrink_str.split('x')]
+        iterations, tolerance, window = parse_convergence(conv_str)
+
+        # gather parameters to pass to the registration from previous step
+        prev_transform_params = prepare_prev_transform(prev_transform, prev_transform_type, transform_type)
+        merged_params = {**prev_transform_params, **transform_params, **metric_params}
+        merged_params['tolerance'] = tolerance
+        merged_params['max_tolerance_iters'] = window
+
+        # Initialize registration based on transform type
+        if transform_type == 'Rigid':
+            reg = RigidRegistration(
+                scales=shrink_factors,
+                iterations=iterations,
+                fixed_images=fixed_batch,
+                moving_images=moving_batch,
+                **merged_params,
+            )
+        elif transform_type == 'Affine':
+            reg = AffineRegistration(
+                scales=shrink_factors,
+                iterations=iterations,
+                fixed_images=fixed_batch,
+                moving_images=moving_batch,
+                **merged_params,
+            )
+        elif transform_type == 'SyN':
+            reg = SyNRegistration(
+                scales=shrink_factors,
+                iterations=iterations,
+                fixed_images=fixed_batch,
+                moving_images=moving_batch,
+                **merged_params,
+            )
+        elif transform_type == 'Greedy':
+            reg = GreedyRegistration(
+                scales=shrink_factors,
+                iterations=iterations,
+                fixed_images=fixed_batch,
+                moving_images=moving_batch,
+                **merged_params,
+            )
+        else:
+            logger.error(f"Unsupported transform type: {transform_type}")
+            sys.exit(1)
+        
+        # Run registration
+        logger.info(f"Starting Step {i+1}/{len_transform}: {transform_type} registration...")
+        reg.optimize(save_transformed=False)
+        logger.info(f"Step {i+1}/{len_transform}: {transform_type} registration completed successfully")
+
+        # free memory of previous transform
+        del prev_transform
+        prev_transform = reg
+        prev_transform_type = transform_type
+        
+        # # Save results
+        # output_dir = Path(output_prefix).parent
+        # output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # # Save transformed image
+        # moved_image = reg.evaluate(fixed_batch, moving_batch)
+        # reg.save_moved_images(moved_image, warped_image)
+        # logger.info(f"Saved warped image to {warped_image}")
+        
+        # # Save transform
+        # transform_path = f"{output_prefix}0GenericAffine.mat"
+        # reg.save_as_ants_transforms(transform_path)
+        # logger.info(f"Saved transform to {transform_path}")
+        
+        # Save inverse transform if available
+        # if hasattr(reg, 'get_inverse_warped_coordinates'):
+        #     try:
+        #         inv_transform_path = f"{output_prefix}0GenericAffine.mat"
+        #         reg.save_as_ants_transforms(inv_transform_path)
+        #         logger.info(f"Saved inverse transform to {inv_transform_path}")
+        #     except NotImplementedError:
+        #         logger.warning("Inverse transform not implemented for this registration type")
+        # logger.info("Registration completed successfully")
+    
+    # create output directory
+    parent_path = Path(warped_image_file).parent
+    parent_path.mkdir(parents=True, exist_ok=True)
+
+    # Save the final image (no pre/post processing)
+    final_moving_image = load_image(moving_path, device=args.device)
+    final_moving_batch = BatchedImages([final_moving_image])
+    moved_image = reg.evaluate(fixed_batch, final_moving_batch)
+    # save 
+    moved_image = FakeBatchedImages(moved_image, fixed_batch)
+    moved_image.write_image(warped_image_file)
+    logger.info(f"Saved warped image to {warped_image_file}")
+    # save transform
+    if transform_type in ['Rigid', 'Affine']:
+        transform_file = f"{output_prefix}0GenericAffine.txt"
+    else:
+        transform_file = f"{output_prefix}0Warp.nii.gz"
+    Path(transform_file).parent.mkdir(parents=True, exist_ok=True)
+    reg.save_as_ants_transforms(str(transform_file))
+    logger.info(f"Saved transform to {transform_file}")
+
+
+if __name__ == '__main__':
+    main() 
+
+

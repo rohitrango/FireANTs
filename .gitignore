@@ -24,6 +24,7 @@ docs/site
 .vscode
 fireants/scripts/template/evaltemplate/
 fireants/scripts/template/saved*/
+**/saved_results
 notepad
 **/*pkl
 tests/test_results/

@@ -2,8 +2,10 @@
 *pdf
 *svg
 dist/
-build/
+**/build/
 **pkl
+**/*.so
+**/*.egg-info
 **/__pycache__
 **/baselines
 **/*.pkl
@@ -22,3 +24,8 @@ docs/site
 .vscode
 fireants/scripts/template/evaltemplate/
 fireants/scripts/template/saved*/
+**/saved_results
+notepad
+**/*pkl
+tests/test_results/
+**/*.zip

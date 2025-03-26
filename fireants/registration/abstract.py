@@ -5,8 +5,8 @@ from torch import nn
 from fireants.utils.util import _assert_check_scales_decreasing
 from fireants.losses import GlobalMutualInformationLoss, LocalNormalizedCrossCorrelationLoss, NoOp, MeanSquaredError
 from torch.optim import SGD, Adam
-from fireants.io.image import BatchedImages
-from typing import Optional
+from fireants.io.image import BatchedImages, FakeBatchedImages
+from typing import Optional, Union
 from fireants.utils.util import ConvergenceMonitor
 from torch.nn import functional as F
 from functools import partial
@@ -126,7 +126,7 @@ class AbstractRegistration(ABC):
         pass
     
     @abstractmethod
-    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
+    def get_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         '''Get the transformed coordinates for warping the moving image.
 
         This abstract method must be implemented by all registration classes to define how
@@ -156,7 +156,51 @@ class AbstractRegistration(ABC):
         '''
         pass
 
-    def evaluate(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
+    @abstractmethod
+    def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
+        ''' Get inverse warped coordinates for the moving image.
+
+        This method is useful to analyse the effect of how the moving coordinates (fixed images) are transformed
+        '''
+        pass
+
+    def save_moved_images(self, moved_images: Union[BatchedImages, FakeBatchedImages, torch.Tensor], filenames: Union[str, List[str]], moving_to_fixed: bool = True):
+        '''
+        Save the moved images to disk.
+
+        Args:
+            moved_images (Union[BatchedImages, FakeBatchedImages, torch.Tensor]): The moved images to save.
+            filenames (Union[str, List[str]]): The filenames to save the moved images to.
+            moving_to_fixed (bool, optional): If True, the moving images are saved to the fixed image space. Defaults to True.
+                if False, we are dealing with an image that is moved from fixed space to moving space            
+        '''
+        if isinstance(moved_images, BatchedImages):
+            moved_images_save = FakeBatchedImages(moved_images(), moved_images)   # roundabout way to call the fakebatchedimages
+        elif isinstance(moved_images, torch.Tensor):
+            moved_images_save = FakeBatchedImages(moved_images, self.fixed_images if moving_to_fixed else self.moving_images)
+        else:
+            # if it is already a fakebatchedimages, we can just use it
+            moved_images_save = moved_images
+        moved_images_save.write_image(filenames)
+
+
+    def evaluate_inverse(self, fixed_images: Union[BatchedImages, torch.Tensor], moving_images: Union[BatchedImages, torch.Tensor], shape=None, **kwargs):
+        ''' Apply the inverse of the learned transformation to new images.
+
+        This method is useful to analyse the effect of how the moving coordinates (fixed images) are transformed
+        '''
+        if isinstance(fixed_images, torch.Tensor):
+            fixed_images = FakeBatchedImages(fixed_images, self.fixed_images)
+        if isinstance(moving_images, torch.Tensor):
+            moving_images = FakeBatchedImages(moving_images, self.moving_images)
+
+        fixed_arrays = moving_images()
+        fixed_moved_coords = self.get_inverse_warped_coordinates(fixed_images, moving_images, shape=shape, **kwargs)
+        fixed_moved_image = F.grid_sample(fixed_arrays, fixed_moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+        return fixed_moved_image
+
+
+    def evaluate(self, fixed_images: Union[BatchedImages, torch.Tensor], moving_images: Union[BatchedImages, torch.Tensor], shape=None):
         '''Apply the learned transformation to new images.
 
         This method applies the registration transformation learned during optimization
@@ -185,6 +229,11 @@ class AbstractRegistration(ABC):
             The transformation is applied using bilinear interpolation with align_corners=True
             to maintain consistency with the optimization process.
         '''
+        if isinstance(fixed_images, torch.Tensor):
+            fixed_images = FakeBatchedImages(fixed_images, self.fixed_images)
+        if isinstance(moving_images, torch.Tensor):
+            moving_images = FakeBatchedImages(moving_images, self.moving_images)
+
         moving_arrays = moving_images()
         moved_coords = self.get_warped_coordinates(fixed_images, moving_images, shape=shape)
         moved_image = F.grid_sample(moving_arrays, moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]

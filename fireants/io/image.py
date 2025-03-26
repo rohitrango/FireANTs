@@ -10,9 +10,11 @@ from typing import Any, Union, List, Tuple
 from time import time
 from fireants.types import devicetype
 from fireants.utils.imageutils import integer_to_onehot
-from fireants.utils.util import check_and_raise_cond
+from fireants.utils.util import check_and_raise_cond, augment_filenames
 import logging
 from copy import deepcopy
+import os
+from fireants.utils.globals import PERMITTED_ANTS_WARP_EXT
 # logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -69,11 +71,19 @@ class Image:
         # if `is_segmentation` is False, then just treat this as an image with given dtype
         if not is_segmentation:
             self.array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(float)).to(device, dtype)
-            self.array.unsqueeze_(0).unsqueeze_(0)
             # self.array = self.array[None, None]   # TODO: Change it to support multichannel images, right now just batchify and add a dummy channel to it
             channels = itk_image.GetNumberOfComponentsPerPixel()
             self.channels = channels
-            assert channels == 1, "Only single channel images supported"
+            # assert channels == 1, "Only single channel images supported"
+            if channels > 1:
+                logger.warning("Image has multiple channels, make sure its not a spatial dimension")
+                # permute the channel dimension to the front
+                ndim = self.array.ndim
+                self.array = self.array.permute([ndim-1] + list(range(ndim-1))).contiguous() # permute to [C, H, W, D] from [H, W, D, C]
+            else:
+                self.array.unsqueeze_(0)
+            # add batch dimension
+            self.array.unsqueeze_(0)
         else:
             array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(int)).to(device).long()
             # preprocess segmentation if provided by user
@@ -167,7 +177,6 @@ class Image:
             t2 = Image.load_file(t2_path)
             flair = Image.load_file(flair_path)
             t1.concatenate(t2, flair, optimize_memory=True)   # deletes the arrays of t2 and flair after concatenation
-
         '''
         check_and_raise_cond(self.is_array_present, "Image must have a PyTorch tensor representation to concatenate", ValueError)
         if isinstance(others[0], list) and len(others) == 1:
@@ -314,6 +323,114 @@ class BatchedImages:
     def get_phy2torch(self):
         return self.phy2torch
 
+class FakeBatchedImages:
+    '''     
+    A class to handle fake batches of images.
+    This is used to handle the case where the user passes a tensor to the registration class
+    instead of a BatchedImages object.
+
+    We will use the metadata of the BatchedImages object to create a FakeBatchedImages object.
+    with the content of the tensor.
+    '''
+    def __init__(self, tensor: torch.Tensor, batched_images: BatchedImages) -> None:
+        batched_size = list(deepcopy(batched_images().shape))
+        tensor_size = list(deepcopy(tensor.shape))
+        # ignore channel dimension differences
+        batched_size[1] = 1
+        tensor_size[1] = 1
+        check_and_raise_cond(tuple(batched_size) == tuple(tensor_size), "Tensor size must match the size of the batched images", ValueError)
+        self.tensor = tensor
+        self.batched_images = batched_images
+    
+    def __call__(self):
+        return self.tensor
+    
+    def get_torch2phy(self):
+        return self.batched_images.torch2phy
+    
+    def get_phy2torch(self):
+        return self.batched_images.phy2torch
+    
+    @property
+    def device(self):
+        return self.tensor.device
+    
+    @property
+    def dims(self):
+        return self.tensor.ndim - 2
+    
+    @property
+    def shape(self):
+        return self.tensor.shape
+    
+    def write_image(self, filenames: Union[str, List[str]], permitted_ext: List[str] = PERMITTED_ANTS_WARP_EXT):
+        """
+        Save tensor elements to disk as SimpleITK images.
+        
+        For each image in the batch:
+        - If multi-channel, the channel dimension is permuted to the end
+        - If single-channel, the channel dimension is squeezed
+        - Metadata is copied from the corresponding BatchedImages itk_image
+        
+        Args:
+            filenames (str or List[str]): A single filename or a list of filenames.
+                - If one filename is provided for multiple images, they will be saved as 
+                  filename_img0.ext, filename_img1.ext, etc.
+                - If the number of filenames equals the number of images, they are mapped one-to-one.
+                - Otherwise, an error is raised.
+        
+        Raises:
+            ValueError: If the number of filenames doesn't match the number of images and is not 1.
+        """
+        batch_size = self.tensor.shape[0]
+        
+        # Convert single filename to list
+        if isinstance(filenames, str):
+            filenames = [filenames]
+        
+        # Check if number of filenames matches number of images
+        check_and_raise_cond(len(filenames)==1 or len(filenames)==batch_size, "Number of filenames must match the number of images or be 1", ValueError)
+        filenames = augment_filenames(filenames, batch_size, permitted_ext)
+        
+        # Process each image in the batch
+        for i in range(batch_size):
+            # Get the corresponding tensor
+            img_tensor = self.tensor[i]
+            
+            # Check if multi-channel (channel dimension is at index 0 after batch dimension)
+            channels = img_tensor.shape[0]
+            isVector = channels > 1
+
+            # If multi-channel, permute the channel to the end
+            if channels > 1:
+                # For 2D: [C, H, W] -> [H, W, C]
+                # For 3D: [C, H, W, D] -> [H, W, D, C]
+                dims = len(img_tensor.shape)
+                perm = list(range(1, dims)) + [0]
+                img_tensor = img_tensor.permute(*perm)
+            else:
+                # If single channel, squeeze the channel dimension
+                img_tensor = img_tensor.squeeze(0)
+            
+            # Convert tensor to numpy array
+            np_array = img_tensor.detach().cpu().numpy()
+            
+            # Create SimpleITK image
+            itk_image = sitk.GetImageFromArray(np_array, isVector=isVector)
+            
+            # Get metadata from corresponding BatchedImages object
+            if hasattr(self.batched_images, 'images') and i < len(self.batched_images.images):
+                src_itk = self.batched_images.images[i].itk_image
+                itk_image.SetSpacing(src_itk.GetSpacing())
+                itk_image.SetDirection(src_itk.GetDirection())
+                itk_image.SetOrigin(src_itk.GetOrigin())
+            else:
+                raise ValueError("No corresponding BatchedImages object found for image {}".format(i))
+            
+            save_filename = filenames[i]
+            # Save the image
+            sitk.WriteImage(itk_image, save_filename)
+            logger.info(f"Saved image to {save_filename}")
 
 if __name__ == '__main__':
     from fireants.utils.util import get_tensor_memory_details

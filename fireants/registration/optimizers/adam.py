@@ -1,7 +1,7 @@
 ''' class for SGD for compositive warps '''
 import torch
 from torch.nn import functional as F
-from fireants.utils.imageutils import compute_inverse_warp_displacement
+# from fireants.utils.imageutils import compute_inverse_warp_displacement
 from fireants.utils.imageutils import jacobian as jacobian_fn
 from fireants.losses.cc import separable_filtering
 
@@ -10,11 +10,13 @@ class WarpAdam:
     also supports multi-scale (by simply interpolating to the target size)
     shape of warp = [B, H, W, [D], dims]
     '''
-    def __init__(self, warp, lr, warpinv=None, beta1=0.9, beta2=0.99, weight_decay=0, eps=1e-8,
+    def __init__(self, warp, lr, 
+                 beta1=0.9, beta2=0.99, weight_decay=0, eps=1e-8,
                  scaledown=False, multiply_jacobian=False,
                  smoothing_gaussians=None, 
+                 grad_gaussians=None,
                  freeform=False,
-                 optimize_inverse_warp=False):
+    ):
         # init
         if beta1 < 0.0 or beta1 >= 1.0:
             raise ValueError("Invalid beta1 value: {}".format(beta1))
@@ -28,9 +30,7 @@ class WarpAdam:
         # get half resolutions
         self.half_resolution = 1.0/(max(warp.shape[1:-1]) - 1)
         self.warp = warp
-        self.warpinv = warpinv
         self.freeform = freeform
-        self.optimize_inverse_warp = optimize_inverse_warp
         self.lr = lr
         self.eps = eps
         self.beta1 = beta1
@@ -50,8 +50,9 @@ class WarpAdam:
         self.initialize_grid(warp.shape[1:-1])
         # gaussian smoothing parameters (if any)
         self.smoothing_gaussians = smoothing_gaussians
+        self.grad_gaussians = grad_gaussians
     
-    def set_data_and_size(self, warp, size, grid_copy=None, warpinv=None):
+    def set_data_and_size(self, warp, size, grid_copy=None):
         ''' change the optimization variables sizes '''
         self.warp = warp
         mode = 'bilinear' if self.n_dims == 2 else 'trilinear'
@@ -62,8 +63,6 @@ class WarpAdam:
         self.half_resolution = 1.0/(max(warp.shape[1:-1]) - 1)
         self.initialize_grid(size, grid_copy=grid_copy)
         # print(self.warp.shape, warpinv)
-        if self.optimize_inverse_warp and warpinv is not None:
-            self.warpinv = warpinv
     
     def initialize_grid(self, size, grid_copy=None):
         ''' initialize the grid (so that we can use it independent of the grid elsewhere) '''
@@ -126,9 +125,3 @@ class WarpAdam:
         if self.smoothing_gaussians is not None:
             w = separable_filtering(w.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)
         self.warp.data.copy_(w)
-        # add to inverse if exists
-        if self.optimize_inverse_warp and self.warpinv is not None:
-            invwarp = compute_inverse_warp_displacement(self.warp.data, self.grid, self.warpinv.data, iters=5)
-            warp_new = compute_inverse_warp_displacement(invwarp, self.grid, self.warp.data, iters=5) 
-            self.warp.data.copy_(warp_new)
-            self.warpinv.data.copy_(invwarp)

@@ -1,8 +1,8 @@
 from fireants.registration.abstract import AbstractRegistration
-from typing import List, Optional
+from typing import List, Optional, Union
 import torch
 from torch import nn
-from fireants.io.image import BatchedImages
+from fireants.io.image import BatchedImages, FakeBatchedImages
 from torch.optim import SGD, Adam
 from torch.nn import functional as F
 from fireants.utils.globals import MIN_IMG_SIZE
@@ -10,6 +10,12 @@ from tqdm import tqdm
 import numpy as np
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
+from fireants.utils.util import check_and_raise_cond, check_correct_ext, any_extension, augment_filenames, savetxt
+from scipy.io import savemat
+from fireants.utils.globals import PERMITTED_ANTS_TXT_EXT, PERMITTED_ANTS_MAT_EXT
+import logging
+logger = logging.getLogger(__name__)
+
 
 class AffineRegistration(AbstractRegistration):
     """Affine registration class for linear image alignment.
@@ -17,6 +23,11 @@ class AffineRegistration(AbstractRegistration):
     This class implements affine registration between fixed and moving images using
     gradient descent optimization. Affine transformations are linear transformations that 
     include translation, rotation, scaling, and shearing operations.
+
+    Note about initialization and optimization:
+     - All initializations assume the format y = Ax + t (rigid, affine, moments)
+     - However, optimization works better with the format y = A(x-c) + c + t'  (where c is the center of the image)
+     - therefore, we need to compute t' = t - c + Ac as the learnable parameter if `around_center=True`
 
     Args:
         scales (List[float]): Downsampling factors for multi-resolution optimization.
@@ -40,6 +51,7 @@ class AffineRegistration(AbstractRegistration):
         blur (bool, optional): Whether to blur images during downsampling. Defaults to True.
         moved_mask (bool, optional): Whether to mask moved image for loss. Defaults to False.
         loss_device (Optional[str], optional): Device to compute loss on. Defaults to None.
+        around_center (bool, optional): Whether to apply affine around the center of the image. Defaults to True.
 
     Attributes:
         affine (nn.Parameter): Learnable affine transformation matrix [N, D, D+1]
@@ -50,12 +62,13 @@ class AffineRegistration(AbstractRegistration):
     def __init__(self, scales: List[float], iterations: List[int], 
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
-                optimizer: str = 'SGD', optimizer_params: dict = {},
+                optimizer: str = 'Adam', optimizer_params: dict = {},
                 loss_params: dict = {},
-                optimizer_lr: float = 0.1, 
+                optimizer_lr: float = 3e-2,
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
                 cc_kernel_size: int = 3,
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
+                around_center: bool = True,
                 init_rigid: Optional[torch.Tensor] = None,
                 custom_loss: nn.Module = None,
                 blur: bool = True,
@@ -80,8 +93,21 @@ class AffineRegistration(AbstractRegistration):
             else:
                 raise ValueError(f"init_rigid must have shape [N, {dims}, {dims+1}] or [N, {dims+1}, {dims+1}], got {init_rigid.shape}")
         else:
-            affine = torch.eye(dims, dims+1).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, D, D+1]
+            affine = torch.eye(dims, dims+1).unsqueeze(0).repeat(self.opt_size, 1, 1).to(device)  # [N, D, D+1]
+
+        # whether to apply affine around the center of the image
+        self.around_center = around_center 
+        self.center = self.fixed_images.get_torch2phy()[:, :self.dims, -1].contiguous()  # the center of the fixed image is (0, 0, ..., 0) in torch space => A0 + t = t in physical space
+        self.center = self.center.to(device)
+        if self.around_center:
+            # we recalibrate the t' parameter from t 
+            transl = affine[:, :self.dims, -1]
+            transl = transl - self.center + (affine[:, :self.dims, :self.dims] @ self.center[..., None]).squeeze(-1)
+            affine[:, :self.dims, -1] = transl
+            affine = affine.detach().contiguous()
+
         self.affine = nn.Parameter(affine.to(device))  # [N, D]
+        print(self.affine)
         self.row = torch.zeros((self.opt_size, 1, dims+1), device=device)   # keep this to append to affine matrix
         self.row[:, 0, -1] = 1.0
         self.moved_mask = moved_mask
@@ -93,8 +119,37 @@ class AffineRegistration(AbstractRegistration):
         else:
             raise ValueError(f"Optimizer {optimizer} not supported")
     
+    def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
+        pass
+
+    def save_as_ants_transforms(self, filenames: Union[str, List[str]]):
+        ''' 
+        Save the registration as ANTs transforms (.mat file)
+        '''
+        if isinstance(filenames, str):
+            filenames = [filenames]
+
+        affine = self.get_affine_matrix(homogenous=False)
+        n = affine.shape[0]
+        check_and_raise_cond(len(filenames)==1 or len(filenames)==n, "Number of filenames must match the number of transforms")
+        check_and_raise_cond(check_correct_ext(filenames, PERMITTED_ANTS_TXT_EXT + PERMITTED_ANTS_MAT_EXT), "File extension must be one of {}".format(PERMITTED_ANTS_TXT_EXT + PERMITTED_ANTS_MAT_EXT))
+        filenames = augment_filenames(filenames, n, PERMITTED_ANTS_TXT_EXT + PERMITTED_ANTS_MAT_EXT)
+
+        for i in range(affine.shape[0]):
+            mat = affine[i].detach().cpu().numpy().astype(np.float32)
+            A = mat[:self.dims, :self.dims]
+            t = mat[:self.dims, -1]
+            if any_extension(filenames[i], PERMITTED_ANTS_MAT_EXT):
+                savemat(filenames[i], {'AffineTransform_float_3_3': mat, 'fixed': np.zeros((self.dims, 1)).astype(np.float32)})
+                raise NotImplementedError("This function does not work with ANTs mat files")
+            else:
+                savetxt(filenames[i], A, t)
+            logger.info(f"Saved transform to {filenames[i]}")
+
     def get_affine_matrix(self, homogenous=True):
         """Get the current affine transformation matrix.
+
+        Always get it in the format y = Ax + t
 
         Args:
             homogenous (bool, optional): Whether to return homogeneous coordinates. 
@@ -105,9 +160,16 @@ class AffineRegistration(AbstractRegistration):
                 If homogenous=True: shape [N, D+1, D+1]
                 If homogenous=False: shape [N, D, D+1]
         """
-        return torch.cat([self.affine, self.row], dim=1) if homogenous else self.affine
+        affine = self.affine.clone()
+        if self.around_center:  # we need to convert t' to t
+            A = affine[:, :self.dims, :self.dims] + 0
+            t = affine[:, :self.dims, -1] + 0
+            t = t + self.center - (A @ self.center[..., None]).squeeze(-1)
+            affine = torch.cat([A, t[..., None]], dim=-1)
+        return torch.cat([affine, self.row], dim=1) if homogenous else affine
+
     
-    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
+    def get_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         """Get transformed coordinates for warping the moving image.
 
         Computes the coordinate transformation from fixed to moving image space
@@ -131,11 +193,11 @@ class AffineRegistration(AbstractRegistration):
             shape = fixed_images.shape
         init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device).unsqueeze(0).repeat(affinemat.shape[0], 1, 1)  # [N, dims, dims+1]
         fixed_image_coords = F.affine_grid(init_grid, shape, align_corners=True)  # [N, H, W, [D], dims+1]
-        fixed_image_coords_homo = torch.cat([fixed_image_coords, torch.ones(list(fixed_image_coords.shape[:-1]) + [1], device=fixed_image_coords.device)], dim=-1)
-        fixed_image_coords_homo = torch.einsum('ntd, n...d->n...t', fixed_t2p, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]  
+        coords = torch.cat([fixed_image_coords, torch.ones(list(fixed_image_coords.shape[:-1]) + [1], device=fixed_image_coords.device)], dim=-1)
+        coords = torch.einsum('ntd, n...d->n...t', moving_p2t @ affinemat @ fixed_t2p, coords)  # [N, H, W, [D], dims+1]  
         # modify 
-        coords = torch.einsum('ntd, n...d->n...t', affinemat, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]
-        coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
+        # coords = torch.einsum('ntd, n...d->n...t', affinemat, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]
+        # coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
         return coords[..., :-1]
 
     def optimize(self, save_transformed=False):
@@ -181,8 +243,8 @@ class AffineRegistration(AbstractRegistration):
                 fixed_image_down = F.interpolate(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True)
                 moving_image_blur = moving_arrays
 
-            fixed_image_coords = F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)  # [N, H, W, [D], dims+1]
-            fixed_image_coords_homo = torch.cat([fixed_image_coords, torch.ones(list(fixed_image_coords.shape[:-1]) + [1], device=fixed_image_coords.device)], dim=-1)
+            fixed_image_coords_homo = F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)  # [N, H, W, [D], dims+1]
+            fixed_image_coords_homo = torch.cat([fixed_image_coords_homo, torch.ones(list(fixed_image_coords_homo.shape[:-1]) + [1], device=fixed_image_coords_homo.device)], dim=-1)
             fixed_image_coords_homo = torch.einsum('ntd, n...d->n...t', fixed_t2p, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]  
             # print(fixed_image_down.min(), fixed_image_down.max())
             # this is in physical space
@@ -191,8 +253,8 @@ class AffineRegistration(AbstractRegistration):
             for i in pbar:
                 self.optimizer.zero_grad()
                 affinemat = self.get_affine_matrix()
-                coords = torch.einsum('ntd, n...d->n...t', affinemat, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]
-                coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
+                coords = torch.einsum('ntd, n...d->n...t', moving_p2t @ affinemat, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]
+                # coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
                 # sample from these coords
                 moved_image = F.grid_sample(moving_image_blur, coords[..., :-1], mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
                 if self.moved_mask:

@@ -7,6 +7,7 @@ from fireants.utils.util import catchtime
 from typing import Optional, List
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.types import ItemOrList
+import warnings
 
 def lie_bracket(u: torch.Tensor, v: torch.Tensor):
     if len(u.shape) == 4:
@@ -188,7 +189,7 @@ def image_gradient(image, normalize=False):
     else:
         raise NotImplementedError('Multichannel images not supported yet')
 
-def integer_to_onehot(image: torch.Tensor, background_label:int=0, max_label=None):
+def integer_to_onehot(image: torch.Tensor, background_label:int=0, dtype: torch.dtype = None, max_label=None):
     ''' convert an integer map into one hot mapping
     assumed the image is of size [H, W, [D]] and we convert it into [C, H, W, [D]]
 
@@ -204,7 +205,8 @@ def integer_to_onehot(image: torch.Tensor, background_label:int=0, max_label=Non
         num_labels = max_label
     else:
         num_labels = max_label + 1
-    onehot = torch.zeros((num_labels, *image.shape), dtype=torch.float32, device=image.device)
+    dtype = dtype if dtype is not None else image.dtype
+    onehot = torch.zeros((num_labels, *image.shape), dtype=dtype, device=image.device)
     count = 0
     for i in range(num_labels+1):
         if i == background_label:
@@ -217,31 +219,54 @@ def integer_to_onehot(image: torch.Tensor, background_label:int=0, max_label=Non
 scaling_and_squaring_nograd = torch.no_grad()(scaling_and_squaring)
 image_gradient_nograd = torch.no_grad()(image_gradient)
 
-def compute_inverse_warp_displacement(warp, grid, initial_inverse=None, iters=20, lr=1e-2):
+def compute_inverse_warp_displacement(warp, grid, initial_inverse=None, iters=20, lr=1e-1, warp_gaussian=None, grad_gaussian=None, debug=False, optimizer='SGD'):
     ''' 
     Compute the inverse warp using a given warp, grid and optional initialization
     '''
+    warnings.warn('This function is deprecated, use `compositive_warp_inverse` from warputils.py instead')
+
     permute_vtoimg = (0, 4, 1, 2, 3) if len(warp.shape) == 5 else (0, 3, 1, 2)
     permute_imgtov = (0, 2, 3, 4, 1) if len(warp.shape) == 5 else (0, 2, 3, 1)
     # in case this block is being called within a no_grad block 
+    if warp_gaussian is not None:
+        warp = separable_filtering(warp.permute(*permute_vtoimg), warp_gaussian).permute(*permute_imgtov)
+
     with torch.set_grad_enabled(True):
         if initial_inverse is None:
             invwarp = nn.Parameter(torch.zeros_like(warp.detach()))
         else:
             invwarp = nn.Parameter(initial_inverse.detach())
-        optim = torch.optim.SGD([invwarp], lr=lr)
+
+        if optimizer == 'SGD':
+            optim = torch.optim.SGD([invwarp], lr=lr)
+        elif optimizer == 'Adam':
+            optim = torch.optim.Adam([invwarp], lr=lr)
+        else:
+            raise ValueError(f"Invalid optimizer: {optimizer}")
+        
+        print("using optimizer lr ", optimizer, lr)
+
         for i in range(iters):
             optim.zero_grad()
             loss = invwarp + F.grid_sample(warp.permute(*permute_vtoimg), grid + invwarp, mode='bilinear', align_corners=True).permute(*permute_imgtov)
             loss2 = warp + F.grid_sample(invwarp.permute(*permute_vtoimg), grid + warp, mode='bilinear', align_corners=True).permute(*permute_imgtov)
             loss = (loss**2).sum() + (loss2**2).sum()
+            if debug:
+                print(f"loss: {loss.item()}")
             loss.backward()
+            # apply gaussian smoothing to the gradient
+            if grad_gaussian is not None:
+                invwarp.grad = separable_filtering(invwarp.grad.permute(*permute_vtoimg), warp_gaussian).permute(*permute_imgtov)
             optim.step()
+            # if warp_gaussian is not None:
+            #     with torch.no_grad():
+            #         invwarp.data = separable_filtering(invwarp.permute(*permute_vtoimg), warp_gaussian).permute(*permute_imgtov)
     return invwarp.data
-
 
 def compute_inverse_warp_exp(warp, grid, lr=5e-3, iters=200, n=10):
     ''' compute warp inverse using exponential map '''
+
+    warnings.warn('This function is deprecated, use `compositive_warp_inverse` from warputils.py instead')
     with torch.set_grad_enabled(True):
         vel = nn.Parameter(torch.zeros_like(warp))
         optim = torch.optim.Adam([vel], lr=lr)

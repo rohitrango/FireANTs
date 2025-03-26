@@ -127,7 +127,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
     
     def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], \
                                              moving_images: Union[BatchedImages, FakeBatchedImages], \
-                                             smooth_warp_sigma: float = 2.0, smooth_grad_sigma: float = 2.0,
+                                             smooth_warp_sigma: float = 0, smooth_grad_sigma: float = 0,
                                              shape=None, displacement=False):
         ''' Get inverse warped coordinates for the moving image.
 

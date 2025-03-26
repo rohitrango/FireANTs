@@ -48,15 +48,20 @@ class InverseConsistencyOperator(nn.Module):
             ref_warp_i = F.interpolate(self.ref_warp.permute(*self.permute_vtoimg), scale_factor=1.0/scale, mode=linear, align_corners=True).permute(*self.permute_imgtov)
         else:
             ref_warp_i = self.ref_warp
-        # init grid
-        grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=warp.device)[None], [1, 1] + list(ref_warp_i.shape[1:-1]), align_corners=True)
-        # psi(phi(x))
-        loss1 = F.grid_sample(warp.permute(*self.permute_vtoimg), ref_warp_i, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
-        loss1 = F.mse_loss(loss1, grid)
-        # phi(psi(y))
+        # init grids
         grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=warp.device)[None], shape, align_corners=True)
-        loss2 = F.grid_sample(ref_warp_i.permute(*self.permute_vtoimg), warp, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
+        ref_grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=warp.device)[None], [1, 1] + list(ref_warp_i.shape[1:-1]), align_corners=True)
+        # psi(phi(x))
+        ## compute u * phi(x) instead of psi(phi(x)) because u = 0 outside of grid sample range, but not so much for psi
+        loss1 = F.grid_sample((warp - grid).permute(*self.permute_vtoimg), ref_warp_i, mode='bilinear', align_corners=True).permute(*self.permute_imgtov) + ref_warp_i
+        loss1 = F.mse_loss(loss1, ref_grid)
+        # eps = np.mean([2/(s-1) for s in ref_grid.shape[1:-1]])  
+        # loss1 = ((loss1 - ref_grid).pow(2) / (ref_grid.pow(2) + eps)).mean()
+        # phi(psi(y))
+        loss2 = F.grid_sample((ref_warp_i - ref_grid).permute(*self.permute_vtoimg), warp, mode='bilinear', align_corners=True).permute(*self.permute_imgtov) + warp
         loss2 = F.mse_loss(loss2, grid)
+        # eps = np.mean([2/(s-1) for s in grid.shape[1:-1]])
+        # loss2 = ((loss2 - grid).pow(2) / (grid.pow(2) + eps)).mean()
         return loss1 + loss2
 
 
@@ -129,8 +134,8 @@ def shape_averaging_invwarp(
 def compositive_warp_inverse(image: BatchedImages, ref_warp: torch.Tensor,
                         scales: List[float] = [8, 4, 2, 1], 
                         iterations: List[int] = [200, 200, 100, 50],
-                        smooth_grad_sigma: float = 0.5,
-                        smooth_warp_sigma: float = 0.25,
+                        smooth_grad_sigma: float = 0.0,
+                        smooth_warp_sigma: float = 0.0,
                         displacement: bool = False,
                         ):
     '''
@@ -149,9 +154,19 @@ def compositive_warp_inverse(image: BatchedImages, ref_warp: torch.Tensor,
         smooth_grad_sigma=smooth_grad_sigma,
         smooth_warp_sigma=smooth_warp_sigma,
     )
+    ## initialize
+    with torch.no_grad():
+        warp = reg.warp.warp.data
+        B = warp.shape[0]
+        shape = list(warp.shape[1:-1])
+        linear = 'bilinear' if reg.dims == 2 else 'trilinear'
+        grid = F.affine_grid(torch.eye(reg.dims, reg.dims+1, device=warp.device)[None], [1,1] + shape, align_corners=True)
+        ref_warp_resized = F.interpolate(ref_warp.permute(*reg.warp.permute_vtoimg), shape, mode=linear, align_corners=True).permute(*reg.warp.permute_imgtov)
+        warp.data.copy_(grid - ref_warp_resized)
+        del grid, ref_warp_resized
+    # reg.warp.
     reg.optimize(False)
     return reg.get_warped_coordinates(image, image, displacement=displacement)
-
 
 ### Utility to convert dense warp fields from pytorch format to scipy format
 ### Used to submit to learn2reg challenge 

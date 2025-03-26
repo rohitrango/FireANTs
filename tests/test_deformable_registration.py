@@ -6,9 +6,11 @@ import os
 import subprocess
 import logging
 from pathlib import Path
+import torch.nn.functional as F
 
 from fireants.registration import GreedyRegistration, SyNRegistration
 from fireants.io.image import Image, BatchedImages
+from fireants.utils.imageutils import jacobian
 try:
     from .conftest import dice_loss
 except ImportError:
@@ -138,6 +140,80 @@ class TestGreedyRegistration:
         logger.info(f"Relative error: {rel_error:.4f}")
         assert rel_error < 0.005, f"Transform consistency check failed. Relative error: {rel_error:.4f}"
 
+    def test_jacobian_determinant(self, greedy_registration_results):
+        """Test that the transformation has positive Jacobian determinant everywhere."""
+        reg = greedy_registration_results['reg']
+        fixed_batch = greedy_registration_results['fixed_batch']
+        moving_batch = greedy_registration_results['moving_batch']
+        
+        # Get the warped coordinates
+        coords = reg.get_warped_coordinates(fixed_batch, moving_batch)
+        
+        # Compute Jacobian determinant using imageutils.jacobian
+        J = jacobian(coords, normalize=True).permute(0, 2, 3, 4, 1, 5)[:, 1:-1, 1:-1, 1:-1, :]
+        
+        # Compute determinant
+        det = torch.linalg.det(J)
+        
+        # Check for negative determinants
+        neg_det = (det < 0).float().mean()
+        logger.info(f"Percentage of negative Jacobian determinants: {neg_det:.4f}")
+        
+        # Assert that there are no negative determinants
+        assert neg_det < 0.0001, f"Found {neg_det:.4f}% negative Jacobian determinants"
+
+    def test_warp_inverse_composition(self, greedy_registration_results):
+        """
+        Test that the composition of warp and inverse warp gives identity transformation.
+        Note that the error is not actually relative error, but the error relative to the discretization of the grid.
+        
+        """
+
+        reg = greedy_registration_results['reg']
+        fixed_batch = greedy_registration_results['fixed_batch']
+        moving_batch = greedy_registration_results['moving_batch']
+        
+        # Get forward and inverse warps
+        warp = reg.get_warped_coordinates(fixed_batch, moving_batch)
+        inv_warp = reg.get_inverse_warped_coordinates(fixed_batch, moving_batch)
+        
+        # Create identity grid
+        grid = F.affine_grid(torch.eye(3, 4, device=warp.device)[None], 
+                           [1, 1] + list(warp.shape[1:-1]), 
+                           align_corners=True)
+        
+        # Compose warp and inverse warp
+        composed = F.grid_sample((warp - grid).permute(0, 4, 1, 2, 3), 
+                               inv_warp, 
+                               mode='bilinear', 
+                               align_corners=True).permute(0, 2, 3, 4, 1) + inv_warp
+        
+        # Compute relative error
+        H, W, D = warp.shape[1:-1]
+        loss = (composed - grid)
+        loss[..., 0] *= (W-1)/2
+        loss[..., 1] *= (H-1)/2
+        loss[..., 2] *= (D-1)/2
+        rel_error = (loss**2).mean()
+        
+        logger.info(f"Relative error in warp-inverse composition: {rel_error:.6f}")
+        assert rel_error < 0.001, f"Warp-inverse composition error ({rel_error:.6f}) exceeds threshold"
+        
+        # Also check inverse-warp composition
+        composed_inv = F.grid_sample((inv_warp - grid).permute(0, 4, 1, 2, 3), 
+                                   warp, 
+                                   mode='bilinear', 
+                                   align_corners=True).permute(0, 2, 3, 4, 1) + warp
+        
+        loss_inv = (composed_inv - grid)
+        loss_inv[..., 0] *= (W-1)/2
+        loss_inv[..., 1] *= (H-1)/2
+        loss_inv[..., 2] *= (D-1)/2
+        rel_error_inv = (loss_inv**2).mean()
+        
+        logger.info(f"Relative error in inverse-warp composition: {rel_error_inv:.6f}")
+        assert rel_error_inv < 0.001, f"Inverse-warp composition error ({rel_error_inv:.6f}) exceeds threshold"
+
 
 @pytest.fixture(scope="class")
 def syn_registration_results():
@@ -249,4 +325,26 @@ class TestSyNRegistration:
         # Compare using relative error
         rel_error = np.mean(np.abs(ants_array - moved_array) / (np.abs(moved_array) + 1e-6))
         logger.info(f"Relative error: {rel_error:.4f}")
-        assert rel_error < 0.005, f"Transform consistency check failed. Relative error: {rel_error:.4f}" 
+        assert rel_error < 0.005, f"Transform consistency check failed. Relative error: {rel_error:.4f}"
+
+    def test_jacobian_determinant(self, syn_registration_results):
+        """Test that the transformation has positive Jacobian determinant everywhere."""
+        reg = syn_registration_results['reg']
+        fixed_batch = syn_registration_results['fixed_batch']
+        moving_batch = syn_registration_results['moving_batch']
+        
+        # Get the warped coordinates
+        coords = reg.get_warped_coordinates(fixed_batch, moving_batch)
+        
+        # Compute Jacobian determinant using imageutils.jacobian
+        J = jacobian(coords, normalize=True).permute(0, 2, 3, 4, 1, 5)[:, 1:-1, 1:-1, 1:-1, :]
+        
+        # Compute determinant
+        det = torch.linalg.det(J)
+        
+        # Check for negative determinants
+        neg_det = (det < 0).float().mean()
+        logger.info(f"Percentage of negative Jacobian determinants: {neg_det:.4f}")
+        
+        # Assert that there are no negative determinants
+        assert neg_det < 0.0001, f"Found {neg_det:.4f}% negative Jacobian determinants" 

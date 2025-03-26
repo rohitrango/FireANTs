@@ -286,7 +286,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             if save_transformed:
                 fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
                 # rev_inv_warp_field = self.rev_warp.get_inverse_warp(n_iters=50, debug=True, lr=0.1)
-                rev_inv_warp_field = compositive_warp_inverse(self.fixed_images, self.rev_warp.get_warp() + fixed_image_vgrid, displacement=True)
+                rev_inv_warp_field = compositive_warp_inverse(self.fixed_images, self.rev_warp.get_warp() + fixed_image_vgrid, displacement=True,)
                 # # smooth them out
                 if self.smooth_warp_sigma > 0:
                     fwd_warp_field = separable_filtering(fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg), warp_gaussian).permute(*self.fwd_warp.permute_imgtov)

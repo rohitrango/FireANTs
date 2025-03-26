@@ -1,190 +1,252 @@
-# import pytest
-# import torch
-# import SimpleITK as sitk
-# import numpy as np
-# import os
-# from pathlib import Path
-# import tempfile
-# import shutil
+import pytest
+import torch
+import SimpleITK as sitk
+import numpy as np
+import os
+import subprocess
+import logging
+from pathlib import Path
 
-# # Import FireANTs components
-# from fireants.registration import greedy, syn
-# from fireants.io import transforms
+from fireants.registration import GreedyRegistration, SyNRegistration
+from fireants.io.image import Image, BatchedImages
+try:
+    from .conftest import dice_loss
+except ImportError:
+    from conftest import dice_loss
 
+# Set up logging
+logger = logging.getLogger(__name__)
 
-# class TestGreedyRegistration:
-#     """Test suite for greedy deformable registration."""
+test_data_dir = Path(__file__).parent / "test_data"
+fixed_image_path = str(test_data_dir / "deformable_image_1.nii.gz")
+moving_image_path = str(test_data_dir / "deformable_image_2.nii.gz")
+fixed_seg_path = str(test_data_dir / "deformable_seg_1.nii.gz")
+moving_seg_path = str(test_data_dir / "deformable_seg_2.nii.gz")
+
+@pytest.fixture(scope="class")
+def greedy_registration_results():
+    """Fixture to compute and share greedy registration results across subtests."""
+    # Create output directory
+    output_dir = Path(__file__).parent / "test_results"
+    output_dir.mkdir(exist_ok=True)
+    ext = "nii.gz"
+
+    fixed_image = Image.load_file(fixed_image_path)
+    moving_image = Image.load_file(moving_image_path)
+    fixed_seg = Image.load_file(fixed_seg_path, is_segmentation=True)
+    moving_seg = Image.load_file(moving_seg_path, is_segmentation=True)
+
+    # Create BatchedImages objects
+    fixed_batch = BatchedImages([fixed_image])
+    moving_batch = BatchedImages([moving_image])
+    moving_seg_batch = BatchedImages([moving_seg])
+    fixed_seg_batch = BatchedImages([fixed_seg])
     
-#     def test_greedy_registration_tensor(self, create_test_images, compute_similarity):
-#         """Test greedy deformable registration with tensor inputs."""
-#         # Create test images
-#         fixed_img, moving_img = create_test_images(size=(32, 32, 32))
-        
-#         # Compute initial similarity
-#         initial_mse = compute_similarity(fixed_img, moving_img, metric='mse')
-        
-#         # Run registration
-#         reg = greedy.GreedyRegistration(
-#             n_iter=30,
-#             learning_rate=0.1,
-#             loss='mse',
-#             smoothing_sigma=1.0
-#         )
-        
-#         result = reg.register(fixed_img, moving_img)
-#         registered_img = result.registered_image
-#         displacement_field = result.displacement_field
-        
-#         # Compute registration quality
-#         final_mse = compute_similarity(fixed_img, registered_img, metric='mse')
-        
-#         # Assertions
-#         assert final_mse < initial_mse, "Registration did not improve image similarity"
-#         assert displacement_field.shape[2:] == fixed_img.shape[2:], "Displacement field has incorrect spatial dimensions"
-#         assert displacement_field.shape[1] == 3, "Displacement field should have 3 components (x, y, z)"
+    # Run greedy registration
+    reg = GreedyRegistration(
+        scales=[4, 2, 1],
+        iterations=[200, 100, 50],
+        fixed_images=fixed_batch,
+        moving_images=moving_batch,
+        loss_type='cc',
+        optimizer='Adam',
+        # optimizer_lr=0.5,
+        # smooth_grad_sigma=1.0,
+        # smooth_warp_sigma=0.5,
+        optimizer_lr=0.2,
+        smooth_warp_sigma=0.25,
+        smooth_grad_sigma=0.5
+    )
     
-#     def test_greedy_registration_file(self, save_test_images, compute_similarity):
-#         """Test greedy deformable registration with file inputs."""
-#         # Save test images to files
-#         fixed_path, moving_path = save_test_images()
+    # Optimize the registration
+    reg.optimize()
+    
+    # Get results
+    moved_seg_batch = reg.evaluate(fixed_seg_batch, moving_seg_batch).detach()
+    moved_image = reg.evaluate(fixed_batch, moving_batch).detach()
+   
+    # Save results
+    reg.save_moved_images(moved_image, str(output_dir / "moved_image_greedy.nii.gz"))
+    reg.save_moved_images(moved_seg_batch, str(output_dir / "moved_seg_greedy.nii.gz"))
+    
+    # Save transformation field
+    reg.save_as_ants_transforms(str(output_dir / f"warp_field_greedy.{ext}"))
+
+    return {
+        'reg': reg,
+        'fixed_batch': fixed_batch,
+        'moving_batch': moving_batch,
+        'fixed_seg_batch': fixed_seg_batch,
+        'moving_seg_batch': moving_seg_batch,
+        'moved_seg_batch': moved_seg_batch,
+        'moved_image': moved_image,
+        'output_dir': output_dir,
+        'fixed_path': fixed_image_path,
+        'moving_path': moving_image_path,
+        'transform_path': str(output_dir / f"warp_field_greedy.{ext}"),
+    }
+
+class TestGreedyRegistration:
+    """Test suite for greedy deformable registration."""
+    
+    def test_initial_dice_score(self, greedy_registration_results):
+        """Test that initial Dice score is close to 0."""
+        dice_score_before = 1 - dice_loss(greedy_registration_results['moving_seg_batch'](), 
+                                        greedy_registration_results['fixed_seg_batch'](), 
+                                        reduce=False).mean(0)
+        mean_dice = dice_score_before.mean()
+        logger.info(f"Dice score before registration: {mean_dice:.3f}")
+        assert mean_dice < 0.6, f"Initial Dice score ({mean_dice:.3f}) should be small"
+    
+    def test_final_dice_score(self, greedy_registration_results):
+        """Test that final Dice score is above threshold."""
+        dice_scores = 1 - dice_loss(greedy_registration_results['moved_seg_batch'], 
+                                  greedy_registration_results['fixed_seg_batch'](), 
+                                  reduce=False).mean(0)
+        mean_dice = dice_scores.mean()
+        logger.info(f"Average Dice score: {mean_dice:.3f}")
+        assert mean_dice > 0.75, f"Average Dice score ({mean_dice:.3f}) is below threshold"
         
-#         # Load images to compute initial similarity
-#         fixed_sitk = sitk.ReadImage(fixed_path)
-#         moving_sitk = sitk.ReadImage(moving_path)
-#         fixed_np = sitk.GetArrayFromImage(fixed_sitk)
-#         moving_np = sitk.GetArrayFromImage(moving_sitk)
+        # Log detailed results
+        logger.info("\nGreedy Registration Results:")
+        logger.info(f"Average Dice Score: {mean_dice:.3f}")
+        logger.info(f"Number of labels with Dice > 0.7: {sum(1 for d in dice_scores if d > 0.7)}")
+        logger.info(f"Number of labels with Dice > 0.8: {sum(1 for d in dice_scores if d > 0.8)}")
+        logger.info(f"Number of labels with Dice > 0.9: {sum(1 for d in dice_scores if d > 0.9)}")
+    
+    def test_transform_consistency(self, greedy_registration_results):
+        """Test that saved transform and antsApplyTransforms give consistent results."""
+        # Apply transform using antsApplyTransforms
+        fixed_path = greedy_registration_results['fixed_path']
+        moving_path = greedy_registration_results['moving_path']
+        transform_path = greedy_registration_results['transform_path']
+        ants_output = str(greedy_registration_results['output_dir'] / "moved_image_ants_greedy.nii.gz")
         
-#         initial_mse = compute_similarity(fixed_np, moving_np, metric='mse')
+        # Run antsApplyTransforms with the ANTs transform field
+        cmd = f"antsApplyTransforms -d 3 -i {moving_path} -r {fixed_path} -t {transform_path} -o {ants_output}"
+        subprocess.run(cmd, shell=True, check=True)
         
-#         # Temporary directory for outputs
-#         with tempfile.TemporaryDirectory() as temp_dir:
-#             out_warp = os.path.join(temp_dir, "warp.nii.gz")
-#             out_img = os.path.join(temp_dir, "registered.nii.gz")
-            
-#             # Run registration
-#             reg = greedy.GreedyRegistration(
-#                 n_iter=30,
-#                 learning_rate=0.1,
-#                 loss='mse',
-#                 smoothing_sigma=1.0
-#             )
-            
-#             result = reg.register_files(
-#                 fixed_path, 
-#                 moving_path,
-#                 displacement_field_path=out_warp,
-#                 registered_image_path=out_img
-#             )
-            
-#             # Check if output files were created
-#             assert os.path.exists(out_warp), "Displacement field file was not created"
-#             assert os.path.exists(out_img), "Registered image file was not created"
-            
-#             # Load registered image
-#             registered_sitk = sitk.ReadImage(out_img)
-#             registered_np = sitk.GetArrayFromImage(registered_sitk)
-            
-#             # Compute registration quality
-#             final_mse = compute_similarity(fixed_np, registered_np, metric='mse')
-            
-#             # Assertions
-#             assert final_mse < initial_mse, "File-based registration did not improve image similarity"
-            
-#             # Load displacement field and check properties
-#             warp_sitk = sitk.ReadImage(out_warp)
-#             assert warp_sitk.GetDimension() == 3, "Displacement field should be 3D"
-#             assert warp_sitk.GetNumberOfComponentsPerPixel() == 3, "Displacement field should have 3 components per voxel"
+        # Load and compare results
+        ants_result = Image.load_file(ants_output)
+        ants_array = ants_result.array.squeeze().cpu().numpy()
+        moved_array = greedy_registration_results['moved_image'].squeeze().cpu().numpy()
+        logger.info(f"ANTS array min: {ants_array.min()}, max: {ants_array.max()}")
+        logger.info(f"Moved array min: {moved_array.min()}, max: {moved_array.max()}")
+        
+        # Compare using relative error
+        rel_error = np.mean(np.abs(ants_array - moved_array) / (np.abs(moved_array) + 1e-6))
+        logger.info(f"Relative error: {rel_error:.4f}")
+        assert rel_error < 0.005, f"Transform consistency check failed. Relative error: {rel_error:.4f}"
 
 
-# class TestSyNRegistration:
-#     """Test suite for SyN deformable registration."""
+@pytest.fixture(scope="class")
+def syn_registration_results():
+    """Fixture to compute and share SyN registration results across subtests."""
+    # Create output directory
+    output_dir = Path(__file__).parent / "test_results"
+    output_dir.mkdir(exist_ok=True)
+    ext = "nii.gz"
+
+    fixed_image = Image.load_file(fixed_image_path)
+    moving_image = Image.load_file(moving_image_path)
+    fixed_seg = Image.load_file(fixed_seg_path, is_segmentation=True)
+    moving_seg = Image.load_file(moving_seg_path, is_segmentation=True)
+
+    # Create BatchedImages objects
+    fixed_batch = BatchedImages([fixed_image])
+    moving_batch = BatchedImages([moving_image])
+    moving_seg_batch = BatchedImages([moving_seg])
+    fixed_seg_batch = BatchedImages([fixed_seg])
     
-#     def test_syn_registration_tensor(self, create_test_images, compute_similarity):
-#         """Test SyN deformable registration with tensor inputs."""
-#         # Create test images
-#         fixed_img, moving_img = create_test_images(size=(32, 32, 32))
-        
-#         # Compute initial similarity
-#         initial_mse = compute_similarity(fixed_img, moving_img, metric='mse')
-        
-#         # Run registration
-#         reg = syn.SyNRegistration(
-#             n_iter=30,
-#             learning_rate=0.1,
-#             loss='mse',
-#             smoothing_sigma=1.0
-#         )
-        
-#         result = reg.register(fixed_img, moving_img)
-#         registered_img = result.registered_image
-#         forward_field = result.forward_field
-#         inverse_field = result.inverse_field
-        
-#         # Compute registration quality
-#         final_mse = compute_similarity(fixed_img, registered_img, metric='mse')
-        
-#         # Assertions
-#         assert final_mse < initial_mse, "Registration did not improve image similarity"
-#         assert forward_field.shape[2:] == fixed_img.shape[2:], "Forward field has incorrect spatial dimensions"
-#         assert inverse_field.shape[2:] == fixed_img.shape[2:], "Inverse field has incorrect spatial dimensions"
-#         assert forward_field.shape[1] == 3, "Forward field should have 3 components (x, y, z)"
-#         assert inverse_field.shape[1] == 3, "Inverse field should have 3 components (x, y, z)"
+    # Run SyN registration
+    reg = SyNRegistration(
+        scales=[4, 2, 1],
+        iterations=[200, 100, 50],
+        fixed_images=fixed_batch,
+        moving_images=moving_batch,
+        loss_type='cc',
+        optimizer='Adam',
+        optimizer_lr=0.2,
+        smooth_warp_sigma=0.25,
+        smooth_grad_sigma=0.5
+    )
     
-#     def test_syn_registration_file(self, save_test_images, compute_similarity):
-#         """Test SyN deformable registration with file inputs."""
-#         # Save test images to files
-#         fixed_path, moving_path = save_test_images()
+    # Optimize the registration
+    reg.optimize()
+    
+    # Get results
+    moved_seg_batch = reg.evaluate(fixed_seg_batch, moving_seg_batch).detach()
+    moved_image = reg.evaluate(fixed_batch, moving_batch).detach()
+   
+    # Save results
+    reg.save_moved_images(moved_image, str(output_dir / "moved_image_syn.nii.gz"))
+    reg.save_moved_images(moved_seg_batch, str(output_dir / "moved_seg_syn.nii.gz"))
+    
+    # Save transformation field
+    reg.save_as_ants_transforms(str(output_dir / f"warp_field_syn.{ext}"))
+
+    return {
+        'reg': reg,
+        'fixed_batch': fixed_batch,
+        'moving_batch': moving_batch,
+        'fixed_seg_batch': fixed_seg_batch,
+        'moving_seg_batch': moving_seg_batch,
+        'moved_seg_batch': moved_seg_batch,
+        'moved_image': moved_image,
+        'output_dir': output_dir,
+        'fixed_path': fixed_image_path,
+        'moving_path': moving_image_path,
+        'transform_path': str(output_dir / f"warp_field_syn.{ext}"),
+    }
+
+class TestSyNRegistration:
+    """Test suite for SyN deformable registration."""
+    
+    def test_initial_dice_score(self, syn_registration_results):
+        """Test that initial Dice score is close to 0."""
+        dice_score_before = 1 - dice_loss(syn_registration_results['moving_seg_batch'](), 
+                                        syn_registration_results['fixed_seg_batch'](), 
+                                        reduce=False).mean(0)
+        mean_dice = dice_score_before.mean()
+        logger.info(f"Dice score before registration: {mean_dice:.3f}")
+        assert mean_dice < 0.6, f"Initial Dice score ({mean_dice:.3f}) should be small"
+    
+    def test_final_dice_score(self, syn_registration_results):
+        """Test that final Dice score is above threshold."""
+        dice_scores = 1 - dice_loss(syn_registration_results['moved_seg_batch'], 
+                                  syn_registration_results['fixed_seg_batch'](), 
+                                  reduce=False).mean(0)
+        mean_dice = dice_scores.mean()
+        logger.info(f"Average Dice score: {mean_dice:.3f}")
+        assert mean_dice > 0.75, f"Average Dice score ({mean_dice:.3f}) is below threshold"
         
-#         # Load images to compute initial similarity
-#         fixed_sitk = sitk.ReadImage(fixed_path)
-#         moving_sitk = sitk.ReadImage(moving_path)
-#         fixed_np = sitk.GetArrayFromImage(fixed_sitk)
-#         moving_np = sitk.GetArrayFromImage(moving_sitk)
+        # Log detailed results
+        logger.info("\nSyN Registration Results:")
+        logger.info(f"Average Dice Score: {mean_dice:.3f}")
+        logger.info(f"Number of labels with Dice > 0.7: {sum(1 for d in dice_scores if d > 0.7)}")
+        logger.info(f"Number of labels with Dice > 0.8: {sum(1 for d in dice_scores if d > 0.8)}")
+        logger.info(f"Number of labels with Dice > 0.9: {sum(1 for d in dice_scores if d > 0.9)}")
+    
+    def test_transform_consistency(self, syn_registration_results):
+        """Test that saved transform and antsApplyTransforms give consistent results."""
+        # Apply transform using antsApplyTransforms
+        fixed_path = syn_registration_results['fixed_path']
+        moving_path = syn_registration_results['moving_path']
+        transform_path = syn_registration_results['transform_path']
+        ants_output = str(syn_registration_results['output_dir'] / "moved_image_ants_syn.nii.gz")
         
-#         initial_mse = compute_similarity(fixed_np, moving_np, metric='mse')
+        # Run antsApplyTransforms with the ANTs transform field
+        cmd = f"antsApplyTransforms -d 3 -i {moving_path} -r {fixed_path} -t {transform_path} -o {ants_output}"
+        subprocess.run(cmd, shell=True, check=True)
         
-#         # Temporary directory for outputs
-#         with tempfile.TemporaryDirectory() as temp_dir:
-#             out_forward = os.path.join(temp_dir, "forward.nii.gz")
-#             out_inverse = os.path.join(temp_dir, "inverse.nii.gz")
-#             out_img = os.path.join(temp_dir, "registered.nii.gz")
-            
-#             # Run registration
-#             reg = syn.SyNRegistration(
-#                 n_iter=30,
-#                 learning_rate=0.1,
-#                 loss='mse',
-#                 smoothing_sigma=1.0
-#             )
-            
-#             result = reg.register_files(
-#                 fixed_path, 
-#                 moving_path,
-#                 forward_field_path=out_forward,
-#                 inverse_field_path=out_inverse,
-#                 registered_image_path=out_img
-#             )
-            
-#             # Check if output files were created
-#             assert os.path.exists(out_forward), "Forward field file was not created"
-#             assert os.path.exists(out_inverse), "Inverse field file was not created"
-#             assert os.path.exists(out_img), "Registered image file was not created"
-            
-#             # Load registered image
-#             registered_sitk = sitk.ReadImage(out_img)
-#             registered_np = sitk.GetArrayFromImage(registered_sitk)
-            
-#             # Compute registration quality
-#             final_mse = compute_similarity(fixed_np, registered_np, metric='mse')
-            
-#             # Assertions
-#             assert final_mse < initial_mse, "File-based registration did not improve image similarity"
-            
-#             # Load fields and check properties
-#             forward_sitk = sitk.ReadImage(out_forward)
-#             inverse_sitk = sitk.ReadImage(out_inverse)
-            
-#             assert forward_sitk.GetDimension() == 3, "Forward field should be 3D"
-#             assert inverse_sitk.GetDimension() == 3, "Inverse field should be 3D"
-#             assert forward_sitk.GetNumberOfComponentsPerPixel() == 3, "Forward field should have 3 components per voxel"
-#             assert inverse_sitk.GetNumberOfComponentsPerPixel() == 3, "Inverse field should have 3 components per voxel" 
+        # Load and compare results
+        ants_result = Image.load_file(ants_output)
+        ants_array = ants_result.array.squeeze().cpu().numpy()
+        moved_array = syn_registration_results['moved_image'].squeeze().cpu().numpy()
+        logger.info(f"ANTS array min: {ants_array.min()}, max: {ants_array.max()}")
+        logger.info(f"Moved array min: {moved_array.min()}, max: {moved_array.max()}")
+        
+        # Compare using relative error
+        rel_error = np.mean(np.abs(ants_array - moved_array) / (np.abs(moved_array) + 1e-6))
+        logger.info(f"Relative error: {rel_error:.4f}")
+        assert rel_error < 0.005, f"Transform consistency check failed. Relative error: {rel_error:.4f}" 

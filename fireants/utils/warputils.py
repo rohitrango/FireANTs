@@ -21,9 +21,10 @@ class InverseConsistencyOperator(nn.Module):
     '''
     Multi-scale inverse consistency operator (to compute inverse of warp)
     '''
-    def __init__(self, ref_warp: torch.Tensor):
+    def __init__(self, ref_warp: torch.Tensor, image: BatchedImages):
         super().__init__()
         self.ref_warp = ref_warp.detach()
+        self.image_size = image.shape[2:]
         self.dims = len(ref_warp.shape) - 2
         if self.dims == 3:  
             self.permute_vtoimg = (0, 4, 1, 2, 3)       # [b, h, w, d, c] -> [b, c, h, w, d]
@@ -37,21 +38,27 @@ class InverseConsistencyOperator(nn.Module):
     def forward(self, warp: torch.Tensor):
         ''' compute the inverse consistency loss '''
         shape = [1, 1] + list(warp.shape[1:-1])
-        ref_shape = [1, 1] + list(self.ref_warp.shape[1:-1])
-        if ref_shape != shape:
+        scale = [float(t)/float(s) for s, t in zip(shape[2:], self.image_size)]  # shape will only be downsampled versions of image_size
+        scale = max(scale)    # some dimensions may be downsampled to 32 instead of H/s
+        assert scale >= 1, f"Scale factor is {scale}, which is less than 1"
+        # ref_shape = [1, 1] + list(self.ref_warp.shape[1:-1])
+        # if ref_shape != shape:
+        if scale > 1:
             linear = 'bilinear' if self.dims == 2 else 'trilinear'
-            ref_warp_i = F.interpolate(self.ref_warp.permute(*self.permute_vtoimg), shape[2:], mode=linear, align_corners=True).permute(*self.permute_imgtov)
+            ref_warp_i = F.interpolate(self.ref_warp.permute(*self.permute_vtoimg), scale_factor=1.0/scale, mode=linear, align_corners=True).permute(*self.permute_imgtov)
         else:
             ref_warp_i = self.ref_warp
         # init grid
-        grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=warp.device)[None], shape, align_corners=True)
+        grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=warp.device)[None], [1, 1] + list(ref_warp_i.shape[1:-1]), align_corners=True)
         # psi(phi(x))
         loss1 = F.grid_sample(warp.permute(*self.permute_vtoimg), ref_warp_i, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
         loss1 = F.mse_loss(loss1, grid)
         # phi(psi(y))
+        grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=warp.device)[None], shape, align_corners=True)
         loss2 = F.grid_sample(ref_warp_i.permute(*self.permute_vtoimg), warp, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
         loss2 = F.mse_loss(loss2, grid)
         return loss1 + loss2
+
 
 class ShapeAveragingOperator(nn.Module):
     def __init__(self, ref_warp: torch.Tensor):
@@ -122,8 +129,8 @@ def shape_averaging_invwarp(
 def compositive_warp_inverse(image: BatchedImages, ref_warp: torch.Tensor,
                         scales: List[float] = [8, 4, 2, 1], 
                         iterations: List[int] = [200, 200, 100, 50],
-                        smooth_grad_sigma: float = 2,
-                        smooth_warp_sigma: float = 2,
+                        smooth_grad_sigma: float = 0.5,
+                        smooth_warp_sigma: float = 0.25,
                         displacement: bool = False,
                         ):
     '''
@@ -138,7 +145,7 @@ def compositive_warp_inverse(image: BatchedImages, ref_warp: torch.Tensor,
         deformation_type='compositive',
         optimizer='adam',
         optimizer_lr=0.5,
-        warp_reg=InverseConsistencyOperator(ref_warp),
+        warp_reg=InverseConsistencyOperator(ref_warp, image),
         smooth_grad_sigma=smooth_grad_sigma,
         smooth_warp_sigma=smooth_warp_sigma,
     )

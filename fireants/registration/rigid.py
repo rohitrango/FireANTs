@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 class RigidRegistration(AbstractRegistration):
     """Rigid registration class for 2D and 3D image registration.
 
+    Note about initialization and optimization:
+     - All initializations assume the format y = Rx + t (rigid, affine, moments)
+     - However, optimization works better with the format y = R(x-c) + c + t'  (where c is the center of the image)
+     - therefore, we need to compute t' = t - c + Ac as the learnable parameter if `around_center=True`
+
     This class implements rigid registration (rotation and translation) with optional anisotropic scaling.
     The transformation is parameterized using:
         - Rotation: Uses Lie algebra so(n) for 2D/3D rotations
@@ -60,7 +65,7 @@ class RigidRegistration(AbstractRegistration):
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
                 optimizer: str = 'Adam', optimizer_params: dict = {},
-                optimizer_lr: float = 3e-3,
+                optimizer_lr: float = 3e-2,
                 loss_params: dict = {},
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
@@ -69,6 +74,7 @@ class RigidRegistration(AbstractRegistration):
                 init_moment: Optional[torch.Tensor] = None,
                 scaling: bool = False,
                 custom_loss: nn.Module = None, 
+                around_center: bool = True,
                 blur: bool = True, **kwargs
                 ) -> None:
         super().__init__(scales=scales, iterations=iterations, fixed_images=fixed_images, moving_images=moving_images, 
@@ -81,6 +87,16 @@ class RigidRegistration(AbstractRegistration):
         self.dims = dims = self.moving_images.dims
         self.rotation_dims = rotation_dims = dims * (dims - 1) // 2
         self.rotation = nn.Parameter(torch.zeros((self.opt_size, rotation_dims), device=device))  # [N, Rd]
+        # set init moment
+        if init_moment is not None:
+            self.moment = init_moment.to(device)
+        else:
+            self.moment = torch.eye(dims, device=device).unsqueeze(0).repeat(self.opt_size, 1, 1)
+
+        # parameters for centering translation
+        self.around_center = around_center
+        self.center = self.fixed_images.get_torch2phy()[:, :self.dims, -1].detach().contiguous()  # [N, D]
+        self.center = self.center.to(device)
         # introduce some scaling parameter
         self.scaling = scaling
         if self.scaling:
@@ -91,15 +107,18 @@ class RigidRegistration(AbstractRegistration):
         self.blur = blur
         # first three params are so(n) variables, last three are translation
         if init_translation is not None:
-            transl = init_translation
+            transl = init_translation.to(device)  # [N, D]
         else:
-            transl = torch.zeros((self.opt_size, fixed_images.dims))  # [N, D]
+            transl = torch.zeros((self.opt_size, fixed_images.dims)).to(device)  # [N, D]
+        
+        # recalibrate the translation parameter (t --> t') if around_center is True
+        if self.around_center:
+            scale = torch.exp(self.logscale)[..., None]  # [N, D, 1]
+            rigid = scale * self.get_rotation_matrix()[:, :-1, :-1]  # [N, D, D]
+            transl = transl - self.center + (rigid @ self.center[..., None]).squeeze(-1)
+            transl = transl.detach().contiguous()
+
         self.transl = nn.Parameter(transl.to(device))  # [N, D]
-        # set init moment
-        if init_moment is not None:
-            self.moment = init_moment.to(device)
-        else:
-            self.moment = torch.eye(dims, device=device).unsqueeze(0).repeat(self.opt_size, 1, 1)
         # optimizer
         params = [self.rotation, self.transl]
         if scaling:
@@ -193,7 +212,11 @@ class RigidRegistration(AbstractRegistration):
         # scalediag[:, np.arange(D), np.arange(D)] = scale
         matclone = rigidmat.clone()
         matclone[:, :-1, :-1] = scale * rigidmat[:, :-1, :-1]
-        matclone[:, :-1, -1] = self.transl  # [N, dim+1, dim+1]
+        transl = self.transl
+        if self.around_center:  # convert t' to t
+            transl = transl + self.center - (matclone[:, :-1, :-1] @ self.center[..., None]).squeeze(-1)
+        # now we can assign the translation
+        matclone[:, :-1, -1] = transl  # [N, dim+1, dim+1]
         return matclone if homogenous else matclone[:, :-1, :]  # [N, dim, dim+1]
     
     def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):

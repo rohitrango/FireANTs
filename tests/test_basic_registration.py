@@ -168,11 +168,11 @@ def rigid_registration_results():
 
     # load images
     fixed_img = Image.load_file(str(test_data_dir / "oasis_157_image.nii.gz"))
-    moving_img = Image.load_file(str(test_data_dir / "oasis_157_image_rigid.nii.gz"))
+    moving_img = Image.load_file(str(test_data_dir / "oasis_157_image_affine.nii.gz"))
     moving_img.array = moving_img.array * 1.0 / moving_img.array.max() * fixed_img.array.max()
 
     fixed_seg = Image.load_file(str(test_data_dir / "oasis_157_seg.nii.gz"), is_segmentation=True)
-    moving_seg = Image.load_file(str(test_data_dir / "oasis_157_seg_rigid.nii.gz"), is_segmentation=True)
+    moving_seg = Image.load_file(str(test_data_dir / "oasis_157_seg_affine.nii.gz"), is_segmentation=True)
     
     # Create BatchedImages objects
     fixed_batch = BatchedImages([fixed_img])
@@ -180,18 +180,18 @@ def rigid_registration_results():
     moving_seg_batch = BatchedImages([moving_seg])
     fixed_seg_batch = BatchedImages([fixed_seg])
 
-    reg1 = MomentsRegistration(
-        scale=1.0,
-        fixed_images=fixed_batch,
-        moving_images=moving_batch,
-        moments=2,
-        orientation='rot',
-        blur=False,
-        loss_type='cc',
-        cc_kernel_type='rectangular',
-        cc_kernel_size=5
-    )
-    reg1.optimize()
+    # reg1 = MomentsRegistration(
+    #     scale=1.0,
+    #     fixed_images=fixed_batch,
+    #     moving_images=moving_batch,
+    #     moments=2,
+    #     orientation='rot',
+    #     blur=False,
+    #     loss_type='cc',
+    #     cc_kernel_type='rectangular',
+    #     cc_kernel_size=5
+    # )
+    # reg1.optimize()
     
     # Run rigid registration
     reg = RigidRegistration(
@@ -199,11 +199,11 @@ def rigid_registration_results():
         iterations=[200, 200, 100, 50],
         fixed_images=fixed_batch,
         moving_images=moving_batch,
-        init_moment=reg1.get_rigid_moment_init(),
-        init_translation=reg1.get_rigid_transl_init(),
+        # init_moment=reg1.get_rigid_moment_init(),
+        # init_translation=reg1.get_rigid_transl_init(),
         loss_type='mse',
         optimizer='Adam',
-        optimizer_lr=3e-3,
+        optimizer_lr=3e-1,
         scaling=False,
         cc_kernel_type='rectangular',
         cc_kernel_size=5,
@@ -236,7 +236,7 @@ def rigid_registration_results():
         'transform_matrix': transform_matrix,
         'output_dir': output_dir,
         'fixed_path': str(test_data_dir / "oasis_157_image.nii.gz"),
-        'moving_path': str(test_data_dir / "oasis_157_image_rigid.nii.gz"),
+        'moving_path': str(test_data_dir / "oasis_157_image_affine.nii.gz"),
         'transform_path': str(output_dir / f"transform_matrix_rigid.{ext}"),
     }
 

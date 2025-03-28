@@ -7,7 +7,13 @@ from fireants.losses.cc import gaussian_1d, separable_filtering
 from collections import deque
 import numpy as np
 import gc
+import os
 import inspect
+import logging
+logging.basicConfig(level=logging.INFO)
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 def get_tensor_memory_details() -> List[Tuple[torch.Tensor, float, str, str]]:
     """Get details of all tensors currently in memory.
@@ -35,7 +41,7 @@ def get_tensor_memory_details() -> List[Tuple[torch.Tensor, float, str, str]]:
                 
                 tensor_details.append((tensor, size_mb, description, var_name))
         except Exception as e:
-            print(e)
+            logger.warning(f"Error getting tensor details: {e}")
             pass
     return sorted(tensor_details, key=lambda x: x[1], reverse=True)
 
@@ -140,6 +146,51 @@ def grad_smoothing_hook(grad: torch.Tensor, gaussians: List[torch.Tensor]):
     return separable_filtering(grad.permute(*permute_vtoimg), gaussians).permute(*permute_imgtov)
 
 
+def augment_filenames(filenames: List[str], batch_size: int, permitted_ext: List[str]):
+    '''
+    If filenames is a single string, return a list of batch_size strings with the filename
+    If filenames is a list of strings > 1, do nothing
+    '''
+    # do nothing if batch_size == 1
+    if batch_size == 1:
+        return filenames
+    # if filenames is a list with single item, return a list of batch_size strings with the filename (batch > 1)
+    if len(filenames) == 1:
+        for ext in permitted_ext:
+            if filenames[0].endswith(ext):
+                return [filenames[0].replace(ext, f"_{i}{ext}") for i in range(batch_size)]
+        raise ValueError(f"No permitted extension found in {filenames[0]}")
+
+    logger.warning(f"More than one filename provided, returning the same filename for all {batch_size} images")
+    return filenames
+
+def check_correct_ext(filenames: List[str], permitted_ext: List[str]):
+    '''
+    Check if the filenames have the correct extension
+    '''
+    for filename in filenames:
+        if not any(filename.endswith(ext) for ext in permitted_ext):
+            raise ValueError(f"File {filename} has an incorrect extension, must be one of {permitted_ext}")
+    return True
+
+def any_extension(filename: str, permitted_ext: List[str]):
+    '''
+    Check if the filename has any of the permitted extensions
+    '''
+    return any(filename.endswith(ext) for ext in permitted_ext)
+
+def savetxt(filename: str, A: torch.Tensor, t: torch.Tensor):
+    '''
+    Save the transform matrix and translation vector to a text file
+    '''
+    dims = t.flatten().shape[0]
+    with open(filename, 'w') as f:
+        f.write("#Insight Transform File V1.0\n")
+        f.write("#Transform 0\n")
+        f.write("Transform: AffineTransform_float_3_3\n")
+        f.write("Parameters: " + " ".join(map(str, list(A.flatten()) + list(t.flatten()))) + "\n")
+        f.write("FixedParameters: " + " ".join(map(str, np.zeros((dims, 1)).flatten())) + "\n")
+
 def compose_warp(warp1: torch.Tensor, warp2: torch.Tensor, grid: torch.Tensor):
     '''
     warp1 and warp2 are displacement maps u(x) and v(x) of size [N, H, W, D, dims]
@@ -163,3 +214,7 @@ def collate_fireants_fn(batch):
     collate batch of arbitrary lists/tuples/dicts with collating the Images into BatchedImages object 
     '''
     raise NotImplementedError
+
+def check_and_raise_cond(cond: bool, msg: str, error_type: Exception = ValueError):
+    if not cond:
+        raise error_type(msg)

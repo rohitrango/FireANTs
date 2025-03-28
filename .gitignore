@@ -2,8 +2,10 @@
 *pdf
 *svg
 dist/
-build/
+**/build/
 **pkl
+**/*.so
+**/*.egg-info
 **/__pycache__
 **/baselines
 **/*.pkl
@@ -24,3 +26,8 @@ fireants/scripts/template/evaltemplate/
 fireants/scripts/template/saved_*
 notepad/
 fused_ops/fireants_fused_ops*.so
+**/saved_results
+notepad
+**/*pkl
+tests/test_results/
+**/*.zip

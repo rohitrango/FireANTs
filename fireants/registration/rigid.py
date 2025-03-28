@@ -1,8 +1,11 @@
 from fireants.registration.abstract import AbstractRegistration
-from typing import List, Optional
+from typing import List, Optional, Union
 import torch
 from torch import nn
-from fireants.io.image import BatchedImages
+from fireants.io.image import BatchedImages, FakeBatchedImages
+from fireants.utils.util import check_and_raise_cond, augment_filenames, check_correct_ext, any_extension, savetxt
+from scipy.io import savemat
+from fireants.utils.globals import PERMITTED_ANTS_TXT_EXT, PERMITTED_ANTS_MAT_EXT
 from torch.optim import SGD, Adam
 from torch.nn import functional as F
 from tqdm import tqdm
@@ -10,9 +13,16 @@ import numpy as np
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 from fireants.utils.globals import MIN_IMG_SIZE
+import logging
+logger = logging.getLogger(__name__)
 
 class RigidRegistration(AbstractRegistration):
     """Rigid registration class for 2D and 3D image registration.
+
+    Note about initialization and optimization:
+     - All initializations assume the format y = Rx + t (rigid, affine, moments)
+     - However, optimization works better with the format y = R(x-c) + c + t'  (where c is the center of the image)
+     - therefore, we need to compute t' = t - c + Ac as the learnable parameter if `around_center=True`
 
     This class implements rigid registration (rotation and translation) with optional anisotropic scaling.
     The transformation is parameterized using:
@@ -55,7 +65,7 @@ class RigidRegistration(AbstractRegistration):
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
                 optimizer: str = 'Adam', optimizer_params: dict = {},
-                optimizer_lr: float = 3e-3,
+                optimizer_lr: float = 3e-2,
                 loss_params: dict = {},
                 mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
@@ -64,8 +74,8 @@ class RigidRegistration(AbstractRegistration):
                 init_moment: Optional[torch.Tensor] = None,
                 scaling: bool = False,
                 custom_loss: nn.Module = None, 
-                blur: bool = True, 
-                **kwargs
+                around_center: bool = True,
+                blur: bool = True, **kwargs
                 ) -> None:
         super().__init__(scales=scales, iterations=iterations, fixed_images=fixed_images, moving_images=moving_images, 
                          loss_type=loss_type, mi_kernel_type=mi_kernel_type, cc_kernel_type=cc_kernel_type, custom_loss=custom_loss, 
@@ -77,6 +87,16 @@ class RigidRegistration(AbstractRegistration):
         self.dims = dims = self.moving_images.dims
         self.rotation_dims = rotation_dims = dims * (dims - 1) // 2
         self.rotation = nn.Parameter(torch.zeros((self.opt_size, rotation_dims), device=device, dtype=self.dtype))  # [N, Rd]
+        # set init moment
+        if init_moment is not None:
+            self.moment = init_moment.to(device)
+        else:
+            self.moment = torch.eye(dims, device=device).unsqueeze(0).repeat(self.opt_size, 1, 1)
+
+        # parameters for centering translation
+        self.around_center = around_center
+        self.center = self.fixed_images.get_torch2phy()[:, :self.dims, -1].detach().contiguous()  # [N, D]
+        self.center = self.center.to(device)
         # introduce some scaling parameter
         self.scaling = scaling
         if self.scaling:
@@ -87,15 +107,18 @@ class RigidRegistration(AbstractRegistration):
         self.blur = blur
         # first three params are so(n) variables, last three are translation
         if init_translation is not None:
-            transl = init_translation.to(device, dtype=self.dtype)
+            transl = init_translation.to(device)  # [N, D]
         else:
-            transl = torch.zeros((self.opt_size, fixed_images.dims), dtype=self.dtype)  # [N, D]
-        self.transl = nn.Parameter(transl.to(device, self.dtype))  # [N, D]
-        # set init moment
-        if init_moment is not None:
-            self.moment = init_moment.to(device, self.dtype)
-        else:
-            self.moment = torch.eye(dims, device=device, dtype=self.dtype).unsqueeze(0).repeat(self.opt_size, 1, 1)
+            transl = torch.zeros((self.opt_size, fixed_images.dims)).to(device)  # [N, D]
+        
+        # recalibrate the translation parameter (t --> t') if around_center is True
+        if self.around_center:
+            scale = torch.exp(self.logscale)[..., None]  # [N, D, 1]
+            rigid = scale * self.get_rotation_matrix()[:, :-1, :-1]  # [N, D, D]
+            transl = transl - self.center + (rigid @ self.center[..., None]).squeeze(-1)
+            transl = transl.detach().contiguous()
+
+        self.transl = nn.Parameter(transl.to(device))  # [N, D]
         # optimizer
         params = [self.rotation, self.transl]
         if scaling:
@@ -146,6 +169,30 @@ class RigidRegistration(AbstractRegistration):
         rotmat = rotmat.to(self.rotation.device, self.rotation.dtype)
         return rotmat 
     
+    def save_as_ants_transforms(self, filenames: Union[str, List[str]]):
+        ''' 
+        Save the registration as ANTs transforms (.mat file)
+        '''
+        if isinstance(filenames, str):
+            filenames = [filenames]
+
+        affine = self.get_rigid_matrix(homogenous=False)  # [N, dim, dim+1]
+        n = affine.shape[0]
+        check_and_raise_cond(len(filenames)==1 or len(filenames)==n, "Number of filenames must match the number of transforms")
+        check_and_raise_cond(check_correct_ext(filenames, PERMITTED_ANTS_TXT_EXT + PERMITTED_ANTS_MAT_EXT), "File extension must be one of {}".format(PERMITTED_ANTS_TXT_EXT + PERMITTED_ANTS_MAT_EXT))
+        filenames = augment_filenames(filenames, n, PERMITTED_ANTS_TXT_EXT + PERMITTED_ANTS_MAT_EXT)
+
+        for i in range(affine.shape[0]):
+            mat = affine[i].detach().cpu().numpy().astype(np.float32)
+            A = mat[:self.dims, :self.dims]
+            t = mat[:self.dims, -1]
+            if any_extension(filenames[i], PERMITTED_ANTS_MAT_EXT):
+                savemat(filenames[i], {'AffineTransform_float_3_3': mat, 'fixed': np.zeros((self.dims, 1)).astype(np.float32)})
+                raise NotImplementedError("This function does not work with ANTs mat files")
+            else:
+                savetxt(filenames[i], A, t)
+            logger.info(f"Saved transform to {filenames[i]}")
+    
     def get_rigid_matrix(self, homogenous=True):
         """Compute the complete rigid transformation matrix.
 
@@ -166,10 +213,17 @@ class RigidRegistration(AbstractRegistration):
         # scalediag[:, np.arange(D), np.arange(D)] = scale
         matclone = rigidmat.clone()
         matclone[:, :-1, :-1] = scale * rigidmat[:, :-1, :-1]
-        matclone[:, :-1, -1] = self.transl  # [N, dim+1, dim+1]
+        transl = self.transl
+        if self.around_center:  # convert t' to t
+            transl = transl + self.center - (matclone[:, :-1, :-1] @ self.center[..., None]).squeeze(-1)
+        # now we can assign the translation
+        matclone[:, :-1, -1] = transl  # [N, dim+1, dim+1]
         return matclone if homogenous else matclone[:, :-1, :]  # [N, dim, dim+1]
-
-    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None):
+    
+    def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
+        pass
+    
+    def get_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         """Compute transformed coordinates for the rigid registration.
 
         Applies the rigid transformation (rotation, translation, scaling) to map

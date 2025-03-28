@@ -8,12 +8,13 @@ from tqdm import tqdm
 import SimpleITK as sitk
 
 from fireants.utils.globals import MIN_IMG_SIZE
-from fireants.io.image import BatchedImages
+from fireants.io.image import BatchedImages, FakeBatchedImages
 from fireants.registration.abstract import AbstractRegistration
 from fireants.registration.deformation.svf import StationaryVelocity
 from fireants.registration.deformation.compositive import CompositiveWarp
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
+from fireants.utils.warputils import compositive_warp_inverse
 
 import logging
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         # specify regularizations
         self.warp_reg = warp_reg
         self.displacement_reg = displacement_reg
+        self.deformation_type = deformation_type
         # specify deformation type
         if deformation_type == 'geodesic':
             logger.warn(f"Use compositive deformation for better performance")
@@ -116,10 +118,69 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         self.smooth_warp_sigma = smooth_warp_sigma   # in voxels
         # initialize affine
         if init_affine is None:
-            init_affine = torch.eye(self.dims+1, device=fixed_images.device, dtype=self.dtype).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, D+1, D+1]
-        self.affine = init_affine.detach().to(self.dtype)
+            init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, D+1, D+1]
+        B, D1, D2 = init_affine.shape
+        # affine can be [N, D, D+1] or [N, D+1, D+1]
+        if D1 == self.dims+1 and D2 == self.dims+1:
+            self.affine = init_affine.detach()
+        elif D1 == self.dims and D2 == self.dims+1:
+            # attach row to affine
+            row = torch.zeros(self.opt_size, 1, self.dims+1, device=fixed_images.device)
+            row[:, 0, -1] = 1.0
+            self.affine = torch.cat([init_affine.detach(), row], dim=1)
+        else:
+            raise ValueError('Invalid initial affine shape: {}'.format(init_affine.shape))
     
-    def get_warped_coordinates(self, fixed_images: BatchedImages, moving_images: BatchedImages, shape=None, displacement=False):
+    def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], \
+                                             moving_images: Union[BatchedImages, FakeBatchedImages], \
+                                             smooth_warp_sigma: float = 0, smooth_grad_sigma: float = 0,
+                                             shape=None, displacement=False):
+        ''' Get inverse warped coordinates for the moving image.
+
+        This method is useful to analyse the effect of how the moving coordinates (fixed images) are transformed
+        '''
+        moving_arrays = moving_images()
+        if shape is None:
+            shape = moving_images.shape
+        else:
+            shape = [moving_arrays.shape[0], 1] + list(shape) 
+
+        warp = self.warp.get_warp().detach().clone()
+        warp = warp + F.affine_grid(torch.eye(self.dims, self.dims+1, device=warp.device)[None], [1, 1] + list(warp.shape[1:-1]), align_corners=True)
+        warp_inv = compositive_warp_inverse(moving_images, warp, displacement=True, smooth_warp_sigma=smooth_warp_sigma, smooth_grad_sigma=smooth_grad_sigma)
+        # resample if needed
+        if tuple(warp_inv.shape[1:-1]) != tuple(shape[2:]):
+            warp_inv = F.interpolate(warp_inv.permute(*self.warp.permute_vtoimg), size=shape[2:], mode='trilinear', align_corners=True).permute(*self.warp.permute_imgtov)
+        
+        # get affine transform
+        fixed_t2p = fixed_images.get_torch2phy()
+        moving_p2t = moving_images.get_phy2torch()
+        # save initial affine transform to initialize grid 
+        affine_map_init = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))
+        affine_map_inv  = torch.linalg.inv(affine_map_init)
+        # get A^-1 * v[y]
+        print("inverse here")
+        if self.dims == 2:
+            warp_inv = torch.einsum('bhwx,byx->bhwy', warp_inv, affine_map_inv[:, :-1, :-1])
+        elif self.dims == 3:
+            warp_inv = torch.einsum('bhwdx,byx->bhwdy', warp_inv, affine_map_inv[:, :-1, :-1])
+        else:
+            raise ValueError('Invalid number of dimensions: {}'.format(self.dims))
+        #### grid = A^-1 y - A^-1 b = apply A^-1 to regular grid
+        grid = F.affine_grid(affine_map_inv[:, :-1], shape, align_corners=True)
+        # grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=warp_inv.device)[None], \
+        #     shape, align_corners=True)
+        warp_inv = grid + warp_inv
+        if displacement:
+            grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=grid.device)[None], \
+                                shape, align_corners=True)
+            warp_inv = warp_inv - grid
+        return warp_inv
+
+
+    def get_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], \
+                                     moving_images: Union[BatchedImages, FakeBatchedImages], \
+                                     shape=None, displacement=False):
         """Get transformed coordinates for warping the moving image.
 
         Computes the coordinate transformation from fixed to moving image space
@@ -139,7 +200,8 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                 If displacement=True, displacement field, displacements in normalized [-1,1] space
                 Shape: [N, H, W, [D], dims]
         """
-        fixed_arrays = fixed_images()
+
+        fixed_arrays = fixed_images() 
         if shape is None:
             shape = fixed_images.shape
         else:

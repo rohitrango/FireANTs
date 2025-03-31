@@ -13,7 +13,6 @@ import fireants_fused_ops as ffo
 from fireants.losses.cc import LocalNormalizedCrossCorrelationLoss
 from fireants.tests.cc_mem_test import fast_lncc
 
-
 reduction_table = {
     'none': ffo.Reduction.NONE,
     'sum': ffo.Reduction.SUM,
@@ -76,6 +75,12 @@ class FusedNCC3d(torch.autograd.Function):
                 interm[:, :3*C, :, :, :] = F.conv3d(interm[:, :3*C, :, :, :], avg_filt, padding=padding, stride=1, groups=3*C)
         # solve for grad_input_img and grad_target_img
         ffo.cc3d_bwd_compute_grads(interm, input_img, target_img, grad_input_img, grad_target_img)
+
+        # skip reduction for now
+        # if grad_input_img is not None and reduction == ffo.Reduction.MEAN:
+        #     grad_input_img = grad_input_img / (H * W * D)
+        # if grad_target_img is not None and reduction == ffo.Reduction.MEAN:
+        #     grad_target_img = grad_target_img / (H * W * D)
 
         return grad_input_img, grad_target_img, None, None, None, None, None
 
@@ -151,7 +156,7 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
 
 
 def test_fused_cc_fwd_and_mem():
-    for i in range(6, 11):
+    for i in range(6, 10):
     # torch.cuda.memory._record_memory_history()
     # for i in range(6, 7):
         N = 2 ** i

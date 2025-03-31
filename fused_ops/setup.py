@@ -16,6 +16,7 @@ setup(
             sources=[
                 'src/src.cpp',
                 'src/CrossCorrelation.cu',  
+                'src/FusedGridSampler.cu'
             ],
             include_dirs=[include_dir] + torch.utils.cpp_extension.include_paths(),
             library_dirs=torch.utils.cpp_extension.library_paths(),

@@ -10,6 +10,9 @@ from typing import Union, Tuple, List, Optional, Dict, Any, Callable
 from fireants.types import ItemOrList
 import fireants_fused_ops as ffo
 
+def mem(tensor):
+    return tensor.element_size() * tensor.numel()
+
 def get_min_coords(Z, Y, X, align_corners):
     if not align_corners:
         return -1.0 + 1.0/X, -1.0 + 1.0/Y, -1.0 + 1.0/Z
@@ -102,42 +105,61 @@ class FusedGridSampler3d(torch.autograd.Function):
 
 
 if __name__ == "__main__":
-    Z, Y, X = 32, 64, 41
+    Z, Y, X = 245, 210, 322
     Zi, Yi, Xi = 128, 431, 234
     align_corners = False
-    input = torch.randn(1, 1, Zi, Yi, Xi).cuda().abs() + 1e-3
+    batch_size = 1
+    input = torch.randn(batch_size, 1, Zi, Yi, Xi).cuda().abs() + 1e-3
     affine_3d = torch.linalg.matrix_exp(torch.randn(3, 3))
     affine_3d = torch.cat([affine_3d, torch.zeros(3, 1)], dim=1)[None].cuda()
-    # affine_3d = affine_3d.detach().requires_grad_(True)
+    affine_3d = affine_3d.detach().requires_grad_(True)
     input = input.detach().requires_grad_(True)
-
     # displacement
     disp = (0.1 * torch.randn(1, Z, Y, X, 3)).cuda().detach().requires_grad_(True)
-    print(disp.requires_grad)
 
-    start_ours = time()
-    output = FusedGridSampler3d.apply(input, affine_3d, disp, "bilinear", "zeros", align_corners, (Z, Y, X), None, None, True)
-    (output.mean()).backward()
-    input_grad_ours = input.grad
-    grid_grad_ours = disp.grad
-    input.grad = None
-    disp.grad = None
-    torch.cuda.synchronize()
-    end_ours = time()
-    print(f"Ours time: {end_ours - start_ours}")
+    start_mem = torch.cuda.max_memory_allocated() 
+    print(f"Max memory allocated: {start_mem / 1024**2} MB")
+
+    def test_ours():
+        start_ours = time()
+        output = FusedGridSampler3d.apply(input, affine_3d, disp, "bilinear", "zeros", align_corners, (Z, Y, X), None, None, True)
+        (output.mean()).backward()
+        input_grad_ours = input.grad
+        grid_grad_ours = disp.grad
+        affine_3d_grad_ours = affine_3d.grad
+        input.grad = None
+        disp.grad = None
+        affine_3d.grad = None
+        torch.cuda.synchronize()
+        end_ours = time()
+        print(f"Ours time: {end_ours - start_ours}")
+        return input_grad_ours, grid_grad_ours, affine_3d_grad_ours, start_ours, end_ours, output
     # baseline
+    input_grad_ours, grid_grad_ours, affine_3d_grad_ours, start_ours, end_ours, output = test_ours()
+    mem_ours = torch.cuda.max_memory_allocated() - start_mem - mem(input_grad_ours) - mem(grid_grad_ours) - mem(affine_3d_grad_ours) - mem(output)
+    print(f"Max memory allocated: {mem_ours / 1024**2} MB")
 
-    start_baseline = time()
-    grid = F.affine_grid(affine_3d, (1, 1, Z, Y, X), align_corners=align_corners) + disp
-    output_baseline = F.grid_sample(input, grid.expand(input.shape[0], -1, -1, -1, -1), mode="bilinear", padding_mode="zeros", align_corners=align_corners)
-    (output_baseline.mean()).backward()
-    input_grad_baseline = input.grad
-    grid_grad_baseline = disp.grad
-    input.grad = None
-    disp.grad = None
-    torch.cuda.synchronize()
-    end_baseline = time()
-    print(f"Baseline time: {end_baseline - start_baseline}")
+    def test_baseline():
+        start_baseline = time()
+        grid = F.affine_grid(affine_3d, (1, 1, Z, Y, X), align_corners=align_corners) + disp
+        output_baseline = F.grid_sample(input, grid.expand(input.shape[0], -1, -1, -1, -1), mode="bilinear", padding_mode="zeros", align_corners=align_corners)
+        (output_baseline.mean()).backward()
+        input_grad_baseline = input.grad
+        grid_grad_baseline = disp.grad
+        affine_3d_grad_baseline = affine_3d.grad
+        input.grad = None
+        disp.grad = None
+        affine_3d.grad = None
+        torch.cuda.synchronize()
+        end_baseline = time()
+        print(f"Baseline time: {end_baseline - start_baseline}")
+        return input_grad_baseline, grid_grad_baseline, affine_3d_grad_baseline, start_baseline, end_baseline, output_baseline
+    
+    input_grad_baseline, grid_grad_baseline, affine_3d_grad_baseline, start_baseline, end_baseline, output_baseline = test_baseline()
+    mem_baseline = torch.cuda.max_memory_allocated() - start_mem - mem(input_grad_baseline) - mem(grid_grad_baseline) - mem(affine_3d_grad_baseline) - mem(input_grad_ours) - mem(grid_grad_ours) - mem(affine_3d_grad_ours) - mem(output_baseline) - mem(output)
+
+    print(f"Speedup: {(end_baseline - start_baseline) / (end_ours - start_ours)}")
+    print(f"Memory: {mem_baseline / 1024**2} MB, Ours: {mem_ours / 1024**2} MB, Baseline: {mem_baseline / 1024**2} MB")
 
     print("\n-------------- Correctness ------------------\n")
 
@@ -147,7 +169,14 @@ if __name__ == "__main__":
     print(f"Input grads close: {torch.allclose(input_grad_ours, input_grad_baseline, rtol=1e-5)}")
     rel_input_grad_error = (torch.abs(input_grad_ours - input_grad_baseline) / (1e-5 + torch.abs(input_grad_baseline))).mean()
     print(f"Relative input grad error: {rel_input_grad_error}")
-    print(f"Grid grads close: {torch.allclose(grid_grad_ours, grid_grad_baseline, rtol=1e-3)}")
+    print(f"Grid grads close: {torch.allclose(grid_grad_ours, grid_grad_baseline, atol=1e-4)}")
     print(f"Grid grads max: {torch.abs(grid_grad_ours - grid_grad_baseline).max()}")
     rel_grid_grad_error = (torch.abs(grid_grad_ours - grid_grad_baseline) / (1e-5 + torch.abs(grid_grad_baseline))).mean()
     print(f"Relative grid grad error: {rel_grid_grad_error}")
+    print(f"Affine grads close: {torch.allclose(affine_3d_grad_ours, affine_3d_grad_baseline, atol=1e-4, )}")
+    rel_affine_grad_error = (torch.abs(affine_3d_grad_ours - affine_3d_grad_baseline) / (1e-4 + torch.abs(affine_3d_grad_baseline))).mean()
+    print(f"Relative/absolute affine grad error: {rel_affine_grad_error},{F.mse_loss(affine_3d_grad_ours, affine_3d_grad_baseline)}")
+
+    # print(affine_3d_grad_ours - affine_3d_grad_baseline)
+    # print(affine_3d_grad_ours)
+    # print(affine_3d_grad_baseline)

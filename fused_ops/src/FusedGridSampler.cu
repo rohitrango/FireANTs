@@ -67,21 +67,6 @@ inline void check_grid_sampler_common_v2(
   }
 }
 
-
-// template <class scalar_t, class index_t>
-// __device__ __forceinline__ void fastAtomicAdd(
-//     scalar_t* tensor,
-//     index_t index,
-//     const index_t numel,
-//     scalar_t value,
-//     bool fast_atomics) {
-//   if (fast_atomics) {
-//     fastSpecializedAtomicAdd(tensor, index, numel, value);
-//   } else {
-//     gpuAtomicAddNoReturn(tensor + index, value);
-//   }
-// }
-
 template<typename scalar_t, typename index_t>
 __forceinline__ __device__
 void safe_add_3d_oneoffset(
@@ -102,7 +87,7 @@ void safe_add_3d_oneoffset(
 }
 
 template <typename scalar_t, typename index_t>
-C10_LAUNCH_BOUNDS_1(512)
+C10_LAUNCH_BOUNDS_1(BLOCKSIZE_3D)
 __global__ void fused_grid_sampler_3d_forward_kernel(
     const index_t count,
     const scalar_t* input,
@@ -310,7 +295,7 @@ __global__ void fused_grid_sampler_3d_forward_kernel(
 // lies relative to the entire tensor, so we pass the base grad_input.data and full offset information,
 // including batch * channel offset (NC_offset).
 template <typename scalar_t, typename index_t>
-C10_LAUNCH_BOUNDS_1(512)
+C10_LAUNCH_BOUNDS_1(BLOCKSIZE_3D)
 __global__ void fused_grid_sampler_3d_backward_kernel(
         const index_t count, /* D * H * W */
         const scalar_t* input,
@@ -354,6 +339,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
     }
     // shared memory to take affine gradient sum over block
     __shared__ scalar_t _affine_grad_shared_[BLOCKSIZE_3D];   
+    _affine_grad_shared_[threadIdx.x] = 0;
 
     // also collect affine map locally to avoid loading multiple times
     scalar_t _affine_map_[12];
@@ -372,6 +358,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
         const index_t grid_offset = 3 * (w + W * (h + H * (d + (broadcast_grid ? 0 : (D * n)))));
 
         // get the corresponding input x, y, z co-ordinates from grid
+        scalar_t pax, pay, paz;   // pax = pre-affine x
         scalar_t ix, iy, iz;
         scalar_t x, y, z;
 
@@ -384,6 +371,8 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
             ix = w * (grid_xmax - grid_xmin) / (W-1) + grid_xmin;
             iy = h * (grid_ymax - grid_ymin) / (H-1) + grid_ymin;
             iz = d * (grid_zmax - grid_zmin) / (D-1) + grid_zmin;
+            // store to preaffine
+            pax = ix; pay = iy; paz = iz;
             // apply affine matrix
             x = _affine_map_[0] * ix + _affine_map_[1] * iy + _affine_map_[2] * iz + _affine_map_[3];
             y = _affine_map_[4] * ix + _affine_map_[5] * iy + _affine_map_[6] * iz + _affine_map_[7];
@@ -401,11 +390,15 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
                 ix = w * (grid_xmax - grid_xmin) / (W-1) + grid_xmin;
                 iy = h * (grid_ymax - grid_ymin) / (H-1) + grid_ymin;
                 iz = d * (grid_zmax - grid_zmin) / (D-1) + grid_zmin;
+                pax = ix; pay = iy; paz = iz;
                 // apply affine matrix
                 if(affine_3d) {
                     x = _affine_map_[0] * ix + _affine_map_[1] * iy + _affine_map_[2] * iz + _affine_map_[3];
                     y = _affine_map_[4] * ix + _affine_map_[5] * iy + _affine_map_[6] * iz + _affine_map_[7];
                     z = _affine_map_[8] * ix + _affine_map_[9] * iy + _affine_map_[10] * iz + _affine_map_[11];
+                }
+                else {
+                    x = ix, y = iy, z = iz;
                 }
                 // add to displacement
                 x += grid[grid_offset];
@@ -413,7 +406,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
                 z += grid[grid_offset + 2];
             }
             else {
-                // just get warp
+                // just get warp, here we wont need affine (and therefore no need of pax, pay, paz)
                 x = grid[grid_offset];
                 y = grid[grid_offset + 1];
                 z = grid[grid_offset + 2];
@@ -584,17 +577,17 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
             // if affine_3d grad is required
             if (grad_affine_collect) {
                 // add it to local registers
-                _affine_grad_[0] += gix * x;
-                _affine_grad_[1] += gix * y;
-                _affine_grad_[2] += gix * z;
+                _affine_grad_[0] += gix * pax;
+                _affine_grad_[1] += gix * pay;
+                _affine_grad_[2] += gix * paz;
                 _affine_grad_[3] += gix;
-                _affine_grad_[4] += giy * x;
-                _affine_grad_[5] += giy * y;
-                _affine_grad_[6] += giy * z;
+                _affine_grad_[4] += giy * pax;
+                _affine_grad_[5] += giy * pay;
+                _affine_grad_[6] += giy * paz;
                 _affine_grad_[7] += giy;
-                _affine_grad_[8] += giz * x;
-                _affine_grad_[9] += giz * y;
-                _affine_grad_[10] += giz * z;
+                _affine_grad_[8] += giz * pax;
+                _affine_grad_[9] += giz * pay;
+                _affine_grad_[10] += giz * paz;
                 _affine_grad_[11] += giz;
             }
 
@@ -642,7 +635,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
     }
 
     // if affine_3d grad is required
-    const index_t grad_affine_numel = 12 * gridDim.x * (broadcast_affine_3d ? 1 : N);
+    // const index_t grad_affine_numel = 12 * gridDim.x * (broadcast_affine_3d ? 1 : N);
     if (grad_affine_collect) {
         // add it to local registers
         #pragma unroll
@@ -903,6 +896,10 @@ void fused_grid_sampler_3d_backward_impl(
         grid_requires_grad = false;
         affine_requires_grad = false;
     }
+    // if grid is provided and it is a displacement, there are no gradients w.r.t. affine
+    if (grid.has_value() && !is_displacement) {
+        affine_requires_grad = false;
+    }
 
     if (!grid_requires_grad && !affine_requires_grad && !input_requires_grad) {
         // nothing to compute
@@ -957,7 +954,7 @@ void fused_grid_sampler_3d_backward_impl(
     // intermediate grad affine collector
     torch::Tensor grad_affine_collect;
     if (affine_requires_grad) {
-        grad_affine_collect = torch::zeros({affine_3d.value().size(0), 3, 4}, grad_affine.value().options());
+        grad_affine_collect = torch::zeros({affine_3d.value().size(0), gridSize, 3, 4}, grad_affine.value().options());
     }
 
     if (count > 0) {

@@ -4,6 +4,9 @@ from time import time
 from fireants.losses.cc import LocalNormalizedCrossCorrelationLoss
 from fireants.tests.cc_mem_test import fast_lncc
 from ops.fusedcc import FusedLocalNormalizedCrossCorrelationLoss
+seed = 4531
+torch.manual_seed(seed)
+torch.cuda.manual_seed(seed)   
 
 def test_fused_cc_correctness():
     """Test correctness of fused cross correlation against baseline implementations"""

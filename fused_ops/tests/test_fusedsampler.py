@@ -5,6 +5,10 @@ from torch import nn
 from torch.nn import functional as F
 from ops.fusedgridsampler import FusedGridSampler3d
 from ops.baseline_grid_sampler import baseline_grid_sampler_3d
+# set seeds
+seed = 4531
+torch.manual_seed(seed)
+torch.cuda.manual_seed(seed)   
 
 def test_fused_sampler_correctness():
     """Test correctness of fused grid sampler against baseline implementation"""

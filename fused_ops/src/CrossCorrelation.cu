@@ -12,6 +12,7 @@
 // C++ standard headers
 #include <cmath>
 // #include <math.h>
+#include <c10/macros/Macros.h>
 #include <assert.h>
 
 // Local headers
@@ -52,11 +53,17 @@ __global__ void create_intermediates_kernel3d(
 }
 
 template <typename scalar_t> 
+C10_LAUNCH_BOUNDS_1(BLOCKSIZE_3D)
 __global__ void cc3d_fwd_interm_v1_kernel(
     scalar_t* __restrict__ interm, scalar_t* __restrict__ out, 
     int kernel_volume, Reduction reduce, 
     int batch_size, int n_out_channels, int height, int width, int depth, 
     int out_size, float nr, float dr) {
+
+    // initialize output value
+    // scalar_t out_val = 0;
+    __shared__ scalar_t out_val[BLOCKSIZE_3D];
+    out_val[threadIdx.x] = 0;
 
     // initialize thread id
     int n = batch_size * n_out_channels * height * width * depth;
@@ -91,8 +98,24 @@ __global__ void cc3d_fwd_interm_v1_kernel(
             out[out_idx] = static_cast<scalar_t>(kv);
         }
         else {
-            int out_idx = i % out_size;
-            gpuAtomicAdd(out + out_idx, static_cast<scalar_t>(kv));
+            // int out_idx = i % out_size;
+            // gpuAtomicAdd(out + out_idx, static_cast<scalar_t>(kv));
+            out_val[threadIdx.x] += kv;
+        }
+    }
+    // collected output value
+    if (reduce != Reduction::NONE) {
+        __syncthreads();
+        // int out_idx = d + depth * (w + width * (h + height * (c + n_out_channels * b)));
+        // out[out_idx] = static_cast<scalar_t>(out_val);
+        for (int i = BLOCKSIZE_3D / 2; i > 0; i /= 2) {
+            if (threadIdx.x < i) {
+                out_val[threadIdx.x] += out_val[threadIdx.x + i];
+            }
+            __syncthreads();
+        }
+        if (threadIdx.x == 0) {
+            out[blockIdx.x] = out_val[0];
         }
     }
 }
@@ -236,21 +259,22 @@ torch::Tensor cc3d_fwd_interm_v1(torch::Tensor intermediates, int kernel_volume,
     assert(n_channels % 5 == 0);
     int n_out_channels = n_channels / 5;   // one output channel for each block of 5 input channels
 
+    // initialize blocks
+    dim3 blockSize(BLOCKSIZE_3D);
+    int gridsize = (n + blockSize.x - 1) / blockSize.x;
+    gridsize = std::min(gridsize, 65536);
+    dim3 gridSize(gridsize);
+
     // initialize output tensor
     int out_size = 0;
     torch::Tensor out;
     if (reduction == Reduction::NONE) {
         out = torch::zeros({batch_size, n_out_channels, height, width, depth}, intermediates.scalar_type());
     } else {
-        out_size = (int)(sqrtf((float)(height * width * depth * n_out_channels)));
-        // std::cout << "out_size: " << out_size << std::endl;
-        out = torch::zeros({out_size}, intermediates.scalar_type());
+        // each grid block will store the final output
+        out = torch::zeros({gridsize}, intermediates.scalar_type());
     }
     out = out.to(intermediates.device());
-
-    // initialize blocks
-    dim3 blockSize(BLOCKSIZE_3D);
-    dim3 gridSize((n + blockSize.x - 1) / blockSize.x);
 
     AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16, intermediates.scalar_type(), "cc3d_fwd_interm_v1", ([&] {
         cc3d_fwd_interm_v1_kernel<scalar_t><<<gridSize, blockSize, 0, at::cuda::getCurrentCUDAStream()>>>(

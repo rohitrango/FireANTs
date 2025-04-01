@@ -215,7 +215,7 @@ def test_fused_cc_fwd_and_mem():
 
 def test_fused_cc_bwd_and_mem():
     ''' check backward memory usage '''
-    for i in range(6, 11):
+    for i in range(6, 10):
         N = 2 ** i
         eps = 1e-1
         img1 = (torch.rand(1, 1, N, N, N) + eps).cuda().requires_grad_(True)

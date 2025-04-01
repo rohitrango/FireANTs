@@ -29,4 +29,9 @@ PYBIND11_MODULE(fireants_fused_ops, m) {
        py::arg("input"), py::arg("affine_3d"), py::arg("grid"), py::arg("out_D"), py::arg("out_H"), py::arg("out_W"),
        py::arg("grid_xmin"), py::arg("grid_ymin"), py::arg("grid_zmin"), py::arg("grid_xmax"), py::arg("grid_ymax"), py::arg("grid_zmax"),
        py::arg("is_displacement"), py::arg("interpolation_mode"), py::arg("padding_mode"), py::arg("align_corners"));
+    
+    m.def("fused_grid_sampler_3d_backward", &fused_grid_sampler_3d_backward_impl, "Backward pass for fused grid sample",
+        py::arg("input"), py::arg("affine_3d"), py::arg("grid"), py::arg("grad_output"), py::arg("grad_input"), py::arg("grad_affine"), py::arg("grad_grid"),
+        py::arg("out_D"), py::arg("out_H"), py::arg("out_W"), py::arg("grid_xmin"), py::arg("grid_ymin"), py::arg("grid_zmin"), py::arg("grid_xmax"), py::arg("grid_ymax"), py::arg("grid_zmax"),
+        py::arg("is_displacement"), py::arg("interpolation_mode"), py::arg("padding_mode"), py::arg("align_corners"));
 }

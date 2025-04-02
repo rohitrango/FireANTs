@@ -11,6 +11,8 @@ from fireants.types import ItemOrList
 import fireants_fused_ops as ffo
 
 def mem(tensor):
+    if tensor is None:
+        return 0
     return tensor.element_size() * tensor.numel()
 
 def get_min_coords(Z, Y, X, align_corners):
@@ -105,64 +107,73 @@ class FusedGridSampler3d(torch.autograd.Function):
 
 
 if __name__ == "__main__":
-    for _ in range(2):
-        Z, Y, X = 245, 210, 322
-        Zi, Yi, Xi = 128, 431, 234
-        align_corners = False
+    for _ in range(1):
+        Z, Y, X = 440, 410, 320
+        Zi, Yi, Xi = 430, 220, 450
+        align_corners = True
         batch_size = 1
-        input = torch.randn(batch_size, 1, Zi, Yi, Xi).to("cuda:0").abs() + 1e-3
+        device = "cuda:1"
+        input = torch.randn(batch_size, 1, Zi, Yi, Xi).to(device).abs() + 1e-3
         affine_3d = torch.linalg.matrix_exp(torch.randn(3, 3))
-        affine_3d = torch.cat([affine_3d, torch.zeros(3, 1)], dim=1)[None].to("cuda:0")
-        affine_3d = affine_3d.detach().requires_grad_(True)
-        input = input.detach().requires_grad_(True)
+        affine_3d = torch.cat([affine_3d, torch.zeros(3, 1)], dim=1)[None].to(device)
+        affine_3d = affine_3d.detach().requires_grad_(False)
+        # affine_3d = None
+        input = input.detach().requires_grad_(False)
         # displacement
-        disp = (0.1 * torch.randn(1, Z, Y, X, 3)).to("cuda:0").detach().requires_grad_(True)
+        disp = (0.1 * torch.randn(1, Z, Y, X, 3)).to(device).detach().requires_grad_(True)
 
-        start_mem = torch.cuda.max_memory_allocated() 
+        start_mem = torch.cuda.max_memory_allocated(device)
         print(f"Max memory allocated: {start_mem / 1024**2} MB")
 
         def test_ours():
             start_ours = time()
             output = FusedGridSampler3d.apply(input, affine_3d, disp, "bilinear", "zeros", align_corners, (Z, Y, X), None, None, True)
             (output.mean()).backward()
-            input_grad_ours = input.grad
-            grid_grad_ours = disp.grad
-            affine_3d_grad_ours = affine_3d.grad
+            input_grad_ours = input.grad if input.grad is not None else torch.ones(3)
+            grid_grad_ours = disp.grad  if disp.grad is not None else torch.ones(5)
+            affine_3d_grad_ours = (affine_3d.grad if affine_3d.grad is not None else torch.ones(1, 3, 4)) if affine_3d is not None else torch.ones(1, 3, 4)
             input.grad = None
             disp.grad = None
-            affine_3d.grad = None
+            if affine_3d is not None:
+                affine_3d.grad = None
             torch.cuda.synchronize()
             end_ours = time()
             print(f"Ours time: {end_ours - start_ours}")
             return input_grad_ours, grid_grad_ours, affine_3d_grad_ours, start_ours, end_ours, output
         # baseline
         input_grad_ours, grid_grad_ours, affine_3d_grad_ours, start_ours, end_ours, output = test_ours()
-        mem_ours = torch.cuda.max_memory_allocated() - start_mem - mem(input_grad_ours) - mem(grid_grad_ours) - mem(affine_3d_grad_ours) - mem(output)
+        mem_ours = torch.cuda.max_memory_allocated(device) - start_mem - mem(input_grad_ours) - mem(grid_grad_ours) - mem(affine_3d_grad_ours) - mem(output)
         print(f"Max memory allocated: {mem_ours / 1024**2} MB")
 
         def test_baseline():
             start_baseline = time()
-            grid = F.affine_grid(affine_3d, (1, 1, Z, Y, X), align_corners=align_corners) + disp
+            if affine_3d is not None:
+                grid = F.affine_grid(affine_3d, (1, 1, Z, Y, X), align_corners=align_corners) + disp
+            else:
+                grid = F.affine_grid(torch.eye(3, 4)[None].to(device), (1, 1, Z, Y, X), align_corners=align_corners) + disp
+
             output_baseline = F.grid_sample(input, grid.expand(input.shape[0], -1, -1, -1, -1), mode="bilinear", padding_mode="zeros", align_corners=align_corners)
             (output_baseline.mean()).backward()
-            input_grad_baseline = input.grad
-            grid_grad_baseline = disp.grad
-            affine_3d_grad_baseline = affine_3d.grad
+            input_grad_baseline = input.grad if input.grad is not None else torch.ones(3)
+            grid_grad_baseline = disp.grad if disp.grad is not None else torch.ones(5)
+            affine_3d_grad_baseline = (affine_3d.grad if affine_3d.grad is not None else torch.ones(1, 3, 4)) if affine_3d is not None else torch.ones(1, 3, 4)
             input.grad = None
             disp.grad = None
-            affine_3d.grad = None
+            if affine_3d is not None:
+                affine_3d.grad = None
             torch.cuda.synchronize()
             end_baseline = time()
             print(f"Baseline time: {end_baseline - start_baseline}")
             return input_grad_baseline, grid_grad_baseline, affine_3d_grad_baseline, start_baseline, end_baseline, output_baseline
         
         input_grad_baseline, grid_grad_baseline, affine_3d_grad_baseline, start_baseline, end_baseline, output_baseline = test_baseline()
-        mem_baseline = torch.cuda.max_memory_allocated() - start_mem - mem(input_grad_baseline) - mem(grid_grad_baseline) - mem(affine_3d_grad_baseline) - mem(input_grad_ours) - mem(grid_grad_ours) - mem(affine_3d_grad_ours) - mem(output_baseline) - mem(output)
+        mem_baseline = torch.cuda.max_memory_allocated(device) - start_mem - mem(input_grad_baseline) - mem(grid_grad_baseline) - mem(affine_3d_grad_baseline) - mem(input_grad_ours) - mem(grid_grad_ours) - mem(affine_3d_grad_ours) - mem(output_baseline) - mem(output)
+        # Check contiguous
 
         print(f"Speedup: {(end_baseline - start_baseline) / (end_ours - start_ours)}")
         print(f"Memory: {mem_baseline / 1024**2} MB, Ours: {mem_ours / 1024**2} MB, Baseline: {mem_baseline / 1024**2} MB")
 
-        print("\n-------------- Correctness ------------------\n")
+        print("-------------- Correctness ------------------")
 
         print(output.shape, output.device, output_baseline.shape, output_baseline.device)
         rel_error = (torch.abs(output - output_baseline) / (1e-5 + torch.abs(output_baseline))).mean()
@@ -177,6 +188,7 @@ if __name__ == "__main__":
         print(f"Affine grads close: {torch.allclose(affine_3d_grad_ours, affine_3d_grad_baseline, atol=1e-4, )}")
         rel_affine_grad_error = (torch.abs(affine_3d_grad_ours - affine_3d_grad_baseline) / (1e-4 + torch.abs(affine_3d_grad_baseline))).mean()
         print(f"Relative/absolute affine grad error: {rel_affine_grad_error},{torch.abs(affine_3d_grad_ours - affine_3d_grad_baseline).mean()}")
+        print("\n\n\n")
 
     # print(affine_3d_grad_ours - affine_3d_grad_baseline)
     # print(affine_3d_grad_ours)

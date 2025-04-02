@@ -71,9 +71,6 @@ def main():
     moved = reg.evaluate(batch1, batch2)
     
     # Save warp as ANTs image
-    print("\nSaving warp as ANTs image...")
-    reg.save_as_ants_transforms("1000_1001_warp.nii.gz")
-    
     # Compare FireANTs and ANTs results
     print("\nChecking diffeomorphism...")
     warp = reg.get_warped_coordinates(batch1, batch2)

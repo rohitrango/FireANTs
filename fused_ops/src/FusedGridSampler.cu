@@ -336,6 +336,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
 
     // collect affine gradients
     scalar_t _affine_grad_[12];
+    #pragma unroll
     for(index_t i = 0; i < 12; ++i) {
         _affine_grad_[i] = 0;
     }
@@ -347,6 +348,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
     scalar_t _affine_map_[12];
     if (affine_3d) {
         const index_t offset = broadcast_affine_3d ? 0 : (12 * n);
+        #pragma unroll
         for (index_t i = 0; i < 12; ++i) {
             _affine_map_[i] = affine_3d[offset + i];
         }
@@ -373,7 +375,6 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
             ix = w * (grid_xmax - grid_xmin) / (W-1) + grid_xmin;
             iy = h * (grid_ymax - grid_ymin) / (H-1) + grid_ymin;
             iz = d * (grid_zmax - grid_zmin) / (D-1) + grid_zmin;
-            // store to preaffine
             pax = ix; pay = iy; paz = iz;
             // apply affine matrix
             x = _affine_map_[0] * ix + _affine_map_[1] * iy + _affine_map_[2] * iz + _affine_map_[3];
@@ -381,12 +382,6 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
             z = _affine_map_[8] * ix + _affine_map_[9] * iy + _affine_map_[10] * iz + _affine_map_[11];
         }
         else {
-            // grid is provided, load the grid coordinate
-            // x = grid[grid_offset];
-            // y = grid[grid_offset + 1];
-            // z = grid[grid_offset + 2];
-            // if these are warp coordinates (`is_displacement` is false), affine matrix is ignored
-            // if these are displacement coordinates, get the grid coordinates x, y, z, multiply by affine matrix, then add to displacement
             if (is_displacement) {
                 // get grid coordinate
                 ix = w * (grid_xmax - grid_xmin) / (W-1) + grid_xmin;
@@ -403,15 +398,25 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
                     x = ix, y = iy, z = iz;
                 }
                 // add to displacement
-                x += grid[grid_offset];
-                y += grid[grid_offset + 1];
-                z += grid[grid_offset + 2];
+                if (grid) {
+                    const index_t grid_size = 3 * D * H * W * (broadcast_grid ? 1 : N);
+                    if (grid_offset + 2 < grid_size) {
+                        x += grid[grid_offset];
+                        y += grid[grid_offset + 1];
+                        z += grid[grid_offset + 2];
+                    }
+                }
             }
             else {
                 // just get warp, here we wont need affine (and therefore no need of pax, pay, paz)
-                x = grid[grid_offset];
-                y = grid[grid_offset + 1];
-                z = grid[grid_offset + 2];
+                if (grid) {
+                    const index_t grid_size = 3 * D * H * W * (broadcast_grid ? 1 : N);
+                    if (grid_offset + 2 < grid_size) {
+                        x = grid[grid_offset];
+                        y = grid[grid_offset + 1];
+                        z = grid[grid_offset + 2];
+                    }
+                }
             }
         }
 
@@ -469,15 +474,11 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
 
             scalar_t gix = static_cast<scalar_t>(0), giy = static_cast<scalar_t>(0), giz = static_cast<scalar_t>(0);
             // get grad_output pointer
-            // const scalar_t *gOut_ptr_NCDHW = grad_output.data + n * gOut_sN + d * gOut_sD + h * gOut_sH + w * gOut_sW;
             const scalar_t *gOut_ptr_NCDHW = grad_output + w + W * (h + H * (d + D * (C * n)));
 
             // offset for grad_input
-            index_t NC_offset;
+            index_t NC_offset = (broadcast_input ? 0 : (n * C * Hi * Wi * Di));
             // if grad_input is provided, we need to offset the input pointer
-            if (grad_input) {
-                NC_offset = (broadcast_input ? 0 : (n * C * Hi * Wi * Di));
-            }
             const scalar_t *inp_ptr_NC = input + NC_offset;
             // get offsets to add
             const index_t inp_sC = Hi * Wi * Di;
@@ -557,22 +558,23 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
 
             // calculate grad_grid
             if (grad_grid) {
-                // assume grad_grid is contiguous
-                if (broadcast_grid) { // we have to safe add to avoid conflicts with other threads
+                if (broadcast_grid) {
                     index_t grad_grid_index = 3 * (w + W * (h + H * (d)));
-                    index_t grad_numel = D * H * W * 3;
-                    // fastAtomicAdd(grad_grid, grad_grid_index, grad_numel, gix, true);
-                    // fastAtomicAdd(grad_grid, grad_grid_index + 1, grad_numel, giy, true);
-                    // fastAtomicAdd(grad_grid, grad_grid_index + 2, grad_numel, giz, true);
-                    gpuAtomicAdd(grad_grid + grad_grid_index, gix);
-                    gpuAtomicAdd(grad_grid + grad_grid_index + 1, giy);
-                    gpuAtomicAdd(grad_grid + grad_grid_index + 2, giz);
+                    const index_t grad_grid_size = 3 * D * H * W;
+                    if (grad_grid_index + 2 < grad_grid_size) {
+                        gpuAtomicAdd(grad_grid + grad_grid_index, gix);
+                        gpuAtomicAdd(grad_grid + grad_grid_index + 1, giy);
+                        gpuAtomicAdd(grad_grid + grad_grid_index + 2, giz);
+                    }
                 } 
                 else {
                     index_t grad_grid_index = 3 * (w + W * (h + H * (d + D * n)));
-                    grad_grid[grad_grid_index] = gix;
-                    grad_grid[grad_grid_index + 1] = giy;
-                    grad_grid[grad_grid_index + 2] = giz;
+                    const index_t grad_grid_size = 3 * D * H * W * N;
+                    if (grad_grid_index + 2 < grad_grid_size) {
+                        grad_grid[grad_grid_index] = gix;
+                        grad_grid[grad_grid_index + 1] = giy;
+                        grad_grid[grad_grid_index + 2] = giz;
+                    }
                 }
             }
 
@@ -600,7 +602,6 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
                 auto iz_nearest = static_cast<index_t>(std::nearbyint(iz));
 
                 // assign nearest neighbour pixel value to output pixel
-                // const scalar_t *gOut_ptr_NCDHW = grad_output.data + n * gOut_sN + d * gOut_sD + h * gOut_sH + w * gOut_sW;
                 const scalar_t *gOut_ptr_NCDHW = grad_output + w + W * (h + H * (d + D * (C * n)));
                 index_t NC_offset = (broadcast_input ? 0 : (n * C * Hi * Wi * Di));
                 const index_t gInp_sC = Hi * Wi * Di;
@@ -614,30 +615,10 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
                                              NC_offset, grad_input_memory_span);
                 }
             }
-            
-            //// TODO: gradients w.r.t. grid and affine is 0 - is there a better way to do this?
-            // if grid has grad
-            // if (grid_requires_grad) {
-            //     // assume grad_grid is contiguous
-            //     if (broadcast_grid) {
-            //         index_t grad_grid_index = 3 * (w + W * (h + H * (d)));
-            //         index_t grad_numel = D * H * W * 3;
-            //         fastAtomicAdd(grad_grid, grad_grid_index, grad_numel, gix, true);
-            //         fastAtomicAdd(grad_grid, grad_grid_index + 1, grad_numel, giy, true);
-            //         fastAtomicAdd(grad_grid, grad_grid_index + 2, grad_numel, giz, true);
-            //     }
-            //     else {
-            //         index_t grad_grid_index = 3 * (w + W * (h + H * (d + D * n)));
-            //         grad_grid[grad_grid_index] = gix;
-            //         grad_grid[grad_grid_index + 1] = giy;
-            //         grad_grid[grad_grid_index + 2] = giz;
-            //     }
-            // }
         }
     }
 
-    // if affine_3d grad is required
-    // const index_t grad_affine_numel = 12 * gridDim.x * (broadcast_affine_3d ? 1 : N);
+    // // if affine_3d grad is required
     if (grad_affine_collect) {
         // add it to local registers
         #pragma unroll
@@ -645,6 +626,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
             // put it in shared memory to compute the sum over the batch dimension
             _affine_grad_shared_[threadIdx.x] = _affine_grad_[affid];
             __syncthreads();
+            
             // reduce over threads
             for (int tid = BLOCKSIZE_3D / 2; tid > 0; tid /= 2) {
                 if (threadIdx.x < tid) {
@@ -652,16 +634,17 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
                 }
                 __syncthreads();
             }
+            
             // write to global memory
             if (threadIdx.x == 0) {
                 // broadcasted, we need to perform safe atomic add to avoid conflicts with other threads along batch dimension
                 if (broadcast_affine_3d) {
-                    // fastAtomicAdd(grad_affine_collect, blockIdx.x*12 + affid, grad_affine_numel, _affine_grad_shared_[0], true);
-                    gpuAtomicAdd(grad_affine_collect + blockIdx.x*12 + affid, _affine_grad_shared_[0]);
+                    const index_t offset = blockIdx.x*12 + affid;
+                    gpuAtomicAdd(grad_affine_collect + offset, _affine_grad_shared_[0]);
                 }
                 else {
-                    // non-broadcasted, we can directly assign
-                    grad_affine_collect[affid + 12 * (blockIdx.x + gridDim.x * n)] = _affine_grad_shared_[0];
+                    const index_t offset = affid + 12 * (blockIdx.x + gridDim.x * n);
+                    grad_affine_collect[offset] = _affine_grad_shared_[0];
                 }
             }
             __syncthreads();
@@ -968,13 +951,6 @@ void fused_grid_sampler_3d_backward_impl(
         grad_affine_collect = torch::zeros({affine_3d.value().size(0), gridSize, 3, 4}, grad_affine.value().options());
     }
 
-    std::cout << "affine_requires_grad: " << affine_requires_grad << std::endl;
-    std::cout << "input_requires_grad: " << input_requires_grad << std::endl;
-    std::cout << "grid_requires_grad: " << grid_requires_grad << std::endl;
-    std::cout << "affine broadcast: " << broadcast_affine_3d << std::endl;
-    std::cout << "image broadcast: " << broadcast_input << std::endl;
-    std::cout << "grid broadcast: " << broadcast_grid << std::endl;
-
     if (count > 0) {
         AT_DISPATCH_FLOATING_TYPES_AND2(
         at::ScalarType::Half, at::ScalarType::BFloat16,
@@ -1045,16 +1021,6 @@ void fused_grid_sampler_3d_backward_impl(
 
     if (affine_requires_grad) {
         // sum over the batch dimension
-        std::cout << "grad_affine_collect: ";
-        for (int i = 0; i < 4; i++) {
-            std::cout << grad_affine_collect.size(i) << " ";
-        }
-        std::cout << std::endl;
-        std::cout << "grad_affine: ";
-        for (int i = 0; i < 3; i++) {
-            std::cout << grad_affine.value().size(i) << " ";
-        }
-        std::cout << std::endl;
         grad_affine.value().copy_(grad_affine_collect.sum(1));
     }
 }

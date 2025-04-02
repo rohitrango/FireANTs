@@ -138,7 +138,6 @@ def fused_grid_sampler_3d(
     assert input.is_contiguous(), "input must be contiguous"
     assert affine is None or affine.is_contiguous(), "affine must be contiguous"
     assert grid is None or grid.is_contiguous(), "grid must be contiguous"
-    print(input.requires_grad, affine.requires_grad if affine is not None else None, grid.requires_grad if grid is not None else None)
     # specify output shape if grid is not provided
     if grid is None:
         out_shape = out_shape[-3:]

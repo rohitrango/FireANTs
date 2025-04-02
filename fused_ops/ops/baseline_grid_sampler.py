@@ -1,11 +1,12 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
+from typing import Optional
 
 def baseline_grid_sampler_3d(
     input: torch.Tensor,
-    affine_3d: torch.Tensor = None,
-    grid: torch.Tensor = None,
+    affine_3d: Optional[torch.Tensor] = None,
+    grid: Optional[torch.Tensor] = None,
     interpolation_mode: str = "bilinear",
     padding_mode: str = "zeros",
     align_corners: bool = False,
@@ -39,24 +40,18 @@ def baseline_grid_sampler_3d(
             raise ValueError("Either grid or affine_3d must be provided")
         grid = F.affine_grid(affine_3d, (B, C, *out_shape), align_corners=align_corners)
         return F.grid_sample(input, grid, mode=interpolation_mode, padding_mode=padding_mode, align_corners=align_corners)
-    
     # Case 2: Full warp field
     if not is_displacement:
         return F.grid_sample(input, grid, mode=interpolation_mode, padding_mode=padding_mode, align_corners=align_corners)
-    
     # Case 3: Displacement field
     out_shape = grid.shape[1:-1]
-    
     # Create identity grid if no affine provided
     if affine_3d is None:
         affine_3d = torch.eye(3, 4, device=input.device)[None].expand(B, -1, -1)
-    
     # Create base grid
     base_grid = F.affine_grid(affine_3d, (B, C, *out_shape), align_corners=align_corners)
-    
     # Add displacement
     final_grid = base_grid + grid
-    
     return F.grid_sample(input, final_grid, mode=interpolation_mode, padding_mode=padding_mode, align_corners=align_corners)
 
 if __name__ == "__main__":

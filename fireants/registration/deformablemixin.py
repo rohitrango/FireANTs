@@ -17,7 +17,6 @@ from fireants.registration.deformation.compositive import CompositiveWarp
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 
-
 class DeformableMixin:
     """Mixin class providing common functionality for deformable registration classes.
 
@@ -65,6 +64,8 @@ class DeformableMixin:
 
         # get the moved coordinates and initial grid in pytorch space
         moved_coords = reg.get_warped_coordinates(fixed_image, moving_image)   # [B, H, W, [D], dim]
+        # get affine and displacement parts
+        # init grid
         init_grid = F.affine_grid(torch.eye(reg.dims, reg.dims+1, device=moved_coords.device)[None], \
                                     fixed_image.shape, align_corners=True)
         # this is now moved displacements

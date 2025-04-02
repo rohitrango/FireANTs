@@ -166,7 +166,11 @@ def compositive_warp_inverse(image: BatchedImages, ref_warp: torch.Tensor,
         del grid, ref_warp_resized
     # reg.warp.
     reg.optimize(False)
-    return reg.get_warped_coordinates(image, image, displacement=displacement)
+    coords = reg.get_warped_coordinates(image, image)
+    if displacement:
+        shape = list(coords.shape[1:-1])
+        coords = coords - F.affine_grid(torch.eye(reg.dims, reg.dims+1, device=coords.device)[None], [1,1] + shape, align_corners=True)
+    return coords
 
 ### Utility to convert dense warp fields from pytorch format to scipy format
 ### Used to submit to learn2reg challenge 

@@ -283,10 +283,10 @@ class MomentsRegistration(AbstractRegistration):
         else:
             raise NotImplementedError("Only 1st and 2nd order moments supported.")
 
-    def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
-        raise NotImplementedError("Inverse warped coordinates not implemented for moments registration.")
+    def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
+        raise NotImplementedError("Inverse warp parameters not implemented for moments registration.")
 
-    def get_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
+    def get_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         fixed_t2p = fixed_images.get_torch2phy()
         moving_p2t = moving_images.get_phy2torch()
         # get affine matrix and append last row
@@ -297,16 +297,12 @@ class MomentsRegistration(AbstractRegistration):
         # Get shape
         if shape is None:
             shape = fixed_images.shape
-        # init grid and apply rigid transformation
-        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device, self.dtype).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, dims, dims+1]
-        coords = F.affine_grid(init_grid, shape, align_corners=True)  # [N, H, W, [D], dims+1]
-        coords = torch.cat([coords, torch.ones(list(coords.shape[:-1]) + [1], device=coords.device, dtype=self.dtype)], dim=-1)
-        coords = torch.einsum('ntd, n...d->n...t', fixed_t2p, coords)  # [N, H, W, [D], dims+1]  
-        coords = torch.einsum('ntd, n...d->n...t', aff, coords)  # [N, H, W, [D], dims+1]
-        coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
-        return coords[..., :-1]
+        affine = ((moving_p2t @ aff @ fixed_t2p)[:, :-1, :]).contiguous().to(self.dtype)
+        return {
+            'affine': affine,
+            'out_shape': shape
+        }
 
-    
     def optimize(self, save_transformed=False):
         ''' Given fixed and moving images, optimize rigid registration '''
         if self.optimized:

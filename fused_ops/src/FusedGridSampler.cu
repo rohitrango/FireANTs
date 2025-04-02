@@ -8,6 +8,8 @@
 #include <ATen/cuda/detail/IndexUtils.cuh>
 #include <ATen/cuda/detail/KernelUtils.h>
 #include <ATen/cuda/Atomic.cuh>
+#include <c10/cuda/CUDAStream.h>
+#include <c10/cuda/CUDAGuard.h>
 // #include <ATen/native/cuda/KernelUtils.h>
 // #include <ATen/core/TensorBase.h>
 #include <ATen/Dispatch.h>
@@ -694,6 +696,11 @@ torch::Tensor fused_grid_sampler_3d_forward_impl(
     TORCH_CHECK(input.is_contiguous(), "input must be contiguous");
     TORCH_CHECK(grid.has_value() || affine_3d.has_value(), "one of grid or affine_3d must exist");
 
+    // device and stream guards
+    c10::DeviceGuard guard(input.device());
+    at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream(input.device().index());
+    at::cuda::CUDAStreamGuard stream_guard(stream);
+
     // see if we need to broadcast any variable
     int64_t batch_size_max = input.size(0);
     if (affine_3d.has_value()) {
@@ -779,7 +786,7 @@ torch::Tensor fused_grid_sampler_3d_forward_impl(
             if (canUse32BitIndexMath(input) && grid32bit &&
                 canUse32BitIndexMath(output)) {
                 fused_grid_sampler_3d_forward_kernel<scalar_t>
-                <<<GET_BLOCKS(count, 512), 512, 0, at::cuda::getCurrentCUDAStream()>>>(
+                <<<GET_BLOCKS(count, 512), 512, 0, stream>>>(
                     static_cast<int>(count),
                     input.data_ptr<scalar_t>(),
                     grid.has_value() ? grid.value().data_ptr<scalar_t>() : nullptr,
@@ -800,7 +807,7 @@ torch::Tensor fused_grid_sampler_3d_forward_impl(
                 C10_CUDA_KERNEL_LAUNCH_CHECK();
             } else {
                 fused_grid_sampler_3d_forward_kernel<scalar_t>
-                <<<GET_BLOCKS(count, 512), 512, 0, at::cuda::getCurrentCUDAStream()>>>(
+                <<<GET_BLOCKS(count, 512), 512, 0, stream>>>(
                     count,
                     input.data_ptr<scalar_t>(),
                     grid.has_value() ? grid.value().data_ptr<scalar_t>() : nullptr,
@@ -831,9 +838,9 @@ void fused_grid_sampler_3d_backward_impl(
     const std::optional<torch::Tensor> grid,
     /* we need grad_output, grad_input, grad_affine, grad_grid, some may be empty or zeros */
     const torch::Tensor &grad_output,
-    const std::optional<torch::Tensor> grad_input,
-    const std::optional<torch::Tensor> grad_affine,
-    const std::optional<torch::Tensor> grad_grid,
+    const std::optional<torch::Tensor> &grad_input,
+    const std::optional<torch::Tensor> &grad_affine,
+    const std::optional<torch::Tensor> &grad_grid,
     /* input parameters = output size, grid bounds, is_displacement, interpolation_mode, padding_mode, align_corners */
     const int64_t out_D,
     const int64_t out_H,
@@ -853,6 +860,11 @@ void fused_grid_sampler_3d_backward_impl(
     TORCH_CHECK(input.is_contiguous(), "input must be contiguous");
     TORCH_CHECK(grid.has_value() || affine_3d.has_value(), "one of grid or affine_3d must exist");
     TORCH_CHECK(grad_input.has_value() || grad_affine.has_value() || grad_grid.has_value(), "at least one of grad_input, grad_affine, grad_grid must exist");
+
+    // device and stream guards
+    c10::DeviceGuard guard(input.device());
+    at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream(input.device().index());
+    at::cuda::CUDAStreamGuard stream_guard(stream);
 
     // see if we need to broadcast any variable
     int64_t batch_size_max = input.size(0);
@@ -935,7 +947,6 @@ void fused_grid_sampler_3d_backward_impl(
     // define output
     int64_t N = batch_size_max;
     int64_t C = input.size(1);
-    torch::Tensor output = torch::zeros({batch_size_max, C, D, H, W}, input.options());
 
     // input size parameters (put batch in a separate dimension)
     int64_t count = D * H * W;
@@ -957,6 +968,13 @@ void fused_grid_sampler_3d_backward_impl(
         grad_affine_collect = torch::zeros({affine_3d.value().size(0), gridSize, 3, 4}, grad_affine.value().options());
     }
 
+    std::cout << "affine_requires_grad: " << affine_requires_grad << std::endl;
+    std::cout << "input_requires_grad: " << input_requires_grad << std::endl;
+    std::cout << "grid_requires_grad: " << grid_requires_grad << std::endl;
+    std::cout << "affine broadcast: " << broadcast_affine_3d << std::endl;
+    std::cout << "image broadcast: " << broadcast_input << std::endl;
+    std::cout << "grid broadcast: " << broadcast_grid << std::endl;
+
     if (count > 0) {
         AT_DISPATCH_FLOATING_TYPES_AND2(
         at::ScalarType::Half, at::ScalarType::BFloat16,
@@ -969,9 +987,9 @@ void fused_grid_sampler_3d_backward_impl(
                 grid32bit = true;
             }
             if (canUse32BitIndexMath(input) && grid32bit &&
-                canUse32BitIndexMath(output)) {
+                canUse32BitIndexMath(grad_output)) {
                 fused_grid_sampler_3d_backward_kernel<scalar_t>
-                <<<gridSize3, blockSize3, 0, at::cuda::getCurrentCUDAStream()>>>(
+                <<<gridSize3, blockSize3, 0, stream>>>(
                     static_cast<int>(count),
                     input.data_ptr<scalar_t>(),
                     grid.has_value() ? grid.value().data_ptr<scalar_t>() : nullptr,
@@ -997,7 +1015,7 @@ void fused_grid_sampler_3d_backward_impl(
                 C10_CUDA_KERNEL_LAUNCH_CHECK();
             } else {
                 fused_grid_sampler_3d_backward_kernel<scalar_t>
-                <<<gridSize3, blockSize3, 0, at::cuda::getCurrentCUDAStream()>>>(
+                <<<gridSize3, blockSize3, 0, stream>>>(
                     count,
                     input.data_ptr<scalar_t>(),
                     grid.has_value() ? grid.value().data_ptr<scalar_t>() : nullptr,
@@ -1027,7 +1045,16 @@ void fused_grid_sampler_3d_backward_impl(
 
     if (affine_requires_grad) {
         // sum over the batch dimension
+        std::cout << "grad_affine_collect: ";
+        for (int i = 0; i < 4; i++) {
+            std::cout << grad_affine_collect.size(i) << " ";
+        }
+        std::cout << std::endl;
+        std::cout << "grad_affine: ";
+        for (int i = 0; i < 3; i++) {
+            std::cout << grad_affine.value().size(i) << " ";
+        }
+        std::cout << std::endl;
         grad_affine.value().copy_(grad_affine_collect.sum(1));
     }
-
 }

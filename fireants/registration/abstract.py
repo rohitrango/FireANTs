@@ -11,6 +11,7 @@ from fireants.utils.util import ConvergenceMonitor
 from torch.nn import functional as F
 from functools import partial
 from fireants.utils.imageutils import is_torch_float_type
+from fireants.interpolator import fireants_interpolator
 import logging
 
 logger = logging.getLogger(__name__)
@@ -138,8 +139,17 @@ class AbstractRegistration(ABC):
         Abstract method to perform registration optimization
         '''
         pass
+
+    @abstractmethod
+    def get_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
+        ''' Get dictionary of parameters to pass into fireants_interpolator '''
+        raise NotImplementedError("This method must be implemented by the registration class")
     
     @abstractmethod
+    def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
+        ''' Get dictionary of parameters to pass into fireants_interpolator '''
+        raise NotImplementedError("This method must be implemented by the registration class")
+
     def get_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         '''Get the transformed coordinates for warping the moving image.
 
@@ -168,15 +178,36 @@ class AbstractRegistration(ABC):
             - The transformation maps from fixed image space to moving image space (backward transform)
             - Physical space transformations are handled internally using the image metadata
         '''
-        pass
+        params = self.get_warp_parameters(fixed_images, moving_images, shape)
+        if 'affine' in params and 'grid' not in params:
+            return F.affine_grid(params['affine'], params['out_shape'], align_corners=True)
+        elif 'affine' in params and 'grid' in params:
+            # this is just a warp field
+            affine = params['affine']
+            grid = params['grid']
+            shape = [affine.shape[0], 1] + list(grid.shape[1:-1])
+            grid = F.affine_grid(affine, shape, align_corners=True) + grid
+            return grid
+        else:
+            raise ValueError(f"Invalid warp parameters with keys {params.keys()}")
 
-    @abstractmethod
     def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         ''' Get inverse warped coordinates for the moving image.
 
         This method is useful to analyse the effect of how the moving coordinates (fixed images) are transformed
         '''
-        pass
+        params = self.get_inverse_warp_parameters(fixed_images, moving_images, shape)
+        if 'affine' in params and 'grid' not in params:
+            return F.affine_grid(params['affine'], params['out_shape'], align_corners=True)
+        elif 'affine' in params and 'grid' in params:
+            # this is just a warp field
+            affine = params['affine']
+            grid = params['grid']
+            shape = [affine.shape[0], 1] + list(grid.shape[1:-1])
+            grid = F.affine_grid(affine, shape, align_corners=True) + grid
+            return grid
+        else:
+            raise ValueError(f"Invalid warp parameters with keys {params.keys()}")
 
     def save_moved_images(self, moved_images: Union[BatchedImages, FakeBatchedImages, torch.Tensor], filenames: Union[str, List[str]], moving_to_fixed: bool = True):
         '''
@@ -209,8 +240,8 @@ class AbstractRegistration(ABC):
             moving_images = FakeBatchedImages(moving_images, self.moving_images)
 
         fixed_arrays = moving_images()
-        fixed_moved_coords = self.get_inverse_warped_coordinates(fixed_images, moving_images, shape=shape, **kwargs)
-        fixed_moved_image = F.grid_sample(fixed_arrays, fixed_moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+        fixed_moved_coords = self.get_inverse_warp_parameters(fixed_images, moving_images, shape=shape, **kwargs)
+        fixed_moved_image = fireants_interpolator(fixed_arrays, **fixed_moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
         return fixed_moved_image
 
 
@@ -249,6 +280,6 @@ class AbstractRegistration(ABC):
             moving_images = FakeBatchedImages(moving_images, self.moving_images)
 
         moving_arrays = moving_images()
-        moved_coords = self.get_warped_coordinates(fixed_images, moving_images, shape=shape).to(moving_arrays.device, moving_arrays.dtype)
-        moved_image = F.grid_sample(moving_arrays, moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+        moved_coords = self.get_warp_parameters(fixed_images, moving_images, shape=shape)
+        moved_image = fireants_interpolator(moving_arrays, **moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
         return moved_image

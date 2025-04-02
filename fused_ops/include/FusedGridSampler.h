@@ -25,9 +25,9 @@ void fused_grid_sampler_3d_backward_impl(
     const std::optional<torch::Tensor> grid,
     /* we need grad_output, grad_input, grad_affine, grad_grid, some may be empty or zeros */
     const torch::Tensor &grad_output,
-    const std::optional<torch::Tensor> grad_input,
-    const std::optional<torch::Tensor> grad_affine,
-    const std::optional<torch::Tensor> grad_grid,
+    const std::optional<torch::Tensor> &grad_input,
+    const std::optional<torch::Tensor> &grad_affine,
+    const std::optional<torch::Tensor> &grad_grid,
     /* input parameters = output size, grid bounds, is_displacement, interpolation_mode, padding_mode, align_corners */
     const int64_t out_D,
     const int64_t out_H,

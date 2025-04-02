@@ -14,7 +14,7 @@ from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 from fireants.utils.util import compose_warp
 from fireants.utils.warputils import compositive_warp_inverse
-
+from fireants.interpolator import fireants_interpolator
 from fireants.registration.deformablemixin import DeformableMixin
 
 class SyNRegistration(AbstractRegistration, DeformableMixin):
@@ -127,7 +127,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             raise ValueError('Invalid initial affine shape: {}'.format(init_affine.shape))
 
 
-    def get_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None, displacement=False):
+    def get_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None, displacement=False):
         """Get transformed coordinates for warping the moving image.
 
         Computes the coordinate transformation from fixed to moving image space
@@ -160,8 +160,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         # fixed_size = fixed_arrays.shape[2:]
         # save init transform
         init_grid = torch.eye(self.dims, self.dims+1).to(fixed_images.device, self.dtype).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, dims, dims+1]
-        affine_map_init = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]
-        moved_coords_final = F.affine_grid(affine_map_init, fixed_arrays.shape, align_corners=True)   # affine grid from moving coords
+        affine_map_init = (torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]).contiguous().to(self.dtype)
         fixed_image_vgrid  = F.affine_grid(init_grid, fixed_arrays.shape, align_corners=True)
         # get warps
         fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
@@ -174,14 +173,13 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             rev_inv_warp_field = separable_filtering(rev_inv_warp_field.permute(*self.rev_warp.permute_vtoimg), warp_gaussian).permute(*self.rev_warp.permute_imgtov)
         # # compose the two warp fields
         composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field, fixed_image_vgrid)
-        moved_coords_final = moved_coords_final + composed_warp
-        if displacement:
-            # init_grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=moved_coords_final.device)[None], \
-            #                 fixed_images.shape, align_corners=True)
-            moved_coords_final = moved_coords_final - fixed_image_vgrid.to(moved_coords_final.device)
-        return moved_coords_final
+        # moved_coords_final = moved_coords_final + composed_warp
+        return {
+            'affine': affine_map_init,
+            'grid': composed_warp,
+        }
 
-    def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
+    def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         raise NotImplementedError('Inverse warp not implemented for SyN registration')
 
     def optimize(self, save_transformed=False):
@@ -213,7 +211,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
 
         # save initial affine transform to initialize grid for the fixed image and moving image
         init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device, self.dtype).unsqueeze(0).repeat(self.fixed_images.size(), 1, 1)  # [N, dims, dims+1]
-        affine_map_init = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]
+        affine_map_init = (torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]).contiguous().to(self.dtype)
 
         # to save transformed images
         transformed_images = []
@@ -239,8 +237,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             self.rev_warp.set_size(size_down)
 
             # Get coordinates to transform
-            fixed_image_affinecoords = F.affine_grid(affine_map_init, fixed_image_down.shape, align_corners=True)
-            fixed_image_vgrid  = F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)
+            # fixed_image_affinecoords = F.affine_grid(affine_map_init, fixed_image_down.shape, align_corners=True)
             #### Optimize
             pbar = tqdm(range(iters)) if self.progress_bar else range(iters)
             if self.reduction == 'mean':
@@ -259,15 +256,16 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                     fwd_warp_field = separable_filtering(fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg), warp_gaussian).permute(*self.fwd_warp.permute_imgtov)
                     rev_warp_field = separable_filtering(rev_warp_field.permute(*self.rev_warp.permute_vtoimg), warp_gaussian).permute(*self.rev_warp.permute_imgtov)
                 # moved and fixed coords
-                moved_coords = fixed_image_affinecoords + fwd_warp_field  # affine transform + warp field
-                fixed_coords = fixed_image_vgrid + rev_warp_field
                 # warp the "moving image" to moved_image_warp and fixed to "fixed image warp"
-                moved_image_warp = F.grid_sample(moving_image_blur, moved_coords.to(moving_image_blur.dtype), mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
-                fixed_image_warp = F.grid_sample(fixed_image_down, fixed_coords.to(fixed_image_down.dtype), mode='bilinear', align_corners=True)
+                moved_image_warp = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=fwd_warp_field, mode='bilinear', align_corners=True, is_displacement=True)
+                fixed_image_warp = fireants_interpolator(fixed_image_down, affine=None, grid=rev_warp_field, mode='bilinear', align_corners=True, is_displacement=True)
                 # compute loss
                 loss = self.loss_fn(moved_image_warp, fixed_image_warp) 
                 # add regularization
                 if self.warp_reg is not None:
+                    # TODO: have to get the moved and fixed coords
+                    moved_coords = fwd_warp_field + F.affine_grid(affine_map_init, fixed_image_down.shape, align_corners=True)
+                    fixed_coords = rev_warp_field + F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)
                     loss = loss + self.warp_reg(moved_coords) + self.warp_reg(fixed_coords)
                 if self.displacement_reg is not None:
                     loss = loss + self.displacement_reg(fwd_warp_field) + self.displacement_reg(rev_warp_field)
@@ -285,6 +283,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             if save_transformed:
                 fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
                 # rev_inv_warp_field = self.rev_warp.get_inverse_warp(n_iters=50, debug=True, lr=0.1)
+                fixed_image_vgrid = F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)
                 rev_inv_warp_field = compositive_warp_inverse(self.fixed_images, self.rev_warp.get_warp() + fixed_image_vgrid, displacement=True,)
                 # # smooth them out
                 if self.smooth_warp_sigma > 0:
@@ -293,8 +292,8 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
 
                 # # compose the two warp fields
                 composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field, fixed_image_vgrid)
-                moved_coords_final = fixed_image_affinecoords + composed_warp
-                moved_image = F.grid_sample(moving_image_blur, moved_coords_final, mode='bilinear', align_corners=True).to(moving_image_blur.dtype)
+                # moved_coords_final = fixed_image_affinecoords + composed_warp
+                moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=composed_warp, mode='bilinear', align_corners=True, displacement=True)
                 transformed_images.append(moved_image.detach())
                 
         if save_transformed:

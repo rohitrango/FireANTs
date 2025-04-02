@@ -1,0 +1,240 @@
+running build_ext
+building 'fireants_fused_ops' extension
+[1/1] /usr/local/cuda/bin/nvcc --generate-dependencies-with-compile --dependency-output /data/rohitrango/code/fireants/fused_ops/build/temp.linux-x86_64-cpython-39/src/FusedGridSampler.o.d -I/data/rohitrango/code/fireants/fused_ops/include -I/home/rohitrango/data/miniconda3/envs/fireants/lib/python3.9/site-packages/torch/include -I/home/rohitrango/data/miniconda3/envs/fireants/lib/python3.9/site-packages/torch/include/torch/csrc/api/include -I/home/rohitrango/data/miniconda3/envs/fireants/lib/python3.9/site-packages/torch/include/TH -I/home/rohitrango/data/miniconda3/envs/fireants/lib/python3.9/site-packages/torch/include/THC -I/home/rohitrango/data/miniconda3/envs/fireants/lib/python3.9/site-packages/torch/include -I/home/rohitrango/data/miniconda3/envs/fireants/lib/python3.9/site-packages/torch/include/torch/csrc/api/include -I/home/rohitrango/data/miniconda3/envs/fireants/lib/python3.9/site-packages/torch/include/TH -I/home/rohitrango/data/miniconda3/envs/fireants/lib/python3.9/site-packages/torch/include/THC -I/usr/local/cuda/include -I/home/rohitrango/data/miniconda3/envs/fireants/include/python3.9 -c -c /data/rohitrango/code/fireants/fused_ops/src/FusedGridSampler.cu -o /data/rohitrango/code/fireants/fused_ops/build/temp.linux-x86_64-cpython-39/src/FusedGridSampler.o -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr --compiler-options ''"'"'-fPIC'"'"'' -g -G -O0 --device-debug --ptxas-options=-v -DTORCH_API_INCLUDE_EXTENSION_H '-DPYBIND11_COMPILER_TYPE="_gcc"' '-DPYBIND11_STDLIB="_libstdcpp"' '-DPYBIND11_BUILD_ABI="_cxxabi1011"' -DTORCH_EXTENSION_NAME=fireants_fused_ops -D_GLIBCXX_USE_CXX11_ABI=0 -gencode=arch=compute_86,code=compute_86 -gencode=arch=compute_86,code=sm_86 -std=c++17
+ptxas info    : 1 bytes gmem
+ptxas info    : Function properties for _ZNK13__nv_bfloat16cv17__nv_bfloat16_rawEv
+    8 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for _ZN3c104HalfC1ERK6__half
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for _ZNK3c104Halfcv6__halfEv
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for _ZSt5floorf
+    16 bytes stack frame, 12 bytes spill stores, 12 bytes spill loads
+ptxas info    : Function properties for _ZSt9nearbyintf
+    16 bytes stack frame, 12 bytes spill stores, 12 bytes spill loads
+ptxas info    : Function properties for _ZN3c10mlENS_4HalfEf
+    16 bytes stack frame, 12 bytes spill stores, 12 bytes spill loads
+ptxas info    : Function properties for _ZN3c10plEfNS_4HalfE
+    16 bytes stack frame, 12 bytes spill stores, 12 bytes spill loads
+ptxas info    : Function properties for _ZN3c10pLERfRKNS_4HalfE
+    32 bytes stack frame, 32 bytes spill stores, 32 bytes spill loads
+ptxas info    : Function properties for _ZNK3c104HalfcvfEv
+    16 bytes stack frame, 16 bytes spill stores, 16 bytes spill loads
+ptxas info    : Function properties for _ZN3c104HalfC1Ef
+    32 bytes stack frame, 28 bytes spill stores, 28 bytes spill loads
+ptxas info    : Function properties for _ZN3c10mlENS_8BFloat16Ef
+    16 bytes stack frame, 12 bytes spill stores, 12 bytes spill loads
+ptxas info    : Function properties for _ZN3c10plEfNS_8BFloat16E
+    16 bytes stack frame, 12 bytes spill stores, 12 bytes spill loads
+ptxas info    : Function properties for _ZN3c10pLERfRKNS_8BFloat16E
+    32 bytes stack frame, 32 bytes spill stores, 32 bytes spill loads
+ptxas info    : Function properties for _ZNK3c108BFloat16cvfEv
+    16 bytes stack frame, 16 bytes spill stores, 16 bytes spill loads
+ptxas info    : Function properties for _ZN3c108BFloat16C1Ef
+    32 bytes stack frame, 28 bytes spill stores, 28 bytes spill loads
+ptxas info    : Function properties for _ZN3c10mlERKNS_4HalfES2_
+    48 bytes stack frame, 44 bytes spill stores, 44 bytes spill loads
+ptxas info    : Function properties for _ZN3c10plERKNS_4HalfES2_
+    48 bytes stack frame, 44 bytes spill stores, 44 bytes spill loads
+ptxas info    : Function properties for _ZN3c10pLERNS_4HalfERKS0_
+    64 bytes stack frame, 40 bytes spill stores, 40 bytes spill loads
+ptxas info    : Function properties for _ZN3c10miEiNS_4HalfE
+    64 bytes stack frame, 36 bytes spill stores, 36 bytes spill loads
+ptxas info    : Function properties for _ZN3c10miENS_4HalfEi
+    72 bytes stack frame, 36 bytes spill stores, 36 bytes spill loads
+ptxas info    : Function properties for _ZN3c10mIERNS_4HalfERKS0_
+    64 bytes stack frame, 40 bytes spill stores, 40 bytes spill loads
+ptxas info    : Function properties for _ZN3c10miElNS_4HalfE
+    64 bytes stack frame, 40 bytes spill stores, 40 bytes spill loads
+ptxas info    : Function properties for _ZN3c10miENS_4HalfEl
+    72 bytes stack frame, 40 bytes spill stores, 40 bytes spill loads
+ptxas info    : Function properties for _ZN3c10mlERKNS_8BFloat16ES2_
+    48 bytes stack frame, 44 bytes spill stores, 44 bytes spill loads
+ptxas info    : Function properties for _ZN3c10plERKNS_8BFloat16ES2_
+    48 bytes stack frame, 44 bytes spill stores, 44 bytes spill loads
+ptxas info    : Function properties for _ZN3c10pLERNS_8BFloat16ERKS0_
+    64 bytes stack frame, 40 bytes spill stores, 40 bytes spill loads
+ptxas info    : Function properties for _ZN3c10miEiNS_8BFloat16E
+    64 bytes stack frame, 36 bytes spill stores, 36 bytes spill loads
+ptxas info    : Function properties for _ZN3c10miENS_8BFloat16Ei
+    72 bytes stack frame, 36 bytes spill stores, 36 bytes spill loads
+ptxas info    : Function properties for _ZN3c10mIERNS_8BFloat16ERKS0_
+    64 bytes stack frame, 40 bytes spill stores, 40 bytes spill loads
+ptxas info    : Function properties for _ZN3c10miElNS_8BFloat16E
+    64 bytes stack frame, 40 bytes spill stores, 40 bytes spill loads
+ptxas info    : Function properties for _ZN3c10miENS_8BFloat16El
+    72 bytes stack frame, 40 bytes spill stores, 40 bytes spill loads
+ptxas info    : Function properties for _ZSt4fabsf
+    16 bytes stack frame, 12 bytes spill stores, 12 bytes spill loads
+ptxas info    : Function properties for _ZSt4fmodff
+    16 bytes stack frame, 16 bytes spill stores, 16 bytes spill loads
+ptxas info    : Function properties for _ZSt8isfinited
+    16 bytes stack frame, 16 bytes spill stores, 16 bytes spill loads
+ptxas info    : Function properties for _ZN3c10miERKNS_8BFloat16ES2_
+    48 bytes stack frame, 44 bytes spill stores, 44 bytes spill loads
+ptxas info    : Function properties for _ZN3c10dvERKNS_8BFloat16ES2_
+    56 bytes stack frame, 48 bytes spill stores, 48 bytes spill loads
+ptxas info    : Function properties for _ZN3c10ngERKNS_8BFloat16E
+    40 bytes stack frame, 32 bytes spill stores, 32 bytes spill loads
+ptxas info    : Function properties for _ZN3c10plENS_8BFloat16Ef
+    16 bytes stack frame, 12 bytes spill stores, 12 bytes spill loads
+ptxas info    : Function properties for _ZN3c10dvENS_8BFloat16Ei
+    72 bytes stack frame, 36 bytes spill stores, 36 bytes spill loads
+ptxas info    : Function properties for _ZN3c10miERKNS_4HalfES2_
+    48 bytes stack frame, 44 bytes spill stores, 44 bytes spill loads
+ptxas info    : Function properties for _ZN3c10dvERKNS_4HalfES2_
+    56 bytes stack frame, 48 bytes spill stores, 48 bytes spill loads
+ptxas info    : Function properties for _ZN3c10ngERKNS_4HalfE
+    40 bytes stack frame, 32 bytes spill stores, 32 bytes spill loads
+ptxas info    : Function properties for _ZN3c10plENS_4HalfEf
+    16 bytes stack frame, 12 bytes spill stores, 12 bytes spill loads
+ptxas info    : Function properties for _ZN3c10dvENS_4HalfEi
+    72 bytes stack frame, 36 bytes spill stores, 36 bytes spill loads
+ptxas info    : Function properties for _Z12gpuAtomicAddPN3c104HalfES0_
+    40 bytes stack frame, 32 bytes spill stores, 32 bytes spill loads
+ptxas info    : Function properties for _Z12gpuAtomicAddPN3c108BFloat16ES0_
+    40 bytes stack frame, 32 bytes spill stores, 32 bytes spill loads
+ptxas info    : Function properties for _Z12gpuAtomicAddPdd
+    24 bytes stack frame, 24 bytes spill stores, 24 bytes spill loads
+ptxas info    : Function properties for _Z12gpuAtomicAddPff
+    24 bytes stack frame, 20 bytes spill stores, 20 bytes spill loads
+ptxas info    : Compiling entry function '_Z36fused_grid_sampler_3d_forward_kernelIdiEvT0_PKT_S3_S3_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbPS1_N2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z36fused_grid_sampler_3d_forward_kernelIdiEvT0_PKT_S3_S3_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbPS1_N2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb
+    288 bytes stack frame, 310 bytes spill stores, 578 bytes spill loads
+ptxas info    : Used 128 registers, 312 bytes cumulative stack size, 468 bytes cmem[0], 8 bytes cmem[2]
+ptxas info    : Compiling entry function '_Z36fused_grid_sampler_3d_forward_kernelIdlEvT0_PKT_S3_S3_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbPS1_N2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z36fused_grid_sampler_3d_forward_kernelIdlEvT0_PKT_S3_S3_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbPS1_N2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb
+    368 bytes stack frame, 446 bytes spill stores, 698 bytes spill loads
+ptxas info    : Used 128 registers, 392 bytes cumulative stack size, 500 bytes cmem[0], 8 bytes cmem[2]
+ptxas info    : Compiling entry function '_Z36fused_grid_sampler_3d_forward_kernelIfiEvT0_PKT_S3_S3_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbPS1_N2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z36fused_grid_sampler_3d_forward_kernelIfiEvT0_PKT_S3_S3_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbPS1_N2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb
+    128 bytes stack frame, 118 bytes spill stores, 226 bytes spill loads
+ptxas info    : Used 128 registers, 152 bytes cumulative stack size, 468 bytes cmem[0]
+ptxas info    : Compiling entry function '_Z36fused_grid_sampler_3d_forward_kernelIflEvT0_PKT_S3_S3_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbPS1_N2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z36fused_grid_sampler_3d_forward_kernelIflEvT0_PKT_S3_S3_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbPS1_N2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb
+    208 bytes stack frame, 226 bytes spill stores, 394 bytes spill loads
+ptxas info    : Used 128 registers, 232 bytes cumulative stack size, 500 bytes cmem[0]
+ptxas info    : Compiling entry function '_Z36fused_grid_sampler_3d_forward_kernelIN3c104HalfEiEvT0_PKT_S5_S5_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbPS3_N2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z36fused_grid_sampler_3d_forward_kernelIN3c104HalfEiEvT0_PKT_S5_S5_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbPS3_N2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb
+    224 bytes stack frame, 222 bytes spill stores, 558 bytes spill loads
+ptxas info    : Used 128 registers, 280 bytes cumulative stack size, 468 bytes cmem[0]
+ptxas info    : Compiling entry function '_Z36fused_grid_sampler_3d_forward_kernelIN3c104HalfElEvT0_PKT_S5_S5_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbPS3_N2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z36fused_grid_sampler_3d_forward_kernelIN3c104HalfElEvT0_PKT_S5_S5_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbPS3_N2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb
+    384 bytes stack frame, 462 bytes spill stores, 1130 bytes spill loads
+ptxas info    : Used 128 registers, 440 bytes cumulative stack size, 500 bytes cmem[0]
+ptxas info    : Compiling entry function '_Z36fused_grid_sampler_3d_forward_kernelIN3c108BFloat16EiEvT0_PKT_S5_S5_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbPS3_N2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z36fused_grid_sampler_3d_forward_kernelIN3c108BFloat16EiEvT0_PKT_S5_S5_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbPS3_N2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb
+    224 bytes stack frame, 222 bytes spill stores, 558 bytes spill loads
+ptxas info    : Used 128 registers, 320 bytes cumulative stack size, 468 bytes cmem[0]
+ptxas info    : Compiling entry function '_Z36fused_grid_sampler_3d_forward_kernelIN3c108BFloat16ElEvT0_PKT_S5_S5_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbPS3_N2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z36fused_grid_sampler_3d_forward_kernelIN3c108BFloat16ElEvT0_PKT_S5_S5_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbPS3_N2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb
+    384 bytes stack frame, 462 bytes spill stores, 1130 bytes spill loads
+ptxas info    : Used 128 registers, 480 bytes cumulative stack size, 500 bytes cmem[0]
+ptxas info    : Compiling entry function '_Z37fused_grid_sampler_3d_backward_kernelIdiEvT0_PKT_S3_S3_S3_PS1_S4_S4_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbN2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z37fused_grid_sampler_3d_backward_kernelIdiEvT0_PKT_S3_S3_S3_PS1_S4_S4_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbN2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb
+    920 bytes stack frame, 834 bytes spill stores, 1454 bytes spill loads
+ptxas info    : Used 128 registers, 968 bytes cumulative stack size, 4096 bytes smem, 488 bytes cmem[0], 8 bytes cmem[2]
+ptxas info    : Compiling entry function '_Z37fused_grid_sampler_3d_backward_kernelIdlEvT0_PKT_S3_S3_S3_PS1_S4_S4_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbN2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z37fused_grid_sampler_3d_backward_kernelIdlEvT0_PKT_S3_S3_S3_PS1_S4_S4_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbN2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb
+    1128 bytes stack frame, 1174 bytes spill stores, 2626 bytes spill loads
+ptxas info    : Used 128 registers, 1176 bytes cumulative stack size, 4096 bytes smem, 520 bytes cmem[0], 8 bytes cmem[2]
+ptxas info    : Compiling entry function '_Z37fused_grid_sampler_3d_backward_kernelIfiEvT0_PKT_S3_S3_S3_PS1_S4_S4_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbN2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z37fused_grid_sampler_3d_backward_kernelIfiEvT0_PKT_S3_S3_S3_PS1_S4_S4_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbN2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb
+    560 bytes stack frame, 522 bytes spill stores, 1046 bytes spill loads
+ptxas info    : Used 128 registers, 608 bytes cumulative stack size, 2048 bytes smem, 488 bytes cmem[0]
+ptxas info    : Compiling entry function '_Z37fused_grid_sampler_3d_backward_kernelIflEvT0_PKT_S3_S3_S3_PS1_S4_S4_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbN2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z37fused_grid_sampler_3d_backward_kernelIflEvT0_PKT_S3_S3_S3_PS1_S4_S4_S0_S0_S0_S0_S0_S0_S0_S0_ffffffbN2at6native6detail24GridSamplerInterpolationENS7_18GridSamplerPaddingEbbbb
+    768 bytes stack frame, 870 bytes spill stores, 2142 bytes spill loads
+ptxas info    : Used 128 registers, 816 bytes cumulative stack size, 2048 bytes smem, 520 bytes cmem[0]
+ptxas info    : Compiling entry function '_Z37fused_grid_sampler_3d_backward_kernelIN3c104HalfEiEvT0_PKT_S5_S5_S5_PS3_S6_S6_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbN2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z37fused_grid_sampler_3d_backward_kernelIN3c104HalfEiEvT0_PKT_S5_S5_S5_PS3_S6_S6_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbN2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb
+    5208 bytes stack frame, 214 bytes spill stores, 422 bytes spill loads
+ptxas info    : Used 128 registers, 5376 bytes cumulative stack size, 1024 bytes smem, 488 bytes cmem[0]
+ptxas info    : Compiling entry function '_Z37fused_grid_sampler_3d_backward_kernelIN3c104HalfElEvT0_PKT_S5_S5_S5_PS3_S6_S6_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbN2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z37fused_grid_sampler_3d_backward_kernelIN3c104HalfElEvT0_PKT_S5_S5_S5_PS3_S6_S6_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbN2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb
+    5416 bytes stack frame, 638 bytes spill stores, 1410 bytes spill loads
+ptxas info    : Used 128 registers, 5584 bytes cumulative stack size, 1024 bytes smem, 520 bytes cmem[0]
+ptxas info    : Compiling entry function '_Z37fused_grid_sampler_3d_backward_kernelIN3c108BFloat16EiEvT0_PKT_S5_S5_S5_PS3_S6_S6_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbN2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z37fused_grid_sampler_3d_backward_kernelIN3c108BFloat16EiEvT0_PKT_S5_S5_S5_PS3_S6_S6_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbN2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb
+    5208 bytes stack frame, 214 bytes spill stores, 422 bytes spill loads
+ptxas info    : Used 128 registers, 5400 bytes cumulative stack size, 1024 bytes smem, 488 bytes cmem[0]
+ptxas info    : Compiling entry function '_Z37fused_grid_sampler_3d_backward_kernelIN3c108BFloat16ElEvT0_PKT_S5_S5_S5_PS3_S6_S6_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbN2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb' for 'sm_86'
+ptxas info    : Function properties for _Z37fused_grid_sampler_3d_backward_kernelIN3c108BFloat16ElEvT0_PKT_S5_S5_S5_PS3_S6_S6_S2_S2_S2_S2_S2_S2_S2_S2_ffffffbN2at6native6detail24GridSamplerInterpolationENS9_18GridSamplerPaddingEbbbb
+    5416 bytes stack frame, 638 bytes spill stores, 1410 bytes spill loads
+ptxas info    : Used 128 registers, 5608 bytes cumulative stack size, 1024 bytes smem, 520 bytes cmem[0]
+ptxas info    : Function properties for nearbyintf
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for fmodf
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for floorf
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for floor
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for fabsf
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for fabs
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for fminf
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for fmaxf
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for fmin
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for fmax
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for __fAtomicAdd
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for __dAtomicAdd
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for __usAtomicCAS
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for nearbyint
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for __finite
+    8 bytes stack frame, 8 bytes spill stores, 8 bytes spill loads
+ptxas info    : Function properties for __isfinited
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for fmod
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b3minEff
+    16 bytes stack frame, 16 bytes spill stores, 16 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b3minEdd
+    24 bytes stack frame, 24 bytes spill stores, 24 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b3maxEff
+    16 bytes stack frame, 16 bytes spill stores, 16 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b3maxEdd
+    24 bytes stack frame, 24 bytes spill stores, 24 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b9atomicAddEPff
+    24 bytes stack frame, 20 bytes spill stores, 20 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b9atomicAddEPdd
+    24 bytes stack frame, 24 bytes spill stores, 24 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b9atomicCASEPttt
+    24 bytes stack frame, 20 bytes spill stores, 20 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b16__float2bfloat16Ef
+    8 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b32__internal_device_bfloat162floatEt
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b25__internal_bfloat162floatEt
+    16 bytes stack frame, 12 bytes spill stores, 12 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b16__bfloat162floatE13__nv_bfloat16
+    32 bytes stack frame, 24 bytes spill stores, 24 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b20__bfloat16_as_ushortE13__nv_bfloat16
+    8 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b20__ushort_as_bfloat16Et
+    8 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b6__haddE13__nv_bfloat16S0_
+    8 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b9atomicAddEP13__nv_bfloat16S0_
+    64 bytes stack frame, 56 bytes spill stores, 56 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b12__float2halfEf
+    8 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b12__half2floatE6__half
+    8 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b15__half_as_shortE6__half
+    8 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b6__hnegE6__half
+    8 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for _ZN50_INTERNAL_2e52e002_19_FusedGridSampler_cu_95547b3b9atomicAddEP6__halfS0_
+    8 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+g++ -pthread -B /home/rohitrango/data/miniconda3/envs/fireants/compiler_compat -Wno-unused-result -Wsign-compare -DNDEBUG -O2 -Wall -fPIC -O2 -isystem /home/rohitrango/data/miniconda3/envs/fireants/include -I/home/rohitrango/data/miniconda3/envs/fireants/include -fPIC -O2 -isystem /home/rohitrango/data/miniconda3/envs/fireants/include -pthread -B /home/rohitrango/data/miniconda3/envs/fireants/compiler_compat -shared /data/rohitrango/code/fireants/fused_ops/build/temp.linux-x86_64-cpython-39/src/CrossCorrelation.o /data/rohitrango/code/fireants/fused_ops/build/temp.linux-x86_64-cpython-39/src/FusedGridSampler.o /data/rohitrango/code/fireants/fused_ops/build/temp.linux-x86_64-cpython-39/src/src.o -L/home/rohitrango/data/miniconda3/envs/fireants/lib/python3.9/site-packages/torch/lib -L/home/rohitrango/data/miniconda3/envs/fireants/lib/python3.9/site-packages/torch/lib -L/usr/local/cuda/lib64 -lc10 -ltorch -ltorch_cpu -ltorch_python -lcudart -lc10_cuda -ltorch_cuda -o build/lib.linux-x86_64-cpython-39/fireants_fused_ops.cpython-39-x86_64-linux-gnu.so
+copying build/lib.linux-x86_64-cpython-39/fireants_fused_ops.cpython-39-x86_64-linux-gnu.so -> 

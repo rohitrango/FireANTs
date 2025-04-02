@@ -13,6 +13,7 @@ import numpy as np
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 from fireants.utils.globals import MIN_IMG_SIZE
+from fireants.interpolator import fireants_interpolator
 import logging
 logger = logging.getLogger(__name__)
 
@@ -220,10 +221,10 @@ class RigidRegistration(AbstractRegistration):
         matclone[:, :-1, -1] = transl  # [N, dim+1, dim+1]
         return matclone if homogenous else matclone[:, :-1, :]  # [N, dim, dim+1]
     
-    def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
-        pass
+    def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
+        raise NotImplementedError("Inverse warped coordinates not implemented for rigid registration")
     
-    def get_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
+    def get_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         """Compute transformed coordinates for the rigid registration.
 
         Applies the rigid transformation (rotation, translation, scaling) to map
@@ -243,14 +244,11 @@ class RigidRegistration(AbstractRegistration):
         rigid_matrix = self.get_rigid_matrix()
         if shape is None:
             shape = fixed_images.shape
-        # init grid and apply rigid transformation
-        # init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device, self.dtype).unsqueeze(0).repeat(rigid_matrix.shape[0], 1, 1)  # [N, dims, dims+1]
-        # coords = F.affine_grid(init_grid, shape, align_corners=True)  # [N, H, W, [D], dims+1]
-        # coords = torch.cat([coords, torch.ones(list(coords.shape[:-1]) + [1], device=coords.device, dtype=self.dtype)], dim=-1)
-        # coords = torch.einsum('ntd, n...d->n...t', rigid_matrix, coords)  # [N, H, W, [D], dims+1]
-        rigidmat = (moving_p2t @ rigid_matrix @ fixed_t2p)[:, :-1]
-        coords = F.affine_grid(rigidmat, shape, align_corners=True)  # [N, H, W, [D], dims+1]
-        return coords.to(self.dtype)
+        rigidmat = ((moving_p2t @ rigid_matrix @ fixed_t2p)[:, :-1]).contiguous()
+        return {
+            'affine': rigidmat.to(self.dtype),
+            'out_shape': shape
+        }
     
     def optimize(self, save_transformed=False):
         """Optimize the rigid registration parameters.
@@ -273,7 +271,6 @@ class RigidRegistration(AbstractRegistration):
         moving_p2t = self.moving_images.get_phy2torch().to(self.dtype)
         fixed_size = fixed_arrays.shape[2:]
         # save initial affine transform to initialize grid 
-        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device, self.dtype).unsqueeze(0).repeat(self.opt_size, 1, 1)  # [N, dims, dims+1]
         if save_transformed:
             transformed_images = []
 
@@ -304,12 +301,10 @@ class RigidRegistration(AbstractRegistration):
             for i in pbar:
                 self.optimizer.zero_grad()
                 rigid_matrix = self.get_rigid_matrix()
-                # coords = torch.einsum('ntd, n...d->n...t', rigid_matrix, fixed_image_coords)  # [N, H, W, [D], dims+1]
-                # coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
-                mat = (moving_p2t @ rigid_matrix @ fixed_t2p)[:, :-1]
-                coords = F.affine_grid(mat, fixed_image_down.shape, align_corners=True)  # [N, H, W, [D], dims+1]
+                mat = ((moving_p2t @ rigid_matrix @ fixed_t2p)[:, :-1]).contiguous()
                 # sample from these coords
-                moved_image = F.grid_sample(moving_image_blur, coords.to(moving_image_blur.dtype), mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+                moved_image = fireants_interpolator(moving_image_blur, affine=mat.to(moving_image_blur.dtype), 
+                                out_shape=fixed_image_down.shape, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
                 loss = self.loss_fn(moved_image, fixed_image_down) 
                 loss.backward()
                 self.optimizer.step()

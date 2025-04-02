@@ -27,5 +27,5 @@ setup(
         )
     ],
     cmdclass={'build_ext': cpp_extension.BuildExtension},
-    install_requires=['torch>=2.0.0'],
+    install_requires=['torch>=2.3.0'],
 )

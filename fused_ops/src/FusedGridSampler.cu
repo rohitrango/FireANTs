@@ -165,6 +165,9 @@ __global__ void fused_grid_sampler_3d_forward_kernel(
                     y = affine_3d_ptr[4] * ix + affine_3d_ptr[5] * iy + affine_3d_ptr[6] * iz + affine_3d_ptr[7];
                     z = affine_3d_ptr[8] * ix + affine_3d_ptr[9] * iy + affine_3d_ptr[10] * iz + affine_3d_ptr[11];
                 }
+                else {
+                    x = ix; y = iy; z = iz;
+                }
                 // add to displacement
                 x += grid[grid_offset];
                 y += grid[grid_offset + 1];
@@ -395,7 +398,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
                     z = _affine_map_[8] * ix + _affine_map_[9] * iy + _affine_map_[10] * iz + _affine_map_[11];
                 }
                 else {
-                    x = ix, y = iy, z = iz;
+                    x = ix; y = iy; z = iz;
                 }
                 // add to displacement
                 if (grid) {

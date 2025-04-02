@@ -257,8 +257,9 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                     rev_warp_field = separable_filtering(rev_warp_field.permute(*self.rev_warp.permute_vtoimg), warp_gaussian).permute(*self.rev_warp.permute_imgtov)
                 # moved and fixed coords
                 # warp the "moving image" to moved_image_warp and fixed to "fixed image warp"
-                moved_image_warp = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=fwd_warp_field, mode='bilinear', align_corners=True, is_displacement=True)
-                fixed_image_warp = fireants_interpolator(fixed_image_down, affine=None, grid=rev_warp_field, mode='bilinear', align_corners=True, is_displacement=True)
+                moved_image_warp = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=fwd_warp_field.contiguous(), mode='bilinear', align_corners=True, is_displacement=True)
+                # reverse warp
+                fixed_image_warp = fireants_interpolator(fixed_image_down, affine=None, grid=rev_warp_field.contiguous(), mode='bilinear', align_corners=True, is_displacement=True)
                 # compute loss
                 loss = self.loss_fn(moved_image_warp, fixed_image_warp) 
                 # add regularization

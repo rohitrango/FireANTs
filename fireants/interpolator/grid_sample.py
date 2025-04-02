@@ -108,3 +108,63 @@ def torch_grid_sampler_3d(
     base_grid = base_grid + grid
     return F.grid_sample(input, base_grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
 
+
+def torch_warp_composer_2d(
+    u: torch.Tensor,
+    affine: Optional[torch.Tensor] = None,
+    v: torch.Tensor = None,
+    align_corners: bool = True,
+) -> torch.Tensor:
+    """
+    Baseline implementation of 3D grid sampler that handles:
+    warp = u \circ (Ax + v)
+    
+    Args:
+        input: Input tensor of shape [B, Yi, Xi, 2]
+        affine: Affine matrix of shape [B, 2, 3]
+        grid: Optional grid tensor of shape [B, Y, X, 2]
+        mode: Interpolation mode ("bilinear", "nearest", "bicubic")
+        padding_mode: Padding mode ("zeros", "border", "reflection")
+        align_corners: Whether to align corners
+        out_shape: Output shape tuple (Y, X)
+        is_displacement: Whether grid is a displacement field
+    
+    Returns:
+        Sampled tensor of shape [B, C, Y, X]
+    """
+    mode = "bilinear"
+    padding_mode = "zeros"
+    B = v.shape[0]
+    if affine is None:
+        affine = torch.eye(2, 3, device=u.device)[None].expand(B, -1, -1)
+    grid = F.affine_grid(affine, [B, 1] + list(v.shape[1:-1]), align_corners=align_corners)
+    return F.grid_sample(u.permute(0, 3, 1, 2), grid + v, mode=mode, padding_mode=padding_mode, align_corners=align_corners).permute(0, 2, 3, 1)
+
+def torch_warp_composer_3d(
+    u: torch.Tensor,
+    affine: Optional[torch.Tensor] = None,
+    v: torch.Tensor = None,
+    align_corners: bool = True,
+) -> torch.Tensor:
+    """
+    
+    Args:
+        input: Input tensor of shape [B, Z, Y, X, 3]
+        affine: Affine matrix of shape [B, 3, 4]
+        grid: Optional grid tensor of shape [B, Z, Y, X, 3]
+        mode: Interpolation mode ("bilinear", "nearest", "bicubic")
+        padding_mode: Padding mode ("zeros", "border", "reflection")
+        align_corners: Whether to align corners
+        out_shape: Output shape tuple (Z, Y, X)
+        is_displacement: Whether grid is a displacement field
+    
+    Returns:
+        Sampled tensor of shape [B, C, Z, Y, X]
+    """
+    mode = "bilinear"
+    padding_mode = "zeros"
+    B = v.shape[0]
+    if affine is None:
+        affine = torch.eye(3, 4, device=u.device)[None].expand(B, -1, -1)
+    grid = F.affine_grid(affine, [B, 1] + list(v.shape[1:-1]), align_corners=align_corners)
+    return F.grid_sample(u.permute(0, 4, 1, 2, 3), grid + v, mode=mode, padding_mode=padding_mode, align_corners=align_corners).permute(0, 2, 3, 4, 1)

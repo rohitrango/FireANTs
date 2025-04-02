@@ -491,7 +491,6 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
             // calculate bilinear weighted pixel value and set output pixel
             for (index_t c = 0; c < C; ++c, gOut_ptr_NCDHW += gOut_sC, NC_offset += gInp_sC, inp_ptr_NC += inp_sC) {
                 scalar_t gOut = *gOut_ptr_NCDHW;
-
                 // calculate and set grad_input. See Note [Passing pointer and offset to fastAtomicAdd].
                 if (grad_input) {
                     safe_add_3d_oneoffset(grad_input, iz_tnw, iy_tnw, ix_tnw, Di, Hi, Wi, tnw * gOut, NC_offset, grad_input_memory_span);
@@ -563,21 +562,15 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
             if (grad_grid) {
                 if (broadcast_grid) {
                     index_t grad_grid_index = 3 * (w + W * (h + H * (d)));
-                    const index_t grad_grid_size = 3 * D * H * W;
-                    if (grad_grid_index + 2 < grad_grid_size) {
-                        gpuAtomicAdd(grad_grid + grad_grid_index, gix);
-                        gpuAtomicAdd(grad_grid + grad_grid_index + 1, giy);
-                        gpuAtomicAdd(grad_grid + grad_grid_index + 2, giz);
-                    }
+                    gpuAtomicAdd(grad_grid + grad_grid_index, gix);
+                    gpuAtomicAdd(grad_grid + grad_grid_index + 1, giy);
+                    gpuAtomicAdd(grad_grid + grad_grid_index + 2, giz);
                 } 
                 else {
                     index_t grad_grid_index = 3 * (w + W * (h + H * (d + D * n)));
-                    const index_t grad_grid_size = 3 * D * H * W * N;
-                    if (grad_grid_index + 2 < grad_grid_size) {
-                        grad_grid[grad_grid_index] = gix;
-                        grad_grid[grad_grid_index + 1] = giy;
-                        grad_grid[grad_grid_index + 2] = giz;
-                    }
+                    grad_grid[grad_grid_index] = gix;
+                    grad_grid[grad_grid_index + 1] = giy;
+                    grad_grid[grad_grid_index + 2] = giz;
                 }
             }
 

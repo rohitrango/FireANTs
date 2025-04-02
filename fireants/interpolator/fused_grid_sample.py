@@ -102,6 +102,61 @@ class FusedGridSampler3d(torch.autograd.Function):
         return input_grad, affine_grad, grid_grad, None, None, None, None, None, None, None
 
 
+class FusedWarpComposer3d(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, affine, grid, align_corners, min_coords, max_coords):
+        # check input sizes
+        '''
+        input: [B, Z, Y, X, 3]
+        affine: [B, 3, 4]
+        grid: [B, Z, Y, X, 3]
+        align_corners: bool
+        min_coords: tuple (xmin, ymin, zmin)
+        max_coords: tuple (xmax, ymax, zmax)
+        '''
+        # grid is assumed to be in same shape as input
+        # affine mode, assume output shape is specified
+        Z, Y, X = grid.shape[1:-1]
+        # get min and max coords
+        if min_coords is None:
+            min_coords = get_min_coords(Z, Y, X, align_corners)
+        if max_coords is None:
+            max_coords = get_max_coords(Z, Y, X, align_corners)
+        # get output
+        output = ffo.fused_grid_composer_3d_forward(input, affine, grid, min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], align_corners)
+        # save everything for backward
+        ctx.save_for_backward(input, affine, grid, output)
+        ctx.align_corners = align_corners
+        ctx.min_coords = min_coords
+        ctx.max_coords = max_coords
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, affine, grid, output = ctx.saved_tensors
+        align_corners = ctx.align_corners
+        min_coords = ctx.min_coords
+        max_coords = ctx.max_coords
+        # check if any of the variables require grad
+        input_requires_grad = input.requires_grad
+        affine_requires_grad = affine is not None and affine.requires_grad
+        grid_requires_grad = grid is not None and grid.requires_grad
+        input_grad, affine_grad, grid_grad = None, None, None
+        # initialize gradients
+        if input_requires_grad:
+            input_grad = torch.zeros_like(input)
+        if affine_requires_grad:
+            affine_grad = torch.zeros_like(affine)
+        if grid_requires_grad:
+            grid_grad = torch.zeros_like(grid)
+        # for item, name in zip([input, affine, grid, grad_output, input_grad, affine_grad, grid_grad, output], ["input", "affine", "grid", "grad_output", "input_grad", "affine_grad", "grid_grad", "output"]):
+        #     if item is not None:
+        #         print(f"{name}: {item.shape} {item.dtype} {item.device}, {item.is_contiguous()}")
+        # call backward
+        ffo.fused_grid_composer_3d_backward(input, affine, grid, grad_output.contiguous(), input_grad, affine_grad, grid_grad, min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], align_corners)
+        # return gradients
+        return input_grad, affine_grad, grid_grad, None, None, None
+
 def fused_grid_sampler_3d(
     input: torch.Tensor,
     affine: Optional[torch.Tensor] = None,
@@ -144,4 +199,27 @@ def fused_grid_sampler_3d(
     else:
         out_shape = grid.shape[1:-1]
     output = FusedGridSampler3d.apply(input, affine, grid, mode, padding_mode, align_corners, out_shape, None, None, is_displacement)
+    return output
+
+def fused_warp_composer_3d(
+    u: torch.Tensor,
+    affine: Optional[torch.Tensor] = None,
+    v: torch.Tensor = None,
+    align_corners: bool = True,
+) -> torch.Tensor:
+    """
+    
+    Args:
+        u: Input tensor of shape [B, Z, Y, X, 3]
+        affine: Affine matrix of shape [B, 3, 4]
+        v: Optional grid tensor of shape [B, Z, Y, X, 3]
+        align_corners: Whether to align corners
+    
+    Returns:
+        Sampled tensor of shape [B, C, Z, Y, X]
+    """
+    assert u.is_contiguous(), "input must be contiguous"
+    assert affine is None or affine.is_contiguous(), "affine must be contiguous"
+    assert v.is_contiguous(), "grid must be contiguous"    
+    output = FusedWarpComposer3d.apply(u, affine, v, align_corners, None, None)
     return output

@@ -3,6 +3,7 @@
 #include "CrossCorrelation.h"
 #include "FusedGridSampler.h"
 #include "FusedGridComposer.h"
+#include "FusedGenerateGrid.h"
 
 PYBIND11_MODULE(fireants_fused_ops, m) {
     // Reduction enum
@@ -44,4 +45,11 @@ PYBIND11_MODULE(fireants_fused_ops, m) {
     m.def("fused_grid_composer_3d_backward", &fused_grid_composer_3d_backward_impl, "Backward pass for fused grid composer",
         py::arg("input"), py::arg("affine_3d"), py::arg("grid"), py::arg("grad_output"), py::arg("grad_input"), py::arg("grad_affine"), py::arg("grad_grid"),
         py::arg("grid_xmin"), py::arg("grid_ymin"), py::arg("grid_zmin"), py::arg("grid_xmax"), py::arg("grid_ymax"), py::arg("grid_zmax"), py::arg("align_corners"));
+    
+    m.def("fused_warp_create_3d_forward", &fused_warp_create_3d_forward_impl, "Forward pass for fused warp create",
+        py::arg("affine"), py::arg("grid"), py::arg("grid_xmin"), py::arg("grid_ymin"), py::arg("grid_zmin"), py::arg("grid_xmax"), py::arg("grid_ymax"), py::arg("grid_zmax"));
+
+    m.def("fused_warp_create_3d_backward", &fused_warp_create_3d_backward_impl, "Backward pass for fused warp create",
+        py::arg("affine"), py::arg("grid"), py::arg("grad_output"), py::arg("grad_affine"), py::arg("grad_grid"),
+        py::arg("grid_xmin"), py::arg("grid_ymin"), py::arg("grid_zmin"), py::arg("grid_xmax"), py::arg("grid_ymax"), py::arg("grid_zmax"));
 }

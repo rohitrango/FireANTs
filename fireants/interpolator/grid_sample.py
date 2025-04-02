@@ -168,3 +168,23 @@ def torch_warp_composer_3d(
         affine = torch.eye(3, 4, device=u.device)[None].expand(B, -1, -1)
     grid = F.affine_grid(affine, [B, 1] + list(v.shape[1:-1]), align_corners=align_corners)
     return F.grid_sample(u.permute(0, 4, 1, 2, 3), grid + v, mode=mode, padding_mode=padding_mode, align_corners=align_corners).permute(0, 2, 3, 4, 1)
+
+def torch_affine_warp_3d(
+    affine: Optional[torch.Tensor],
+    grid: torch.Tensor,
+    align_corners: bool = True,
+) -> torch.Tensor:
+    B = grid.shape[0]
+    if affine is None:
+        affine = torch.eye(3, 4, device=grid.device)[None].expand(B, -1, -1)
+    return F.affine_grid(affine, [B, 1] + list(grid.shape[1:-1]), align_corners=align_corners) + grid
+
+def torch_affine_warp_2d(
+    affine: Optional[torch.Tensor],
+    grid: torch.Tensor,
+    align_corners: bool = True,
+) -> torch.Tensor:
+    B = grid.shape[0]
+    if affine is None:
+        affine = torch.eye(2, 3, device=grid.device)[None].expand(B, -1, -1)
+    return F.affine_grid(affine, [B, 1] + list(grid.shape[1:-1]), align_corners=align_corners) + grid

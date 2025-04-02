@@ -12,16 +12,19 @@ torch.cuda.manual_seed(seed)
 import itertools
 
 def rel_error(a, b, eps=1e-5):
-    return (torch.abs(a - b) / (eps + torch.abs(b))).mean()
+    return (torch.abs(a - b) / (eps + torch.abs(b))).mean().item()
 
 def test_fused_warp_composer_3d_correctness():
     """Test correctness of fused warp composer against baseline implementation"""
+    rng = torch.Generator()
+    rng.manual_seed(seed)
+
     Hi, Wi, Di = 196, 224, 260
     H, W, D = 256, 194, 160
-    u = torch.randn(1, Hi, Wi, Di, 3).cuda()
-    v = torch.randn(1, H, W, D, 3).cuda()
-    affine = torch.linalg.matrix_exp(torch.randn(3, 3))
-    affine = torch.cat([affine, 0.1*torch.rand(3, 1)-0.05], dim=1)[None].cuda()
+    u = torch.randn(1, Hi, Wi, Di, 3, generator=rng).cuda()
+    v = torch.randn(1, H, W, D, 3, generator=rng).cuda()
+    affine = torch.linalg.matrix_exp(torch.randn(3, 3, generator=rng))
+    affine = torch.cat([affine, 0.1*torch.rand(3, 1, generator=rng)-0.05], dim=1)[None].cuda()
     affine = affine.detach().contiguous()
     # check for all combinations of requires_grad
     i = 0
@@ -82,9 +85,9 @@ def test_fused_warp_composer_3d_correctness():
                 print("rel_error v_grad: ", rel_error(v_grad_ours, v_grad_baseline))
                 assert rel_error(v_grad_ours, v_grad_baseline) < 1e-4
             if affine.requires_grad and use_affine:
-                print("rel_error affine_grad: ", rel_error(affine_grad_ours, affine_grad_baseline))
+                print("rel_error affine_grad: ", rel_error(affine_grad_ours, affine_grad_baseline, 1e-2))
                 print(affine_grad_ours, affine_grad_baseline)
-                assert rel_error(affine_grad_ours, affine_grad_baseline) < 1e-2
+                assert rel_error(affine_grad_ours, affine_grad_baseline, 1e-2) < 5e-3
             print(f"Runtime Ours: {end_ours - start_ours}s, Baseline: {end_baseline - start_baseline}s")
             print(f"Speedup: {(end_baseline - start_baseline) / (end_ours - start_ours)}")
             # assert torch.allclose(u_grad_ours, u_grad_baseline, rtol=1e-4)

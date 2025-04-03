@@ -4,39 +4,9 @@ from torch.nn import functional as F
 # from fireants.utils.imageutils import compute_inverse_warp_displacement
 from fireants.utils.imageutils import jacobian as jacobian_fn
 from fireants.losses.cc import separable_filtering
-# import triton
-# import triton.language as tl
-
-# @triton.jit
-# def adam_update_kernel(grad_ptr, a_ptr, b_ptr, a_0, b_0, eps, N, BLOCK_SIZE: tl.constexpr):
-#     pid = tl.program_id(axis=0)
-#     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-#     mask = offsets < N
-    
-#     a = tl.load(a_ptr + offsets, mask=mask)
-#     b = tl.load(b_ptr + offsets, mask=mask)
-    
-#     grad_val = a / ((b / b_0).sqrt() + eps) / a_0
-#     tl.store(grad_ptr + offsets, grad_val, mask=mask)
-
-# def adam_update_fused(grad, tensor_a, tensor_b, a_0, b_0, eps):
-#     print("using fused adam update")
-#     N = tensor_a.numel()
-#     assert tensor_a.shape == tensor_b.shape == grad.shape, "Shapes must match"
-    
-#     BLOCK_SIZE = 512  # Tune this based on hardware
-#     grid = (N + BLOCK_SIZE - 1) // BLOCK_SIZE
-
-#     a_0 = torch.tensor(a_0, dtype=torch.float32, device=tensor_a.device)
-#     b_0 = torch.tensor(b_0, dtype=torch.float32, device=tensor_a.device)
-#     eps = torch.tensor(eps, dtype=torch.float32, device=tensor_a.device)
-
-    
-#     adam_update_kernel[grid](
-#         grad.data_ptr(), tensor_a.data_ptr(), tensor_b.data_ptr(),
-#         a_0, b_0, eps, N, BLOCK_SIZE=BLOCK_SIZE
-#     )
-
+from fireants.interpolator import fireants_interpolator
+import logging
+logger = logging.getLogger(__name__)
 
 class WarpAdam:
     ''' at the moment we only support a single warp function 
@@ -100,10 +70,13 @@ class WarpAdam:
     
     def initialize_grid(self, size, grid_copy=None):
         ''' initialize the grid (so that we can use it independent of the grid elsewhere) '''
-        if grid_copy is None:
-            self.grid = F.affine_grid(self.affine_init, [self.batch_size, 1, *size], align_corners=True).detach()
+        if fireants_interpolator.use_ffo:
+            self.grid = None
         else:
-            self.grid = grid_copy 
+            if grid_copy is None:
+                self.grid = F.affine_grid(self.affine_init, [self.batch_size, 1, *size], align_corners=True).detach()
+            else:
+                self.grid = grid_copy 
 
     def zero_grad(self):
         ''' set the gradient to none '''
@@ -111,12 +84,17 @@ class WarpAdam:
     
     def augment_jacobian(self, u):
         # Multiply u (which represents dL/dphi most likely) with Jacobian indexed by J[..., xyz, ..., phi]
-        jac = jacobian_fn(self.warp.data + self.grid, normalize=True)  # [B, dims, H, W, [D], dims]
-        if self.n_dims == 2:
-            ujac = torch.einsum('bxhwp,bhwp->bhwx', jac, u)
+        if fireants_interpolator.use_ffo:
+            #TODO: Implement Jacobian computation for fused grid sampler
+            logger.warning("Using fused grid sampler, Jacobian is not computed, returning input")
+            return u
         else:
-            ujac = torch.einsum('bxhwdp,bhwdp->bhwdx', jac, u)
-        return ujac
+            jac = jacobian_fn(self.warp.data + self.grid, normalize=True)  # [B, dims, H, W, [D], dims]
+            if self.n_dims == 2:
+                ujac = torch.einsum('bxhwp,bhwp->bhwx', jac, u)
+            else:
+                ujac = torch.einsum('bxhwdp,bhwdp->bhwdx', jac, u)
+            return ujac
     
     def step(self):
         ''' check for momentum, and other things '''
@@ -160,9 +138,12 @@ class WarpAdam:
             grad.mul_(-self.lr)
             # print(grad.abs().max().item(), self.half_resolution, self.warp.shape)
             # compositional update
-            w = grad + F.grid_sample(self.warp.data.permute(*self.permute_vtoimg), self.grid + grad, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
-        
-        # smooth result if asked for
-        if self.smoothing_gaussians is not None:
-            w = separable_filtering(w.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)
-        self.warp.data.copy_(w)
+            # w = grad + F.grid_sample(self.warp.data.permute(*self.permute_vtoimg), self.grid + grad, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
+            # w = grad + 
+            ## grad = grad + warp * (x + grad)   # this is the compositional update
+            grad.add_(fireants_interpolator.warp_composer(self.warp.data, affine=self.affine_init, v=grad, grid=self.grid, mode='bilinear', align_corners=True))
+            # w = grad
+            # smooth result if asked for
+            if self.smoothing_gaussians is not None:
+                grad = separable_filtering(grad.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)
+            self.warp.data.copy_(grad)

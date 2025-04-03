@@ -4,7 +4,10 @@ from torch.nn import functional as F
 from fireants.utils.imageutils import jacobian as jacobian_fn
 # from fireants.utils.imageutils import compute_inverse_warp_displacement
 from fireants.losses.cc import separable_filtering
+from fireants.interpolator import fireants_interpolator
 # import matplotlib.pyplot as plt
+import logging
+logger = logging.getLogger(__name__)
 
 class WarpSGD:
     ''' at the moment we only support a single warp function 
@@ -14,9 +17,16 @@ class WarpSGD:
     '''
     def __init__(self, warp, lr, 
                  momentum=0, dampening=0, weight_decay=0, nesterov=False, scaledown=False, multiply_jacobian=False,
-                 smoothing_gaussians=None, grad_gaussians=None):
+                 smoothing_gaussians=None, grad_gaussians=None,
+                 freeform=False,
+                 dtype: torch.dtype = torch.float32):
         # init
         self.dtype = dtype
+        self.freeform = freeform
+        if freeform:
+            logger.warning("Freeform warps are not supported yet, setting freeform to False")
+            freeform = False
+
         if nesterov and (momentum <= 0 or dampening != 0):
             raise ValueError("Nesterov momentum requires a momentum and zero dampening")
         if momentum < 0.0:
@@ -58,14 +68,16 @@ class WarpSGD:
                                 ).permute(*self.permute_imgtov)
         self.half_resolution = 1.0/(max(warp.shape[1:-1]) - 1)
         self.initialize_grid(size, grid_copy=grid_copy)
-        
     
     def initialize_grid(self, size, grid_copy=None):
         ''' initialize the grid (so that we can use it independent of the grid elsewhere) '''
-        if grid_copy is None:
-            self.grid = F.affine_grid(self.affine_init, [self.batch_size, 1, *size], align_corners=True).detach()
+        if fireants_interpolator.use_ffo:
+            self.grid = None
         else:
-            self.grid = grid_copy 
+            if grid_copy is None:
+                self.grid = F.affine_grid(self.affine_init, [self.batch_size, 1, *size], align_corners=True).detach()
+            else:
+                self.grid = grid_copy 
 
     def zero_grad(self):
         ''' set the gradient to none '''
@@ -73,16 +85,21 @@ class WarpSGD:
     
     def augment_jacobian(self, u):
         # Multiply u (which represents dL/dphi most likely) with Jacobian indexed by J[..., xyz, ..., phi]
-        jac = jacobian_fn(self.warp.data + self.grid, normalize=True)  # [B, dims, H, W, [D], dims]
-        if self.n_dims == 2:
-            ujac = torch.einsum('bxhwp,bhwp->bhwx', jac, u)
+        if fireants_interpolator.use_ffo:
+            #TODO: Implement Jacobian computation for fused grid sampler
+            logger.warning("Using fused grid sampler, Jacobian is not computed, returning input")
+            return u
         else:
-            ujac = torch.einsum('bxhwdp,bhwdp->bhwdx', jac, u)
-        return ujac
-    
+            jac = jacobian_fn(self.warp.data + self.grid, normalize=True)  # [B, dims, H, W, [D], dims]
+            if self.n_dims == 2:
+                ujac = torch.einsum('bxhwp,bhwp->bhwx', jac, u)
+            else:
+                ujac = torch.einsum('bxhwdp,bhwdp->bhwdx', jac, u)
+            return ujac
+
     def step(self):
         ''' check for momentum, and other things '''
-        grad = torch.clone(self.warp.grad.data).detach()
+        grad = self.warp.grad.data.detach()
         if self.multiply_jacobian:
             grad = self.augment_jacobian(grad)
         # add weight decay term
@@ -117,9 +134,9 @@ class WarpSGD:
         # multiply by learning rate
         grad.mul_(-self.lr)
         # compositional update
-        w = grad + F.grid_sample(self.warp.data.permute(*self.permute_vtoimg), self.grid + grad, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
+        grad.add_(fireants_interpolator.warp_composer(self.warp.data, affine=self.affine_init, v=grad, grid=self.grid, mode='bilinear', align_corners=True))
         # smooth result if asked for
         if self.smoothing_gaussians is not None:
-            w = separable_filtering(w.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)
-        self.warp.data.copy_(w)
+            grad = separable_filtering(grad.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)
+        self.warp.data.copy_(grad)
         pass

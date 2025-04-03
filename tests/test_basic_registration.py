@@ -53,7 +53,7 @@ def registration_results():
         moments=2,
         orientation='rot',
         blur=False,
-        loss_type='cc',
+        loss_type='fusedcc',
         cc_kernel_type='rectangular',
         cc_kernel_size=5
     )

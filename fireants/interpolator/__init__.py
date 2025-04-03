@@ -67,20 +67,32 @@ class GridSampleDispatcher:
             raise ValueError("Cannot set use_ffo to True when fused operations are not available")
         self._use_ffo = value
     
-    def __call__(self, *args, **kwargs) -> Any:
-        """Dispatch to appropriate grid sample implementation."""
+    def _get_image_dim(self, *args, **kwargs) -> int:
+        ''' return spatial dimensions of image '''
         image = kwargs.get('image', None)
         if image is None:
             image = args[0]
         if isinstance(image, torch.Tensor):
-            if image.ndim == 4:
-                return self.grid_sample_2d(*args, **kwargs)
-            elif image.ndim == 5:
-                return self.grid_sample_3d(*args, **kwargs)
-            else:
-                raise ValueError(f"Unsupported image dimension: {image.ndim}")
+            return image.ndim - 2
         else:
             raise ValueError(f"Unsupported image type: {type(image)}")
+    
+    def __call__(self, *args, **kwargs) -> Any:
+        """Dispatch to appropriate grid sample implementation."""
+        dim = self._get_image_dim(*args, **kwargs)
+        return self._registry[self._use_ffo][f'grid_sample_{dim}d'](*args, **kwargs)
+    
+    def warp_composer(self, *args, **kwargs) -> Any:
+        ''' Dispatch to appropriate warp composer implementation '''
+        dim = self._get_image_dim(*args, **kwargs)
+        return self._registry[self._use_ffo][f'warp_composer_{dim}d'](*args, **kwargs)
+    
+    def affine_warp(self, *args, **kwargs) -> Any:
+        ''' Dispatch to appropriate affine warp implementation '''
+        dim = self._get_image_dim(*args, **kwargs)
+        return self._registry[self._use_ffo][f'affine_warp_{dim}d'](*args, **kwargs)
+
+    ### individual functions
     
     def warp_composer_2d(self, *args, **kwargs) -> Any:
         """Dispatch to appropriate 2D warp composer implementation."""

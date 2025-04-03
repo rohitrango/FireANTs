@@ -248,6 +248,7 @@ def fused_warp_composer_3d(
     affine: Optional[torch.Tensor] = None,
     v: torch.Tensor = None,
     align_corners: bool = True,
+    grid: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     
@@ -256,7 +257,7 @@ def fused_warp_composer_3d(
         affine: Affine matrix of shape [B, 3, 4]
         v: Optional grid tensor of shape [B, Z, Y, X, 3]
         align_corners: Whether to align corners
-    
+        grid: Optional grid tensor of shape [B, Z, Y, X, 3]  not used in this function, only for compatibility with torch composer
     Returns:
         Sampled tensor of shape [B, C, Z, Y, X]
     """

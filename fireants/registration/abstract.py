@@ -119,6 +119,10 @@ class AbstractRegistration(ABC):
         elif loss_type == 'cc':
             self.loss_fn = LocalNormalizedCrossCorrelationLoss(kernel_type=cc_kernel_type, spatial_dims=self.dims, 
                                                                kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
+        elif loss_type == 'fusedcc':
+            from fireants.losses.fusedcc import FusedLocalNormalizedCrossCorrelationLoss
+            self.loss_fn = FusedLocalNormalizedCrossCorrelationLoss(spatial_dims=self.dims, 
+                                                    kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
         elif loss_type == 'custom':
             self.loss_fn = custom_loss
         elif loss_type == 'noop':
@@ -185,8 +189,7 @@ class AbstractRegistration(ABC):
             # this is just a warp field
             affine = params['affine']
             grid = params['grid']
-            shape = [affine.shape[0], 1] + list(grid.shape[1:-1])
-            grid = F.affine_grid(affine, shape, align_corners=True) + grid
+            grid = fireants_interpolator.affine_warp(affine, grid, align_corners=True)
             return grid
         else:
             raise ValueError(f"Invalid warp parameters with keys {params.keys()}")
@@ -204,7 +207,7 @@ class AbstractRegistration(ABC):
             affine = params['affine']
             grid = params['grid']
             shape = [affine.shape[0], 1] + list(grid.shape[1:-1])
-            grid = F.affine_grid(affine, shape, align_corners=True) + grid
+            grid = fireants_interpolator.affine_warp(affine, grid, align_corners=True)
             return grid
         else:
             raise ValueError(f"Invalid warp parameters with keys {params.keys()}")

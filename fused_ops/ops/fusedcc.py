@@ -12,6 +12,7 @@ from fireants.types import ItemOrList
 import fireants_fused_ops as ffo
 from fireants.losses.cc import LocalNormalizedCrossCorrelationLoss
 from fireants.tests.cc_mem_test import fast_lncc
+import itertools
 
 reduction_table = {
     'none': ffo.Reduction.NONE,
@@ -21,7 +22,7 @@ reduction_table = {
 
 class FusedNCC3d(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input_img, target_img, kernel_size, nr, dr, reduction, use_ants_gradient):
+    def forward(ctx, input_img, target_img, kernel_size, nr, dr, reduction, use_ants_gradient, use_separable):
         reduction = reduction_table[reduction.lower()]
         B, C, H, W, D = input_img.shape
         interm = torch.zeros(B, 5 * C, H, W, D, device=input_img.device, dtype=input_img.dtype)
@@ -34,24 +35,46 @@ class FusedNCC3d(torch.autograd.Function):
         # torch.cat uses more memory
         # compute kernel 
         kernel_vol = kernel_size ** 3
-        avg_filt = torch.ones(5*C, 1, kernel_size, kernel_size, kernel_size, device=input_img.device, dtype=input_img.dtype) / kernel_vol
-        padding = (kernel_size - 1) // 2
-        interm = F.conv3d(interm, avg_filt, padding=padding, stride=1, groups=interm.shape[1])
+
+        if use_separable:
+            filt1 = torch.ones(5*C, 1, kernel_size, 1, 1, device=input_img.device, dtype=input_img.dtype) / kernel_size
+            filt2 = torch.ones(5*C, 1, 1, kernel_size, 1, device=input_img.device, dtype=input_img.dtype) / kernel_size
+            filt3 = torch.ones(5*C, 1, 1, 1, kernel_size, device=input_img.device, dtype=input_img.dtype) / kernel_size
+            interm = F.conv3d(interm, filt1, padding='same', stride=1, groups=interm.shape[1])
+            interm = F.conv3d(interm, filt2, padding='same', stride=1, groups=interm.shape[1])
+            interm = F.conv3d(interm, filt3, padding='same', stride=1, groups=interm.shape[1])
+        else:
+            avg_filt = torch.ones(5*C, 1, kernel_size, kernel_size, kernel_size, device=input_img.device, dtype=input_img.dtype) / kernel_vol
+            padding = (kernel_size - 1) // 2
+            interm = F.conv3d(interm, avg_filt, padding=padding, stride=1, groups=interm.shape[1])
+
         out = ffo.cc3d_fwd_interm_v1(interm, int(kernel_vol), reduction, nr, dr)
-        ctx.save_for_backward(interm, input_img, target_img, out, avg_filt * kernel_vol)
+        ctx.save_for_backward(interm, input_img, target_img, out)
         ctx.kernel_size = kernel_size
         ctx.nr = nr
         ctx.dr = dr 
         ctx.reduction = reduction
         ctx.use_ants_gradient = use_ants_gradient
+        ctx.use_separable = use_separable
         return out
     
     @staticmethod
     def backward(ctx, grad_output):
         # retrieve saved tensors
-        interm, input_img, target_img, out, avg_filt = ctx.saved_tensors
-        kernel_size, nr, dr, reduction, use_ants_gradient = ctx.kernel_size, ctx.nr, ctx.dr, ctx.reduction, ctx.use_ants_gradient
+        interm, input_img, target_img, out = ctx.saved_tensors
+        kernel_size, nr, dr, reduction, use_ants_gradient, use_separable = ctx.kernel_size, ctx.nr, ctx.dr, ctx.reduction, ctx.use_ants_gradient, ctx.use_separable
         B, C, H, W, D = input_img.shape
+
+        # initialize filters
+        if use_separable:
+            filt1 = torch.ones(5*C, 1, kernel_size, 1, 1, device=input_img.device, dtype=input_img.dtype) 
+            filt2 = torch.ones(5*C, 1, 1, kernel_size, 1, device=input_img.device, dtype=input_img.dtype)
+            filt3 = torch.ones(5*C, 1, 1, 1, kernel_size, device=input_img.device, dtype=input_img.dtype)
+            pad1, pad2, pad3 = ((kernel_size - 1) // 2, 0, 0), (0, 0, (kernel_size - 1) // 2), (0, 0, (kernel_size - 1) // 2)
+        else:
+            avg_filt = torch.ones(5*C, 1, kernel_size, kernel_size, kernel_size, device=input_img.device, dtype=input_img.dtype) 
+            padding = (kernel_size - 1) // 2
+
         # initialize gradients
         grad_input_img = None
         grad_target_img = None
@@ -69,10 +92,24 @@ class FusedNCC3d(torch.autograd.Function):
         if not use_ants_gradient:
             padding = (kernel_size - 1) // 2
             if grad_target_img is not None:
-                interm = F.conv3d(interm, avg_filt, padding=padding, stride=1, groups=interm.shape[1])
+                # convolve with "one" filter depending on whether separable or not
+                if use_separable:
+                    interm = F.conv3d(interm, filt1, padding='same', stride=1, groups=interm.shape[1])
+                    interm = F.conv3d(interm, filt2, padding='same', stride=1, groups=interm.shape[1])
+                    interm = F.conv3d(interm, filt3, padding='same', stride=1, groups=interm.shape[1])
+                else:
+                    interm = F.conv3d(interm, avg_filt, padding=padding, stride=1, groups=interm.shape[1])
             else:
-                avg_filt = avg_filt[:3*C]
-                interm[:, :3*C, :, :, :] = F.conv3d(interm[:, :3*C, :, :, :], avg_filt, padding=padding, stride=1, groups=3*C)
+                if use_separable:
+                    filt1 = filt1[:3*C]
+                    filt2 = filt2[:3*C]
+                    filt3 = filt3[:3*C]
+                    interm[:, :3*C, :, :, :] = F.conv3d(interm[:, :3*C, :, :, :], filt1, padding='same', stride=1, groups=3*C)
+                    interm[:, :3*C, :, :, :] = F.conv3d(interm[:, :3*C, :, :, :], filt2, padding='same', stride=1, groups=3*C)
+                    interm[:, :3*C, :, :, :] = F.conv3d(interm[:, :3*C, :, :, :], filt3, padding='same', stride=1, groups=3*C)
+                else:
+                    avg_filt = avg_filt[:3*C]
+                    interm[:, :3*C, :, :, :] = F.conv3d(interm[:, :3*C, :, :, :], avg_filt, padding=padding, stride=1, groups=3*C)
         # solve for grad_input_img and grad_target_img
         ffo.cc3d_bwd_compute_grads(interm, input_img, target_img, grad_input_img, grad_target_img)
 
@@ -82,7 +119,7 @@ class FusedNCC3d(torch.autograd.Function):
         # if grad_target_img is not None and reduction == ffo.Reduction.MEAN:
         #     grad_target_img = grad_target_img / (H * W * D)
 
-        return grad_input_img, grad_target_img, None, None, None, None, None
+        return grad_input_img, grad_target_img, None, None, None, None, None, None
 
 
 class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
@@ -102,6 +139,7 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         smooth_nr: float = 0,
         smooth_dr: float = 1e-5,
         use_ants_gradient: bool = False,
+        use_separable: bool = False,
     ) -> None:
         """
         Args:
@@ -129,6 +167,7 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         self.smooth_nr = float(smooth_nr)
         self.smooth_dr = float(smooth_dr)
         self.use_ants_gradient = use_ants_gradient
+        self.use_separable = use_separable
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
@@ -146,14 +185,13 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         pgrad, tgrad = pred.requires_grad, target.requires_grad
         # if both or neither require grad, dont shuffle the order 
         if (pgrad and tgrad) or (not pgrad and not tgrad):
-            return FusedNCC3d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient)
+            return FusedNCC3d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
         else:
             # if only pred requires grad, swap pred and target
             if pgrad:
-                return FusedNCC3d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient)
+                return FusedNCC3d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
             else:
-                return FusedNCC3d.apply(target, pred, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient)
-
+                return FusedNCC3d.apply(target, pred, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
 
 def test_fused_cc_fwd_and_mem():
     for i in range(6, 10):
@@ -306,21 +344,35 @@ def test_fused_cc_bwd_and_mem():
 
 if __name__ == '__main__':
     # check backward
-    # N = 32
-    # img1 = torch.randn(1, 1, N, N, N).cuda()
-    # img2 = torch.randn(1, 1, N, N, N).cuda().requires_grad_(True)
-    # # tensor = img2 
-    # # print(tensor.shape)
-    # # print(tensor.is_contiguous())
-    # # print(tensor.storage().data_ptr())  # Check memory address
-    # # print(tensor.is_contiguous(memory_format=torch.contiguous_format))
-    # # print("--------------------------------")
-
-    # loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=3, reduction='mean').cuda()
-    # out = loss(img1, img2)
-    # print(out)
-    # out.backward()
-    # print(img2.grad)
-    # sys.exit()
-    # test_fused_cc_fwd_and_mem()
-    test_fused_cc_bwd_and_mem()
+    # test_fused_cc_bwd_and_mem()
+    N = 224  
+    img1 = torch.rand(1, 1, N, N, N).cuda()
+    img2 = torch.rand(1, 1, N, N, N).cuda()
+    mem = torch.cuda.memory_allocated()
+    print(f"Initial memory: {mem / 1024 / 1024} MB")
+    # loss = torch.jit.script(LocalNormalizedCrossCorrelationLoss(3, kernel_type='rectangular', reduction='mean')).cuda()
+    for use_jit_version, separable_override, bwd_img1 in itertools.product([False], [True, False], [True, False]):
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.empty_cache()
+        img1 = img1.detach().requires_grad_(bwd_img1)
+        mem = torch.cuda.memory_allocated()
+        # 
+        loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=5, reduction='mean', use_separable=separable_override).cuda()
+        if use_jit_version:
+            loss = torch.compile(loss)
+        total = 0
+        a = time()
+        for i in range(20):
+            out = loss(img1, img2)
+            total += out.item()
+        # if backward is true, add memory of img1.grad
+        if bwd_img1:
+            out.backward()
+            mem += (img1.element_size() * img1.nelement())
+        torch.cuda.synchronize()
+        b = time()
+        print(f"Time for jit: {use_jit_version} separable: {separable_override}, bwd_img1: {bwd_img1}, Time: {b - a}s")
+        print(f"Total loss: {total}")
+        mem = torch.cuda.max_memory_allocated() - mem
+        print(f"Memory for jit: {use_jit_version} separable: {separable_override}, bwd_img1: {bwd_img1}, Memory: {mem / 1024 / 1024} MB\n")
+        print()

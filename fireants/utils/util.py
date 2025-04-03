@@ -10,6 +10,8 @@ import gc
 import os
 import inspect
 import logging
+from typing import Optional
+from fireants.interpolator import fireants_interpolator
 logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
@@ -191,7 +193,8 @@ def savetxt(filename: str, A: torch.Tensor, t: torch.Tensor):
         f.write("Parameters: " + " ".join(map(str, list(A.flatten()) + list(t.flatten()))) + "\n")
         f.write("FixedParameters: " + " ".join(map(str, np.zeros((dims, 1)).flatten())) + "\n")
 
-def compose_warp(warp1: torch.Tensor, warp2: torch.Tensor, grid: torch.Tensor):
+# def compose_warp(warp1: torch.Tensor, warp2: torch.Tensor, grid: torch.Tensor):
+def compose_warp(warp1: torch.Tensor, warp2: torch.Tensor, affine: Optional[torch.Tensor] = None):
     '''
     warp1 and warp2 are displacement maps u(x) and v(x) of size [N, H, W, D, dims]
 
@@ -206,7 +209,8 @@ def compose_warp(warp1: torch.Tensor, warp2: torch.Tensor, grid: torch.Tensor):
         permute_vtoimg = (0, 3, 1, 2)
         permute_imgtov = (0, 2, 3, 1)
     # compute u(x + v(x)) 
-    warp12 = F.grid_sample(warp1.permute(*permute_vtoimg), grid + warp2, mode='bilinear', align_corners=True).permute(*permute_imgtov)
+    warp12 = fireants_interpolator.warp_composer(warp1, affine, warp2, align_corners=True)
+    # warp12 = F.grid_sample(warp1.permute(*permute_vtoimg), grid + warp2, mode='bilinear', align_corners=True).permute(*permute_imgtov)
     return warp2 + warp12
 
 def collate_fireants_fn(batch):

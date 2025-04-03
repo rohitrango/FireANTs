@@ -134,7 +134,8 @@ class WarpAdam:
         # renormalize and update warp
         if self.freeform:
             grad.mul_(-self.lr)
-            self.warp.data.copy_(grad + self.warp.data)
+            # self.warp.data.copy_(grad + self.warp.data)
+            self.warp.data.add_(grad)
             if self.smoothing_gaussians is not None:
                 self.warp.data = separable_filtering(self.warp.data.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)
         else:

@@ -150,7 +150,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         warp = self.warp.get_warp().detach().clone()
         # warp = warp + F.affine_grid(torch.eye(self.dims, self.dims+1, device=warp.device)[None], [1, 1] + list(warp.shape[1:-1]), align_corners=True)
         # get affine warp from displacement map
-        warp = fireants_interpolator.affine_warp(None, warp, align_corners=True)
+        # warp = fireants_interpolator.affine_warp(None, warp, align_corners=True)
         warp_inv = compositive_warp_inverse(moving_images, warp, displacement=True) #, smooth_warp_sigma=smooth_warp_sigma, smooth_grad_sigma=smooth_grad_sigma)
         # resample if needed
         if tuple(warp_inv.shape[1:-1]) != tuple(shape[2:]):

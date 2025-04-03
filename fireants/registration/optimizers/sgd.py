@@ -111,12 +111,14 @@ class WarpSGD:
                 self.velocity = self.warp.data
             else:
                 self.velocity.mul_(self.momentum).add_(grad, alpha=1-self.dampening)
-            buf = torch.clone(self.velocity).detach()
             # update equation for nesterov or not
+            buf = self.velocity
             if self.nesterov:
-                grad = grad.add(buf, alpha=self.momentum)
+                # grad = grad.add(buf, alpha=self.momentum)
+                grad.add_(buf, alpha=self.momentum)
             else:
-                grad = buf
+                # grad = buf
+                grad.copy_(buf)
         ## renormalize and update warp (per pixel)
         gradmax = self.eps + grad.norm(p=2, dim=-1, keepdim=True)
         # gradmean = gradmax.flatten(1).mean(1)  # [B,]
@@ -130,11 +132,15 @@ class WarpSGD:
         # is greater than 1
         if not self.scaledown:  
             gradmax = torch.clamp(gradmax, min=1)
-        grad = grad / gradmax * self.half_resolution   # norm is now 0.5r
+        # grad = grad / gradmax * self.half_resolution   # norm is now 0.5r
+        grad.div_(gradmax).mul_(self.half_resolution)
         # multiply by learning rate
         grad.mul_(-self.lr)
         # compositional update
-        grad.add_(fireants_interpolator.warp_composer(self.warp.data, affine=self.affine_init, v=grad, grid=self.grid, align_corners=True))
+        if self.freeform:
+            grad.add_(self.warp.data)
+        else:
+            grad.add_(fireants_interpolator.warp_composer(self.warp.data, affine=self.affine_init, v=grad, grid=self.grid, align_corners=True))
         # smooth result if asked for
         if self.smoothing_gaussians is not None:
             grad = separable_filtering(grad.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)

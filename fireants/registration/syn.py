@@ -159,12 +159,12 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         moving_p2t = moving_images.get_phy2torch().to(self.dtype)
         # fixed_size = fixed_arrays.shape[2:]
         # save init transform
-        init_grid = torch.eye(self.dims, self.dims+1).to(fixed_images.device, self.dtype).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, dims, dims+1]
+        # init_grid = torch.eye(self.dims, self.dims+1).to(fixed_images.device, self.dtype).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, dims, dims+1]
         affine_map_init = (torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]).contiguous().to(self.dtype)
-        fixed_image_vgrid  = F.affine_grid(init_grid, fixed_arrays.shape, align_corners=True)
+        # fixed_image_vgrid  = F.affine_grid(init_grid, fixed_arrays.shape, align_corners=True)
         # get warps
         fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
-        rev_inv_warp_field = compositive_warp_inverse(fixed_images, self.rev_warp.get_warp() + fixed_image_vgrid, displacement=True)
+        rev_inv_warp_field = compositive_warp_inverse(fixed_images, self.rev_warp.get_warp(), displacement=True)
 
         # # smooth them out
         if self.smooth_warp_sigma > 0:
@@ -172,8 +172,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             fwd_warp_field = separable_filtering(fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg), warp_gaussian).permute(*self.fwd_warp.permute_imgtov)
             rev_inv_warp_field = separable_filtering(rev_inv_warp_field.permute(*self.rev_warp.permute_vtoimg), warp_gaussian).permute(*self.rev_warp.permute_imgtov)
         # # compose the two warp fields
-        composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field, fixed_image_vgrid)
-        # moved_coords_final = moved_coords_final + composed_warp
+        composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field)
         return {
             'affine': affine_map_init,
             'grid': composed_warp,

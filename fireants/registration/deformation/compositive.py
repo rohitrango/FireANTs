@@ -105,24 +105,6 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
     def get_inverse_warp(self):
         raise NotImplementedError('Inverse warp not implemented for compositive warp, use `compositive_warp_inverse` from warputils.py instead')
     
-    # def get_inverse_warp(self, n_iters:int=20, debug: bool = False, lr=0.01, optimizer='SGD'):
-    #     ''' run an optimization procedure to get the inverse warp '''
-    #     warp_gaussian = None
-    #     grad_gaussian = None
-    #     print("using lr", lr)
-    #     if self.smoothing_warp_sigma > 0:
-    #         warp_gaussian = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=self.device) + self.smoothing_warp_sigma)]
-    #     if self.smoothing_grad_sigma > 0:
-    #         grad_gaussian = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=self.device) + self.smoothing_grad_sigma)]
-
-    #     if self.optimize_inverse_warp:
-    #         invwarp = self.inv
-    #         invwarp = compute_inverse_warp_displacement(self.warp.data.detach(), self.grid, invwarp, iters=n_iters, lr=lr, warp_gaussian=warp_gaussian, grad_gaussian=grad_gaussian, debug=debug, optimizer=optimizer)
-    #     else:
-    #         # no invwarp is defined, start from scratch
-    #         invwarp = compute_inverse_warp_displacement(self.warp.data.detach(), self.grid, -self.warp.data, iters=n_iters, lr=lr, warp_gaussian=warp_gaussian, grad_gaussian=grad_gaussian, debug=debug, optimizer=optimizer)
-    #     return invwarp
-
     def set_size(self, size):
         # print(f"Setting size to {size}")
         ''' size: [H, W, D] or [H, W] '''

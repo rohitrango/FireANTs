@@ -185,25 +185,27 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         pgrad, tgrad = pred.requires_grad, target.requires_grad
         # if both or neither require grad, dont shuffle the order 
         if (pgrad and tgrad) or (not pgrad and not tgrad):
-            return FusedNCC3d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
+            return -FusedNCC3d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
         else:
             # if only pred requires grad, swap pred and target
             if pgrad:
-                return FusedNCC3d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
+                return -FusedNCC3d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
             else:
-                return FusedNCC3d.apply(target, pred, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
+                return -FusedNCC3d.apply(target, pred, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
+
+def mem(tensor):
+    if tensor is None:
+        return 0
+    return tensor.element_size() * tensor.nelement() / 1024**2
 
 def test_fused_cc_fwd_and_mem():
     for i in range(6, 10):
-    # torch.cuda.memory._record_memory_history()
-    # for i in range(6, 7):
         N = 2 ** i
         img1 = torch.rand(1, 1, N, N, N).cuda()
         img2 = torch.rand(1, 1, N, N, N).cuda().requires_grad_(True)
         
         # Calculate input tensor memory
-        input_memory = (img1.element_size() * img1.nelement() + 
-                       img2.element_size() * img2.nelement()) / 1024**2  # MB
+        input_memory = mem(img1) + mem(img2)
         
         loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=3, reduction='mean').cuda()
         loss_baseline = LocalNormalizedCrossCorrelationLoss(3, kernel_size=3, reduction='mean').cuda()
@@ -216,6 +218,7 @@ def test_fused_cc_fwd_and_mem():
         out = loss(img1, img2)
         torch.cuda.synchronize()
         out_time = time() - start
+        input_memory += mem(out)
         fused_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory  # Subtract input memory
 
         # Reset memory stats again
@@ -225,19 +228,22 @@ def test_fused_cc_fwd_and_mem():
         out_baseline = loss_baseline(img1, img2)
         torch.cuda.synchronize()
         out_baseline_time = time() - start
+        input_memory += mem(out_baseline)
         baseline_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory  # Subtract input memory
 
         # baseline 2
         torch.cuda.reset_peak_memory_stats()
+
         start = time()
         out_baseline2 = fast_lncc(img1, img2, 3)
         torch.cuda.synchronize()
-        # out_baseline2.backward()
+        out_baseline2_time = time() - start
+        input_memory += mem(out_baseline2)
         # torch.cuda.synchronize()
         out_baseline2_time = time() - start
         baseline2_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory  # Subtract input memory
 
-        out1 = -out.item()
+        out1 = out.item()
         out2 = out_baseline.item()
         out3 = out_baseline2.item()
         rel_err = abs(out1 - out2) / abs(out2)
@@ -248,7 +254,7 @@ def test_fused_cc_fwd_and_mem():
         print(f"out_time2: {out_baseline2_time:.4f}, out_baseline_time2: {out_baseline2_time:.4f}, speed up: {out_baseline2_time / out_time:.2f}x")
         print(f"Input memory: {input_memory:.2f}MB")
         print(f"Fused memory (excluding input): {fused_memory:.2f}MB, Baseline memory (excluding input): {baseline_memory:.2f}MB, Baseline2 memory (excluding input): {baseline2_memory:.2f}MB")
-        print(f"Memory reduction: {(baseline_memory - fused_memory)/baseline_memory:.4f}%, {(baseline2_memory - fused_memory)/baseline2_memory:.4f}%")
+        print(f"Memory reduction: {100*(baseline_memory - fused_memory)/baseline_memory:.4f}%, {100*(baseline2_memory - fused_memory)/baseline2_memory:.4f}%")
         print()
 
 def test_fused_cc_bwd_and_mem():
@@ -260,8 +266,7 @@ def test_fused_cc_bwd_and_mem():
         img2 = (torch.rand(1, 1, N, N, N) + eps).cuda().requires_grad_(True) 
         
         # Calculate input tensor memory
-        input_memory = (img1.element_size() * img1.nelement() + 
-                       img2.element_size() * img2.nelement()) / 1024**2  # MB
+        input_memory = mem(img1) + mem(img2)
         
         loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=3, reduction='mean', use_ants_gradient=False).cuda()
         loss_baseline = LocalNormalizedCrossCorrelationLoss(3, kernel_size=3, reduction='mean').cuda()
@@ -270,7 +275,7 @@ def test_fused_cc_bwd_and_mem():
         torch.cuda.reset_peak_memory_stats()
         
         t0 = time()
-        out = -loss(img1, img2)
+        out = loss(img1, img2)
         torch.cuda.synchronize()
         t1 = time()
         out.backward()
@@ -279,9 +284,12 @@ def test_fused_cc_bwd_and_mem():
         fwd_time_ours = t1 - t0
         bwd_time_ours = t2 - t1
         grad_ours = img2.grad / N**3
+        input_memory += mem(out) + mem(img2.grad) + mem(img1.grad)
         fused_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory  # Subtract input memory
 
         img2.grad = None
+        img1.grad = None
+        input_memory -= mem(img1.grad)
         # Reset memory stats again
         torch.cuda.reset_peak_memory_stats()
         
@@ -295,10 +303,13 @@ def test_fused_cc_bwd_and_mem():
         fwd_time_baseline = t1 - t0
         bwd_time_baseline = t2 - t1
         grad_baseline = img2.grad
+        input_memory += mem(out_baseline) + mem(img2.grad) + mem(img1.grad)
         baseline_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory  # Subtract input memory
 
         # baseline 2
         img2.grad = None
+        img1.grad = None
+        input_memory -= mem(img1.grad)  # img2 grad is stored in another variable
         torch.cuda.reset_peak_memory_stats()
         t0 = time()
         out_baseline2 = fast_lncc(img1, img2, 3)
@@ -310,6 +321,7 @@ def test_fused_cc_bwd_and_mem():
         fwd_time_baseline2 = t1 - t0
         bwd_time_baseline2 = t2 - t1
         grad_baseline2 = img2.grad
+        input_memory += mem(out_baseline2) + mem(img2.grad) + mem(img1.grad)
         baseline2_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory  # Subtract input memory
 
         out = out.item()
@@ -344,7 +356,8 @@ def test_fused_cc_bwd_and_mem():
 
 if __name__ == '__main__':
     # check backward
-    # test_fused_cc_bwd_and_mem()
+    test_fused_cc_fwd_and_mem()
+    test_fused_cc_bwd_and_mem()
     N = 224  
     img1 = torch.rand(1, 1, N, N, N).cuda()
     img2 = torch.rand(1, 1, N, N, N).cuda()
@@ -357,7 +370,7 @@ if __name__ == '__main__':
         img1 = img1.detach().requires_grad_(bwd_img1)
         mem = torch.cuda.memory_allocated()
         # 
-        loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=5, reduction='mean', use_separable=separable_override).cuda()
+        loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=5, use_ants_gradient=True, reduction='mean', use_separable=separable_override).cuda()
         if use_jit_version:
             loss = torch.compile(loss)
         total = 0

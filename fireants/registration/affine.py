@@ -104,7 +104,6 @@ class AffineRegistration(AbstractRegistration):
             affine = affine.detach().contiguous()
 
         self.affine = nn.Parameter(affine.to(device))  # [N, D]
-        print(self.affine)
         self.row = torch.zeros((self.opt_size, 1, dims+1), device=device)   # keep this to append to affine matrix
         self.row[:, 0, -1] = 1.0
         # optimizer
@@ -231,7 +230,6 @@ class AffineRegistration(AbstractRegistration):
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
                 fixed_image_down = downsample(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
                 moving_image_blur = downsample(moving_arrays, size=mov_size_down, mode=self.moving_images.interpolate_mode, gaussians=gaussians)
-                moving_image_blur = separable_filtering(moving_image_blur, gaussians)
             else:
                 if scale > 1:
                     fixed_image_down = F.interpolate(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True)

@@ -8,6 +8,15 @@ from fireants.interpolator import fireants_interpolator
 import logging
 logger = logging.getLogger(__name__)
 
+def adam_update_fused(grad, exp_avg, exp_avg_sq, beta1, beta2, eps):
+    grad.copy_(exp_avg / (beta1) / (exp_avg_sq / (beta2)).sqrt().add_(eps))
+
+try:
+    import fireants_fused_ops as ffo
+    adam_update_fused = ffo.adam_update_fused
+except ImportError:
+    logger.warning("Fused ops not found, using baseline implementation")
+
 class WarpAdam:
     ''' at the moment we only support a single warp function 
     also supports multi-scale (by simply interpolating to the target size)
@@ -98,7 +107,7 @@ class WarpAdam:
     
     def step(self):
         ''' check for momentum, and other things '''
-        grad = torch.clone(self.warp.grad.data).detach()
+        grad = self.warp.grad.data
         if self.multiply_jacobian:
             grad = self.augment_jacobian(grad)
         # add weight decay term
@@ -113,10 +122,13 @@ class WarpAdam:
         beta_correction2 = 1 - self.beta2 ** self.step_t
 
         # adam_update_fused(grad, self.exp_avg, self.exp_avg_sq, beta_correction1, beta_correction2, self.eps)
-        denom = (self.exp_avg_sq / beta_correction2).sqrt().add_(self.eps)
+        adam_update_fused(grad, self.exp_avg, self.exp_avg_sq, beta_correction1, beta_correction2, self.eps)
+
+        # denom = (self.exp_avg_sq / beta_correction2).sqrt().add_(self.eps)
         # get updated gradient (this will be normalized and passed in)
-        grad = self.exp_avg / beta_correction1 / denom
-        del denom
+        # grad = self.exp_avg / beta_correction1 / denom
+        # grad.copy_(self.exp_avg).div_(beta_correction1).div_(denom)
+        # del denom
         # grad.data.copy_(self.exp_avg / beta_correction1)
         # grad.data.div_(denom)
         # renormalize and update warp
@@ -133,7 +145,8 @@ class WarpAdam:
             if not self.scaledown:  # if scaledown is "True", then we scale down even if the norm is below 1
                 gradmax = torch.clamp(gradmax, min=1)
             # print(gradmax.abs().min(), gradmax.abs().max())
-            grad = grad / gradmax * self.half_resolution   # norm is now 0.5r
+            # grad = grad / gradmax * self.half_resolution   # norm is now 0.5r
+            grad.div_(gradmax).mul_(self.half_resolution)
             # multiply by learning rate
             grad.mul_(-self.lr)
             # print(grad.abs().max().item(), self.half_resolution, self.warp.shape)
@@ -141,7 +154,7 @@ class WarpAdam:
             # w = grad + F.grid_sample(self.warp.data.permute(*self.permute_vtoimg), self.grid + grad, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
             # w = grad + 
             ## grad = grad + warp * (x + grad)   # this is the compositional update
-            grad.add_(fireants_interpolator.warp_composer(self.warp.data, affine=self.affine_init, v=grad, grid=self.grid, mode='bilinear', align_corners=True))
+            grad.add_(fireants_interpolator.warp_composer(self.warp.data, affine=self.affine_init, v=grad, grid=self.grid, align_corners=True))
             # w = grad
             # smooth result if asked for
             if self.smoothing_gaussians is not None:

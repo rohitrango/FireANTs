@@ -4,6 +4,7 @@
 #include "FusedGridSampler.h"
 #include "FusedGridComposer.h"
 #include "FusedGenerateGrid.h"
+#include "common.h"
 
 PYBIND11_MODULE(fireants_fused_ops, m) {
     // Reduction enum
@@ -52,4 +53,7 @@ PYBIND11_MODULE(fireants_fused_ops, m) {
     m.def("fused_warp_create_3d_backward", &fused_warp_create_3d_backward_impl, "Backward pass for fused warp create",
         py::arg("affine"), py::arg("grid"), py::arg("grad_output"), py::arg("grad_affine"), py::arg("grad_grid"),
         py::arg("grid_xmin"), py::arg("grid_ymin"), py::arg("grid_zmin"), py::arg("grid_xmax"), py::arg("grid_ymax"), py::arg("grid_zmax"));
+    
+    m.def("adam_update_fused", &adam_update_fused, "Adam update fused",
+        py::arg("grad"), py::arg("exp_avg"), py::arg("exp_avg_sq"), py::arg("beta1"), py::arg("beta2"), py::arg("eps"));
 }

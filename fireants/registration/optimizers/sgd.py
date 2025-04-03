@@ -134,7 +134,7 @@ class WarpSGD:
         # multiply by learning rate
         grad.mul_(-self.lr)
         # compositional update
-        grad.add_(fireants_interpolator.warp_composer(self.warp.data, affine=self.affine_init, v=grad, grid=self.grid, mode='bilinear', align_corners=True))
+        grad.add_(fireants_interpolator.warp_composer(self.warp.data, affine=self.affine_init, v=grad, grid=self.grid, align_corners=True))
         # smooth result if asked for
         if self.smoothing_gaussians is not None:
             grad = separable_filtering(grad.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)

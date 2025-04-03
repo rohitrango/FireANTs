@@ -267,7 +267,6 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
                 fixed_image_down = downsample(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
                 moving_image_blur = downsample(moving_arrays, size=moving_size_down, mode=self.moving_images.interpolate_mode, gaussians=gaussians)
-                #moving_image_blur = separable_filtering(moving_image_down, gaussians)
             else:
                 if scale > 1:
                     fixed_image_down = F.interpolate(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True)
@@ -300,8 +299,8 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                 if self.displacement_reg is not None:
                     loss = loss + self.displacement_reg(warp_field)
                 if self.warp_reg is not None:
-                    # TODO: moved_coords 
-                    moved_coords = self.get_warped_coordinates(self.fixed_images, self.moving_images)
+                    # internally should use the fireants interpolator to avoid additional memory allocation
+                    moved_coords = self.get_warped_coordinates(self.fixed_images, self.moving_images)  
                     loss = loss + self.warp_reg(moved_coords)
                 loss.backward()
                 if self.progress_bar:

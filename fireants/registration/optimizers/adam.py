@@ -29,6 +29,7 @@ class WarpAdam:
                  smoothing_gaussians=None, 
                  grad_gaussians=None,
                  freeform=False,
+                 offload=False,   # try offloading to CPU
                  dtype: torch.dtype = torch.float32):
         # init
         self.dtype = dtype
@@ -53,8 +54,13 @@ class WarpAdam:
         self.weight_decay = weight_decay
         self.multiply_jacobian = multiply_jacobian
         self.scaledown = scaledown   # if true, the scale the gradient even if norm is below 1
-        self.exp_avg = torch.zeros_like(warp)
-        self.exp_avg_sq = torch.zeros_like(warp)
+        # offload params
+        self.device = warp.device
+        self.offload = offload
+        # warp grad params
+        self.exp_avg = torch.zeros_like(warp, device=self.device if not self.offload else 'cpu')
+        self.exp_avg_sq = torch.zeros_like(warp, device=self.device if not self.offload else 'cpu')
+
         self.permute_imgtov = (0, *range(2, self.n_dims+2), 1)  # [N, HWD, dims] -> [N, HWD, dims] -> [N, dims, HWD]
         self.permute_vtoimg = (0, self.n_dims+1, *range(1, self.n_dims+1))  # [N, dims, HWD] -> [N, HWD, dims]
         # set grid
@@ -116,6 +122,14 @@ class WarpAdam:
             grad.add_(self.warp.data, alpha=self.weight_decay)
         # compute moments
         self.step_t += 1
+
+        # we onload this to GPU
+        if self.offload:
+            # torch.cuda.synchronize()
+            # move to device
+            self.exp_avg = self.exp_avg.to(self.device)
+            self.exp_avg_sq = self.exp_avg_sq.to(self.device)
+
         self.exp_avg.mul_(self.beta1).add_(grad, alpha=1-self.beta1)
         self.exp_avg_sq.mul_(self.beta2).addcmul_(grad, grad.conj(), value=1-self.beta2)
         # bias correction
@@ -124,6 +138,14 @@ class WarpAdam:
 
         # adam_update_fused(grad, self.exp_avg, self.exp_avg_sq, beta_correction1, beta_correction2, self.eps)
         adam_update_fused(grad, self.exp_avg, self.exp_avg_sq, beta_correction1, beta_correction2, self.eps)
+
+        # we offload this to CPU
+        if self.offload:
+            # torch.cuda.synchronize()
+            # move to device
+            self.exp_avg = self.exp_avg.to('cpu')
+            self.exp_avg_sq = self.exp_avg_sq.to('cpu')
+            torch.cuda.empty_cache()
 
         # denom = (self.exp_avg_sq / beta_correction2).sqrt().add_(self.eps)
         # get updated gradient (this will be normalized and passed in)

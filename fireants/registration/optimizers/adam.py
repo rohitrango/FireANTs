@@ -7,6 +7,7 @@ from fireants.losses.cc import separable_filtering
 from fireants.interpolator import fireants_interpolator
 import logging
 logger = logging.getLogger(__name__)
+torch.backends.cudnn.benchmark = True
 
 def adam_update_fused(grad, exp_avg, exp_avg_sq, beta1, beta2, eps):
     grad.copy_(exp_avg / (beta1) / (exp_avg_sq / (beta2)).sqrt().add_(eps))

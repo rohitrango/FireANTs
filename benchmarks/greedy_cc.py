@@ -2,6 +2,7 @@
 Script to benchmark greedy registration performance with different methods
 Only works if fireants_fused_ops is installed.
 '''
+import os
 import torch
 from fireants.io import Image, BatchedImages
 from fireants.registration import GreedyRegistration
@@ -43,8 +44,8 @@ def test_greedy_crosscorrelation(fused_ops, fused_cc, fixed_image_path, moving_i
                              fixed_batch, moving_batch, 
                              blur=True,
                              loss_params=loss_params,
-                             smooth_warp_sigma=0.0,
-                             smooth_grad_sigma=0.0,
+                             smooth_warp_sigma=0.25,
+                             smooth_grad_sigma=0.5,
                              optimizer_lr=0.5,
                              loss_type=loss, optimizer='Adam', max_tolerance_iters=1000)
     reg.optimize(False)
@@ -72,7 +73,7 @@ if __name__ == "__main__":
 
     # variable to determine whether to run long optim
     # if this is false, we want to see memory usage and dont care about dice
-    run_long_optim = True
+    run_long_optim = os.getenv('RUN_LONG_OPTIM', 'false').lower() == 'true'
     if run_long_optim:
         iterations = [200, 100, 25]
     else:
@@ -86,7 +87,7 @@ if __name__ == "__main__":
         fixed_seg_path = None
         moving_seg_path = None
     # warmup
-    _ = test_greedy_crosscorrelation(True, True, fixed_image_path, moving_image_path, fixed_seg_path, moving_seg_path, iterations=[1, 1, 1])
+    _ = test_greedy_crosscorrelation(True, True, fixed_image_path, moving_image_path, fixed_seg_path, moving_seg_path, iterations=[2, 2, 2])
     torch.cuda.empty_cache()
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
@@ -96,7 +97,8 @@ if __name__ == "__main__":
         torch.cuda.memory._record_memory_history()
 
     # run benchmarks
-    for fused_cc, fused_ops in itertools.product([False, True], [False, True]):
+    # for fused_cc, fused_ops in itertools.product([False, True], [False, True]):
+    for fused_cc, fused_ops in itertools.product([True], [True]):
         # reset stats
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
@@ -115,27 +117,27 @@ if __name__ == "__main__":
         torch.cuda.memory._dump_snapshot("memory_history/benchmark_greedy_cc.pkl")
 
     # Extract memory usage data
-    keys = list(itertools.product([False, True], [False, True]))
-    keyslegend = [f"fused_cc: {key[0]}\nfused_ops: {key[1]}" for key in keys]
+    # keys = list(itertools.product([False, True], [False, True]))
+    # keyslegend = [f"fused_cc: {key[0]}\nfused_ops: {key[1]}" for key in keys]
     
     # Plot memory usage
-    memory_data = [allresults[key]['extra_memory'] for key in keys]
-    plt.figure(figsize=(10, 6))
-    plt.bar(keyslegend, memory_data)
-    plt.title('Memory Usage by Method')
-    plt.ylabel('Memory Usage (MB)')
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig("plots/benchmark_greedy_cc.png")
-    plt.close()
+    # memory_data = [allresults[key]['extra_memory'] for key in keys]
+    # plt.figure(figsize=(10, 6))
+    # plt.bar(keyslegend, memory_data)
+    # plt.title('Memory Usage by Method')
+    # plt.ylabel('Memory Usage (MB)')
+    # plt.xticks(rotation=45, ha='right')
+    # plt.tight_layout()
+    # plt.savefig("plots/benchmark_greedy_cc.png")
+    # plt.close()
 
-    # Plot time data
-    time_data = [allresults[key]['time'] for key in keys]
-    plt.figure(figsize=(10, 6))
-    plt.bar(keyslegend, time_data)
-    plt.title('Time Taken by Method')
-    plt.ylabel('Time (seconds)')
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig("plots/benchmark_greedy_cc_time.png")
-    plt.close()
+    # # Plot time data
+    # time_data = [allresults[key]['time'] for key in keys]
+    # plt.figure(figsize=(10, 6))
+    # plt.bar(keyslegend, time_data)
+    # plt.title('Time Taken by Method')
+    # plt.ylabel('Time (seconds)')
+    # plt.xticks(rotation=45, ha='right')
+    # plt.tight_layout()
+    # plt.savefig("plots/benchmark_greedy_cc_time.png")
+    # plt.close()

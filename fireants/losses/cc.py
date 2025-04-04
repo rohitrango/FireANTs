@@ -8,6 +8,7 @@ from torch import nn
 from torch.nn import functional as F
 from typing import Union, Tuple, List, Optional, Dict, Any, Callable
 from fireants.types import ItemOrList
+torch.backends.cudnn.benchmark = True
 
 # @torch.jit.script
 def gaussian_1d(

@@ -34,7 +34,6 @@ class FusedNCC3d(torch.autograd.Function):
         # interm[:, 3*C:4*C, :, :, :] = target_img * target_img
         # interm[:, 4*C:, :, :, :] = input_img * target_img  # [B, 5C, H, W, D]
         ffo.create_intermediates(input_img, target_img, interm)
-        # torch.cat uses more memory
         # compute kernel 
         kernel_vol = kernel_size ** 3
 
@@ -115,12 +114,6 @@ class FusedNCC3d(torch.autograd.Function):
         # solve for grad_input_img and grad_target_img
         ffo.cc3d_bwd_compute_grads(interm, input_img, target_img, grad_input_img, grad_target_img)
 
-        # skip reduction for now
-        # if grad_input_img is not None and reduction == ffo.Reduction.MEAN:
-        #     grad_input_img = grad_input_img / (H * W * D)
-        # if grad_target_img is not None and reduction == ffo.Reduction.MEAN:
-        #     grad_target_img = grad_target_img / (H * W * D)
-
         return grad_input_img, grad_target_img, None, None, None, None, None, None
 
 class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
@@ -185,14 +178,10 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         # check if both pred and target require grad
         pgrad, tgrad = pred.requires_grad, target.requires_grad
         # if both or neither require grad, dont shuffle the order 
-        if (pgrad and tgrad) or (not pgrad and not tgrad):
-            return -FusedNCC3d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
-        else:
-            # if only pred requires grad, swap pred and target
-            if pgrad:
-                return -FusedNCC3d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
-            else:
-                return -FusedNCC3d.apply(target, pred, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
+        # the first tensor will always require grad (or neither does)
+        if tgrad and not pgrad:
+            pred, target = target, pred
+        return -FusedNCC3d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
 
 def test_fused_cc_fwd_and_mem():
     logger.warning("These numbers are not reliable (run testcases from test directory), just for testing correctness")

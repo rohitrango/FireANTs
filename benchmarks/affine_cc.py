@@ -14,8 +14,10 @@ import itertools
 import json
 import matplotlib.pyplot as plt
 import numpy as np
+torch.backends.cudnn.benchmark = True
 
-def test_affine_crosscorrelation(fused_ops, fused_cc, fixed_image_path, moving_image_path, fixed_seg_path=None, moving_seg_path=None):
+def test_affine_crosscorrelation(fused_ops, fused_cc, fixed_image_path, moving_image_path, fixed_seg_path=None, moving_seg_path=None,
+                                 iterations=[250, 100, 50]):
     '''
     fused_ops: bool, whether to use fused ops for grid_sample, etc.
     fused_cc: bool, whether to use fused cc for cross-correlation
@@ -39,7 +41,7 @@ def test_affine_crosscorrelation(fused_ops, fused_cc, fixed_image_path, moving_i
     # initialize registration
     loss = 'fusedcc' if fused_cc else 'cc'
     start = time()
-    reg = AffineRegistration([4, 2, 1], [250, 100, 50],
+    reg = AffineRegistration([4, 2, 1], iterations,
                              fixed_batch, moving_batch, 
                              optimizer_lr=1e-2, 
                              loss_type=loss, optimizer='Adam', max_tolerance_iters=1000)
@@ -71,7 +73,8 @@ if __name__ == "__main__":
     # moving_seg_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_seg35.nii.gz"
     fixed_seg_path = None
     moving_seg_path = None
-    _ = test_affine_crosscorrelation(True, True, fixed_image_path, moving_image_path, fixed_seg_path, moving_seg_path)
+    # warmup
+    _ = test_affine_crosscorrelation(False, False, fixed_image_path, moving_image_path, fixed_seg_path, moving_seg_path, [5, 5, 5])
     torch.cuda.empty_cache()
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()

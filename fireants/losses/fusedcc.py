@@ -27,6 +27,7 @@ class FusedNCC3d(torch.autograd.Function):
     def forward(ctx, input_img, target_img, kernel_size, nr, dr, reduction, use_ants_gradient, use_separable):
         reduction = reduction_table[reduction.lower()]
         B, C, H, W, D = input_img.shape
+        assert input_img.is_contiguous() and target_img.is_contiguous(), "input_img and target_img must be contiguous"
         interm = torch.zeros(B, 5 * C, H, W, D, device=input_img.device, dtype=input_img.dtype)
         # interm[:, :C, :, :, :] = input_img
         # interm[:, C:2*C, :, :, :] = target_img

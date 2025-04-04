@@ -91,11 +91,13 @@ class AffineRegistration(AbstractRegistration):
                 raise ValueError(f"init_rigid must have shape [N, {dims}, {dims+1}] or [N, {dims+1}, {dims+1}], got {init_rigid.shape}")
         else:
             affine = torch.eye(dims, dims+1).unsqueeze(0).repeat(self.opt_size, 1, 1).to(device)  # [N, D, D+1]
+        
+        affine = affine.to(self.dtype)
 
         # whether to apply affine around the center of the image
         self.around_center = around_center 
         self.center = self.fixed_images.get_torch2phy()[:, :self.dims, -1].contiguous()  # the center of the fixed image is (0, 0, ..., 0) in torch space => A0 + t = t in physical space
-        self.center = self.center.to(device)
+        self.center = self.center.to(device).to(self.dtype)
         if self.around_center:
             # we recalibrate the t' parameter from t 
             transl = affine[:, :self.dims, -1]
@@ -103,8 +105,8 @@ class AffineRegistration(AbstractRegistration):
             affine[:, :self.dims, -1] = transl
             affine = affine.detach().contiguous()
 
-        self.affine = nn.Parameter(affine.to(device))  # [N, D]
-        self.row = torch.zeros((self.opt_size, 1, dims+1), device=device)   # keep this to append to affine matrix
+        self.affine = nn.Parameter(affine.to(device).to(self.dtype))  # [N, D]
+        self.row = torch.zeros((self.opt_size, 1, dims+1), device=device, dtype=self.dtype)   # keep this to append to affine matrix
         self.row[:, 0, -1] = 1.0
         # optimizer
         if optimizer == 'SGD':

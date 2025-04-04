@@ -76,10 +76,23 @@ class WarpAdam:
         ''' change the optimization variables sizes '''
         self.warp = warp
         mode = 'bilinear' if self.n_dims == 2 else 'trilinear'
-        self.exp_avg = F.interpolate(self.exp_avg.detach().permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True, 
-                            ).permute(*self.permute_imgtov)
-        self.exp_avg_sq = F.interpolate(self.exp_avg_sq.detach().permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True, 
-                            ).permute(*self.permute_imgtov)
+
+        # check size to upsample if not already in correct size
+        if any([s != size[i] for i, s in enumerate(self.exp_avg.shape[1:-1])]):
+            if self.offload:
+                self.exp_avg = self.exp_avg.to(self.device)
+                self.exp_avg_sq = self.exp_avg_sq.to(self.device)
+
+            self.exp_avg = F.interpolate(self.exp_avg.detach().permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True, 
+                                ).permute(*self.permute_imgtov)
+            self.exp_avg_sq = F.interpolate(self.exp_avg_sq.detach().permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True, 
+                                ).permute(*self.permute_imgtov)
+            
+            # offload it back to CPU
+            if self.offload:
+                self.exp_avg = self.exp_avg.to('cpu')
+                self.exp_avg_sq = self.exp_avg_sq.to('cpu')
+
         self.half_resolution = 1.0/(max(warp.shape[1:-1]) - 1)
         self.initialize_grid(size, grid_copy=grid_copy)
         # print(self.warp.shape, warpinv)

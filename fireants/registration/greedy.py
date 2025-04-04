@@ -123,12 +123,12 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         B, D1, D2 = init_affine.shape
         # affine can be [N, D, D+1] or [N, D+1, D+1]
         if D1 == self.dims+1 and D2 == self.dims+1:
-            self.affine = init_affine.detach()
+            self.affine = init_affine.detach().to(self.dtype)
         elif D1 == self.dims and D2 == self.dims+1:
             # attach row to affine
             row = torch.zeros(self.opt_size, 1, self.dims+1, device=fixed_images.device)
             row[:, 0, -1] = 1.0
-            self.affine = torch.cat([init_affine.detach(), row], dim=1)
+            self.affine = torch.cat([init_affine.detach(), row], dim=1).to(self.dtype)
         else:
             raise ValueError('Invalid initial affine shape: {}'.format(init_affine.shape))
     

@@ -112,7 +112,6 @@ class AbstractRegistration(ABC):
 
         self.dims = self.fixed_images.dims
         self.progress_bar = progress_bar        # variable to show or hide progress bar
-
         # initialize losses
         if loss_type == 'mi':
             self.loss_fn = GlobalMutualInformationLoss(kernel_type=mi_kernel_type, reduction=reduction, **loss_params)

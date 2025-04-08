@@ -45,9 +45,11 @@ def test_greedy_crosscorrelation(fused_ops, fused_cc, fixed_image_path, moving_i
                              blur=True,
                              dtype=dtype,
                              loss_params=loss_params,
-                             optimizer_params={'offload': True},
-                             smooth_warp_sigma=0.25,
-                             smooth_grad_sigma=0.5,
+                             optimizer_params={'offload': False},
+                            #  smooth_warp_sigma=0.25,
+                            #  smooth_grad_sigma=0.5,
+                             smooth_warp_sigma=0,
+                             smooth_grad_sigma=0,
                              optimizer_lr=0.5,
                              loss_type=loss, optimizer='Adam', max_tolerance_iters=1000)
     reg.optimize(False)

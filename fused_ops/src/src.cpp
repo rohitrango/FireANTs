@@ -4,6 +4,7 @@
 #include "FusedGridSampler.h"
 #include "FusedGridComposer.h"
 #include "FusedGenerateGrid.h"
+#include "GaussianBlurFFT.h"
 #include "common.h"
 
 PYBIND11_MODULE(fireants_fused_ops, m) {
@@ -56,4 +57,11 @@ PYBIND11_MODULE(fireants_fused_ops, m) {
     
     m.def("adam_update_fused", &adam_update_fused, "Adam update fused",
         py::arg("grad"), py::arg("exp_avg"), py::arg("exp_avg_sq"), py::arg("beta1"), py::arg("beta2"), py::arg("eps"));
+    
+    // gaussian blur in fft space
+    m.def("gaussian_blur_fft2", &gaussian_blur_fft2, "Gaussian blur in fft space",
+        py::arg("im_fft"), py::arg("ys"), py::arg("xs"), py::arg("ye"), py::arg("xe"), py::arg("multiplier"));
+    
+    m.def("gaussian_blur_fft3", &gaussian_blur_fft3, "Gaussian blur in fft space",
+        py::arg("im_fft"), py::arg("zs"), py::arg("ys"), py::arg("xs"), py::arg("ze"), py::arg("ye"), py::arg("xe"), py::arg("multiplier"));
 }

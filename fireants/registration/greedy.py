@@ -153,8 +153,9 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         # warp = fireants_interpolator.affine_warp(None, warp, align_corners=True)
         warp_inv = compositive_warp_inverse(moving_images, warp, displacement=True) #, smooth_warp_sigma=smooth_warp_sigma, smooth_grad_sigma=smooth_grad_sigma)
         # resample if needed
+        mode = "bilinear" if self.dims == 2 else "trilinear"
         if tuple(warp_inv.shape[1:-1]) != tuple(shape[2:]):
-            warp_inv = F.interpolate(warp_inv.permute(*self.warp.permute_vtoimg), size=shape[2:], mode='trilinear', align_corners=True).permute(*self.warp.permute_imgtov)
+            warp_inv = F.interpolate(warp_inv.permute(*self.warp.permute_vtoimg), size=shape[2:], mode=mode, align_corners=True).permute(*self.warp.permute_imgtov)
         
         # get affine transform
         fixed_t2p = fixed_images.get_torch2phy()
@@ -213,9 +214,10 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         warp_field = self.warp.get_warp()
 
         # resize the warp field if needed
+        mode = "bilinear" if self.dims == 2 else "trilinear"
         if tuple(warp_field.shape[1:-1]) != tuple(shape[2:]):
             # interpolate this
-            warp_field = F.interpolate(warp_field.permute(*self.warp.permute_vtoimg), size=shape[2:], mode='trilinear', align_corners=True).permute(*self.warp.permute_imgtov)
+            warp_field = F.interpolate(warp_field.permute(*self.warp.permute_vtoimg), size=shape[2:], mode=mode, align_corners=True).permute(*self.warp.permute_imgtov)
 
         # smooth out the warp field if asked to 
         if self.smooth_warp_sigma > 0:

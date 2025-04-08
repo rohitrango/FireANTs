@@ -29,7 +29,6 @@ using namespace at::native;
 using at::native::detail::GridSamplerInterpolation;
 using at::native::detail::GridSamplerPadding;
 
-
 inline void check_grid_sampler_common_v2(
   const torch::Tensor& input,
   const torch::Tensor& grid

@@ -9,6 +9,13 @@ from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.types import ItemOrList
 import warnings
 from enum import Enum
+import logging
+logger = logging.getLogger(__name__)
+try:
+    import fireants_fused_ops as ffo
+except ImportError:
+    logger.warn("fireants_fused_ops not found, will use torch fft instead")
+    ffo = None
 
 class TorchFloatType(Enum):
     FLOAT16 = torch.float16
@@ -102,12 +109,18 @@ def lie_bracket_3d(u: torch.Tensor, v: torch.Tensor):
     return lie_bracket
 
 def downsample(image: torch.Tensor, size: List[int], mode: str, sigma: Optional[torch.Tensor]=None,
-               gaussians: Optional[torch.Tensor] = None) -> torch.Tensor:
+               gaussians: Optional[torch.Tensor] = None, use_fft=True) -> torch.Tensor:
     ''' 
     this function is to downsample the image to the given size
     but first, we need to perform smoothing 
     if sigma is provided (in voxels), then use this sigma for downsampling, otherwise infer sigma
     '''
+    if use_fft and ffo is None:
+        logger.warn("fireants_fused_ops is not found, will default to standard downsampling")
+
+    if use_fft:
+        return downsample_fft(image, size)
+
     if gaussians is None:
         if sigma is None:
             orig_size = list(image.shape[2:])
@@ -119,6 +132,47 @@ def downsample(image: torch.Tensor, size: List[int], mode: str, sigma: Optional[
     image_down = separable_filtering(image, gaussians)
     image_down = F.interpolate(image_down, size=size, mode=mode, align_corners=True)
     return image_down
+
+def downsample_fft(image: torch.Tensor, size: List[int], padding=1) -> torch.Tensor:
+    ''' downsample using fft transform instead '''
+    dims = num_dims = len(image.shape) - 2
+    dims = [-x for x in range(1, dims+1)]
+    im_fft = torch.fft.fftn(image, dim=dims)
+    im_fft = torch.fft.fftshift(im_fft, dim=dims)
+    # get spatial coords
+    source_dims = list(image.shape[2:])
+    target_dims = size
+    # print(source_dims, target_dims)
+    # get start and end indices
+    start_idx = [H//2 - (h//2 + padding) for H, h in zip(source_dims, target_dims)]
+    end_idx = [si + sz + padding+1 for si, sz in zip(start_idx, target_dims)]
+    # crop the image
+    multiplier = [1.0 * sz / SZ for sz, SZ in zip(target_dims, source_dims)]
+    multiplier = np.prod(multiplier)
+    # print(multiplier, [-(h//2 + padding) for h in target_dims], [h - (h//2) + padding for h in target_dims])
+    if num_dims == 2:
+        im_fft = im_fft[:, :, start_idx[0]:end_idx[0], start_idx[1]:end_idx[1]].contiguous()
+        ffo.gaussian_blur_fft2(im_fft, *[-(h//2 + padding) for h in target_dims], *[h - (h//2) + padding for h in target_dims], multiplier)
+    elif num_dims == 3:
+        im_fft = im_fft[:, :, start_idx[0]:end_idx[0], start_idx[1]:end_idx[1], start_idx[2]:end_idx[2]].contiguous()
+        ffo.gaussian_blur_fft3(im_fft, *[-(h//2 + padding) for h in target_dims], *[h - (h//2) + padding for h in target_dims], multiplier)
+    else:
+        raise ValueError(f"Invalid dimension: {dims}")
+    
+    # print("cropped", im_fft.shape)
+    # crop the image
+    if padding > 0:
+        if num_dims == 2:
+            im_fft = im_fft[:, :, padding:-padding, padding:-padding]
+        elif num_dims == 3:
+            im_fft = im_fft[:, :, padding:-padding, padding:-padding, padding:-padding]
+    
+    # print("after padding", im_fft.shape)
+
+    im_fft = torch.fft.ifftshift(im_fft, dim=dims)
+    im_fft = torch.real(torch.fft.ifftn(im_fft, dim=dims)).contiguous()
+    return im_fft
+    
 
 def apply_gaussian(image: torch.Tensor, sigma: torch.Tensor, truncated: float = 2) -> torch.Tensor:
     '''

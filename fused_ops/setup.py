@@ -19,7 +19,8 @@ setup(
                 'src/FusedGridSampler.cu',
                 'src/FusedGridComposer.cu',
                 'src/FusedGenerateGrid.cu',
-                'src/AdamUtils.cu'
+                'src/AdamUtils.cu',
+                'src/GaussianBlurFFT.cu'
             ],
             include_dirs=[include_dir] + torch.utils.cpp_extension.include_paths(),
             library_dirs=torch.utils.cpp_extension.library_paths(),

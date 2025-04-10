@@ -4,7 +4,8 @@ import torch
 from torch import nn
 from fireants.io.image import BatchedImages, FakeBatchedImages
 from fireants.utils.util import check_and_raise_cond, augment_filenames, check_correct_ext, any_extension, savetxt
-from scipy.io import savemat
+# from scipy.io import savemat
+from fireants.utils.util import save_itk_affine as savemat
 from fireants.utils.globals import PERMITTED_ANTS_TXT_EXT, PERMITTED_ANTS_MAT_EXT
 from torch.optim import SGD, Adam
 from torch.nn import functional as F
@@ -188,8 +189,8 @@ class RigidRegistration(AbstractRegistration):
             A = mat[:self.dims, :self.dims]
             t = mat[:self.dims, -1]
             if any_extension(filenames[i], PERMITTED_ANTS_MAT_EXT):
-                savemat(filenames[i], {'AffineTransform_float_3_3': mat, 'fixed': np.zeros((self.dims, 1)).astype(np.float32)})
-                raise NotImplementedError("This function does not work with ANTs mat files")
+                dims = self.dims
+                savemat(filenames[i], {f'AffineTransform_float_{dims}_{dims}': mat, 'fixed': np.zeros((self.dims, 1)).astype(np.float32)})
             else:
                 savetxt(filenames[i], A, t)
             logger.info(f"Saved transform to {filenames[i]}")

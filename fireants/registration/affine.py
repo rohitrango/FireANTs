@@ -11,7 +11,8 @@ import numpy as np
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 from fireants.utils.util import check_and_raise_cond, check_correct_ext, any_extension, augment_filenames, savetxt
-from scipy.io import savemat
+# from scipy.io import savemat
+from fireants.utils.util import save_itk_affine as savemat
 from fireants.utils.globals import PERMITTED_ANTS_TXT_EXT, PERMITTED_ANTS_MAT_EXT
 import logging
 from fireants.interpolator import fireants_interpolator
@@ -137,8 +138,8 @@ class AffineRegistration(AbstractRegistration):
             A = mat[:self.dims, :self.dims]
             t = mat[:self.dims, -1]
             if any_extension(filenames[i], PERMITTED_ANTS_MAT_EXT):
-                savemat(filenames[i], {'AffineTransform_float_3_3': mat, 'fixed': np.zeros((self.dims, 1)).astype(np.float32)})
-                raise NotImplementedError("This function does not work with ANTs mat files")
+                dims = self.dims
+                savemat(filenames[i], {f'AffineTransform_float_{dims}_{dims}': mat, 'fixed': np.zeros((self.dims, 1)).astype(np.float32)})
             else:
                 savetxt(filenames[i], A, t)
             logger.info(f"Saved transform to {filenames[i]}")

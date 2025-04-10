@@ -22,14 +22,16 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+ext = "mat"
+
 @pytest.fixture(scope="class")
 def registration_results():
     """Fixture to compute and share registration results across subtests."""
     # Load test data
+    global ext
     test_data_dir = Path(__file__).parent / "test_data"
     output_dir = Path(__file__).parent / "test_results"
     output_dir.mkdir(exist_ok=True)
-    ext = "txt"
 
     # load images
     fixed_img = Image.load_file(str(test_data_dir / "oasis_157_image.nii.gz"))
@@ -161,10 +163,10 @@ class TestMomentsRegistration:
 def rigid_registration_results():
     """Fixture to compute and share rigid registration results across subtests."""
     # Load test data
+    global ext
     test_data_dir = Path(__file__).parent / "test_data"
     output_dir = Path(__file__).parent / "test_results"
     output_dir.mkdir(exist_ok=True)
-    ext = "txt"
 
     # load images
     fixed_img = Image.load_file(str(test_data_dir / "oasis_157_image.nii.gz"))
@@ -314,10 +316,10 @@ class TestRigidRegistration:
 def affine_registration_results():
     """Fixture to compute and share affine registration results across subtests."""
     # Load test data
+    global ext
     test_data_dir = Path(__file__).parent / "test_data"
     output_dir = Path(__file__).parent / "test_results"
     output_dir.mkdir(exist_ok=True)
-    ext = "txt"
 
     # load images
     fixed_img = Image.load_file(str(test_data_dir / "oasis_157_image.nii.gz"))

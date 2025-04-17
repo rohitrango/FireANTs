@@ -31,6 +31,7 @@ __global__ void create_intermediates_kernel3d(
     index_t batch_size, index_t n_channels, index_t height, index_t width, index_t depth) {
 
     using opmath_t = at::opmath_type<scalar_t>;
+    // using opmath_t = scalar_t;
 
     index_t n = batch_size * n_channels * height * width * depth;
     CUDA_KERNEL_LOOP_TYPE(i, n, index_t) {
@@ -41,8 +42,8 @@ __global__ void create_intermediates_kernel3d(
         index_t d = i % depth;
 
         // read input and target images
-        opmath_t I = input_img[i];
-        opmath_t J = target_img[i];
+        opmath_t I = static_cast<opmath_t>(input_img[i]);
+        opmath_t J = static_cast<opmath_t>(target_img[i]);
 
         // compute intermediate values
         opmath_t I2 = I * I;
@@ -52,11 +53,11 @@ __global__ void create_intermediates_kernel3d(
         // write intermediate values
         index_t out_idx_start = d + depth * (w + width * (h + height * (c + 5 * n_channels * (b))));
         index_t out_offset = n_channels * height * width * depth;
-        intermediates[out_idx_start] = I;
-        intermediates[out_idx_start + out_offset] = J;
-        intermediates[out_idx_start + 2 * out_offset] = I2;
-        intermediates[out_idx_start + 3 * out_offset] = J2;
-        intermediates[out_idx_start + 4 * out_offset] = IJ;
+        intermediates[out_idx_start] = static_cast<scalar_t>(I);
+        intermediates[out_idx_start + out_offset] = static_cast<scalar_t>(J);
+        intermediates[out_idx_start + 2 * out_offset] = static_cast<scalar_t>(I2);
+        intermediates[out_idx_start + 3 * out_offset] = static_cast<scalar_t>(J2);
+        intermediates[out_idx_start + 4 * out_offset] = static_cast<scalar_t>(IJ);
     }
 }
 
@@ -72,7 +73,7 @@ __global__ void cc3d_fwd_interm_v1_kernel(
 
     // initialize output value
     // scalar_t out_val = 0;
-    __shared__ opmath_t out_val[BLOCKSIZE_3D];
+    __shared__ scalar_t out_val[BLOCKSIZE_3D];
     out_val[threadIdx.x] = 0;
 
     // initialize thread id
@@ -89,19 +90,22 @@ __global__ void cc3d_fwd_interm_v1_kernel(
         index_t spatial_mult = depth * width * height;
 
         // Get variables (all means)
-        opmath_t Ival = interm[input_idx_common + c * spatial_mult];
-        opmath_t Jval = interm[input_idx_common + (c + n_out_channels) * spatial_mult];
-        opmath_t I2val = interm[input_idx_common + (c + 2 * n_out_channels) * spatial_mult];
-        opmath_t J2val = interm[input_idx_common + (c + 3 * n_out_channels) * spatial_mult];
-        opmath_t IJval = interm[input_idx_common + (c + 4 * n_out_channels) * spatial_mult];
+        opmath_t Ival = static_cast<opmath_t>(interm[input_idx_common + c * spatial_mult]);
+        opmath_t Jval = static_cast<opmath_t>(interm[input_idx_common + (c + n_out_channels) * spatial_mult]);
+        opmath_t I2val = static_cast<opmath_t>(interm[input_idx_common + (c + 2 * n_out_channels) * spatial_mult]);
+        opmath_t J2val = static_cast<opmath_t>(interm[input_idx_common + (c + 3 * n_out_channels) * spatial_mult]);
+        opmath_t IJval = static_cast<opmath_t>(interm[input_idx_common + (c + 4 * n_out_channels) * spatial_mult]);
         
         // compute cross-correlation
         opmath_t kv = static_cast<opmath_t>(kernel_volume);
-        opmath_t aval = kv * (IJval - Ival * Jval);
-        opmath_t bval = kv * (I2val - Ival * Ival);
-        opmath_t cval = kv * (J2val - Jval * Jval);
+        opmath_t aval = kv*(IJval - Ival * Jval);
+        opmath_t bval = max(kv*(I2val - Ival * Ival), dr);
+        opmath_t cval = max(kv*(J2val - Jval * Jval), dr);
         // cross-correlation
         kv = (aval * aval + nr)/(bval * cval + dr);
+        // clamp
+        if(kv < -1.0) kv = -1.0;
+        if(kv > 1.0) kv = 1.0;
 
         if (reduce == Reduction::NONE) {
             index_t out_idx = d + depth * (w + width * (h + height * (c + n_out_channels * b)));
@@ -110,7 +114,7 @@ __global__ void cc3d_fwd_interm_v1_kernel(
         else {
             // int out_idx = i % out_size;
             // gpuAtomicAdd(out + out_idx, static_cast<scalar_t>(kv));
-            out_val[threadIdx.x] += kv;
+            out_val[threadIdx.x] += static_cast<scalar_t>(kv);
         }
     }
     // collected output value
@@ -125,7 +129,7 @@ __global__ void cc3d_fwd_interm_v1_kernel(
             __syncthreads();
         }
         if (threadIdx.x == 0) {
-            out[blockIdx.x] = out_val[0];
+            out[blockIdx.x] = static_cast<scalar_t>(out_val[0]);
         }
     }
 }
@@ -176,11 +180,11 @@ __global__ void cc3d_bwd_modify_interm_v1_kernel(
         index_t spatial_mult = depth * width * height;
 
         // get intermediate values
-        opmath_t Ival = interm[input_idx_common + c * spatial_mult];
-        opmath_t Jval = interm[input_idx_common + (c + n_out_channels) * spatial_mult];
-        opmath_t I2val = interm[input_idx_common + (c + 2 * n_out_channels) * spatial_mult];
-        opmath_t J2val = interm[input_idx_common + (c + 3 * n_out_channels) * spatial_mult];
-        opmath_t IJval = interm[input_idx_common + (c + 4 * n_out_channels) * spatial_mult];
+        opmath_t Ival = static_cast<opmath_t>(interm[input_idx_common + c * spatial_mult]);
+        opmath_t Jval = static_cast<opmath_t>(interm[input_idx_common + (c + n_out_channels) * spatial_mult]);
+        opmath_t I2val = static_cast<opmath_t>(interm[input_idx_common + (c + 2 * n_out_channels) * spatial_mult]);
+        opmath_t J2val = static_cast<opmath_t>(interm[input_idx_common + (c + 3 * n_out_channels) * spatial_mult]);
+        opmath_t IJval = static_cast<opmath_t>(interm[input_idx_common + (c + 4 * n_out_channels) * spatial_mult]);
 
         // compute intermediate values
         opmath_t aval = kernel_volume * (IJval - Ival * Jval);
@@ -188,7 +192,7 @@ __global__ void cc3d_bwd_modify_interm_v1_kernel(
         opmath_t cval = kernel_volume * (J2val - Jval * Jval);
 
         // compute output gradient
-        opmath_t gOVal = reduction == Reduction::NONE ? grad_output[i] : grad_output_val;
+        opmath_t gOVal = reduction == Reduction::NONE ? static_cast<opmath_t>(grad_output[i]) : static_cast<opmath_t>(grad_output_val);
         gOVal = 2 * gOVal * aval / (bval * cval + dr);    // 2gn / A = D
 
         // add this term for further use
@@ -196,12 +200,12 @@ __global__ void cc3d_bwd_modify_interm_v1_kernel(
         cval += dr;
 
         // write the first three entries in the intermediate array 
-        interm[input_idx_common + c * spatial_mult] = gOVal;   // D
-        interm[input_idx_common + (c + n_out_channels) * spatial_mult] = gOVal * aval / bval;
-        interm[input_idx_common + (c + 2 * n_out_channels) * spatial_mult] = gOVal * (aval / bval * Ival - Jval);
+        interm[input_idx_common + c * spatial_mult] = static_cast<scalar_t>(gOVal);   // D
+        interm[input_idx_common + (c + n_out_channels) * spatial_mult] = static_cast<scalar_t>(gOVal * aval / bval);
+        interm[input_idx_common + (c + 2 * n_out_channels) * spatial_mult] = static_cast<scalar_t>(gOVal * (aval / bval * Ival - Jval));
         if (compute_grad_target) {
-            interm[input_idx_common + (c + 3 * n_out_channels) * spatial_mult] = gOVal * aval / cval;
-            interm[input_idx_common + (c + 4 * n_out_channels) * spatial_mult] = gOVal * (aval / cval * Jval - Ival);
+            interm[input_idx_common + (c + 3 * n_out_channels) * spatial_mult] = static_cast<scalar_t>(gOVal * aval / cval);
+            interm[input_idx_common + (c + 4 * n_out_channels) * spatial_mult] = static_cast<scalar_t>(gOVal * (aval / cval * Jval - Ival));
         }
         
     } // cuda kernel loop
@@ -228,22 +232,22 @@ __global__ void cc3d_bwd_compute_grads_kernel(
         index_t spatial_mult = depth * width * height;
 
         // get image values  
-        opmath_t Ival = input_img[i];
-        opmath_t Jval = target_img[i];
+        opmath_t Ival = static_cast<opmath_t>(input_img[i]);
+        opmath_t Jval = static_cast<opmath_t>(target_img[i]);
 
-        opmath_t gini_a = interm[input_idx_common + c * spatial_mult];
-        opmath_t gini_b = interm[input_idx_common + (c + n_out_channels) * spatial_mult];
-        opmath_t gini_mu1 = interm[input_idx_common + (c + 2 * n_out_channels) * spatial_mult];
+        opmath_t gini_a = static_cast<opmath_t>(interm[input_idx_common + c * spatial_mult]);
+        opmath_t gini_b = static_cast<opmath_t>(interm[input_idx_common + (c + n_out_channels) * spatial_mult]);
+        opmath_t gini_mu1 = static_cast<opmath_t>(interm[input_idx_common + (c + 2 * n_out_channels) * spatial_mult]);
 
         // compute grad_input
-        grad_input_img[i] = gini_a * Jval - gini_b * Ival + gini_mu1;
+        grad_input_img[i] = static_cast<scalar_t>(gini_a * Jval - gini_b * Ival + gini_mu1);
 
         if (grad_target_img != nullptr) {
             // get gini_
-            opmath_t gini_c = interm[input_idx_common + (c + 3 * n_out_channels) * spatial_mult];
-            opmath_t gini_mu2 = interm[input_idx_common + (c + 4 * n_out_channels) * spatial_mult];
+            opmath_t gini_c = static_cast<opmath_t>(interm[input_idx_common + (c + 3 * n_out_channels) * spatial_mult]);
+            opmath_t gini_mu2 = static_cast<opmath_t>(interm[input_idx_common + (c + 4 * n_out_channels) * spatial_mult]);
             // compute grad_target
-            grad_target_img[i] = gini_a * Ival - gini_c * Jval + gini_mu2;
+            grad_target_img[i] = static_cast<scalar_t>(gini_a * Ival - gini_c * Jval + gini_mu2);
         }
     }
 }

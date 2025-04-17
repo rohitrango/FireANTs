@@ -38,18 +38,20 @@ def test_greedy_crosscorrelation(fused_ops, fused_cc, fixed_image_path, moving_i
 
     # initialize registration
     loss = 'fusedcc' if fused_cc else 'cc'
+    # loss = 'mse'
     start = time()
-    loss_params = {'use_ants_gradient': True} if fused_cc else {}
+    loss_params = {'use_ants_gradient': True, 'use_separable': True} if fused_cc else {}
     reg = GreedyRegistration([4, 2, 1], iterations,
                              fixed_batch, moving_batch, 
                              blur=True,
-                             dtype=dtype,
+                             dtype=dtype if not fused_ops else torch.float32,
                              loss_params=loss_params,
                              optimizer_params={'offload': False},
-                            #  smooth_warp_sigma=0.25,
-                            #  smooth_grad_sigma=0.5,
-                             smooth_warp_sigma=0,
-                             smooth_grad_sigma=0,
+                             cc_kernel_size=7,
+                             smooth_warp_sigma=0.25,
+                             smooth_grad_sigma=0.5,
+                            #  smooth_warp_sigma=0,
+                            #  smooth_grad_sigma=0,
                              optimizer_lr=0.5,
                              loss_type=loss, optimizer='Adam', max_tolerance_iters=1000)
     reg.optimize(False)

@@ -409,10 +409,13 @@ if __name__ == '__main__':
     dist.init_process_group(backend='nccl', rank=rank, world_size=world_size)
     torch.cuda.set_device(rank)
 
-    torch.cuda.memory._record_memory_history()
-    # img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz', device='cpu')
-    # img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz', device='cpu')
-    path = Path('/mnt/rohit_data2/fMOST/subject/')
+    # torch.cuda.memory._record_memory_history()
+    # data_path = os.environ['DATAPATH_R']
+    # img1 = Image.load_file(f'{data_path}/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz', device='cpu')
+    # img2 = Image.load_file(f'{data_path}/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz', device='cpu')
+
+    path = os.environ['DATA_PATH2']
+    path = Path(f'{path}/fMOST/subject/')
     img1 = Image.load_file(str(path / "192333_red_mm_SLA.nii.gz"), device='cpu')
     img2 = Image.load_file(str(path / "191820_red_mm_SLA.nii.gz"), device='cpu')
     print(torch.cuda.memory_summary(device=rank, abbreviated=False))
@@ -424,4 +427,4 @@ if __name__ == '__main__':
     print(f"Optimized from rank {rank}")
     dist.destroy_process_group()
 
-    torch.cuda.memory._dump_snapshot(f"pkls/greedy_dist_{rank}.pickle")
+    # torch.cuda.memory._dump_snapshot(f"pkls/greedy_dist_{rank}.pickle")

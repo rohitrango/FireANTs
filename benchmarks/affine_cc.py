@@ -67,10 +67,11 @@ def test_affine_crosscorrelation(fused_ops, fused_cc, fixed_image_path, moving_i
 
 
 if __name__ == "__main__":
-    fixed_image_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_norm.nii.gz"
-    # fixed_seg_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_seg35.nii.gz"
-    moving_image_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_norm.nii.gz"
-    # moving_seg_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_seg35.nii.gz"
+    import os
+    fixed_image_path = f"{os.environ['DATA_PATH2']}/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_norm.nii.gz"
+    # fixed_seg_path = f"{os.environ['DATA_PATH2']}/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_seg35.nii.gz"
+    moving_image_path = f"{os.environ['DATA_PATH2']}/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_norm.nii.gz"
+    # moving_seg_path = f"{os.environ['DATA_PATH2']}/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_seg35.nii.gz"
     fixed_seg_path = None
     moving_seg_path = None
     # warmup

@@ -328,13 +328,12 @@ if __name__ == '__main__':
     import torch
     import traceback
     torch.cuda.memory._record_memory_history()
+    import os
 
-    img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
-    img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t1.nii.gz')
+    img1 = Image.load_file(f'{os.environ["DATAPATH_R"]}/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
+    img2 = Image.load_file(f'{os.environ["DATAPATH_R"]}/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t1.nii.gz')
 
     ## works at native resolution with bf16 and PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:512" and mse loss
-    # img1 = Image.load_file("/mnt/rohit_data2/fMOST/subject/15257_red_mm_IRA.nii.gz", dtype=torch.bfloat16)
-    # img2 = Image.load_file("/mnt/rohit_data2/fMOST/subject/17109_red_mm_SLA.nii.gz", dtype=torch.bfloat16)
     print(img1.shape, img2.shape)
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2,])

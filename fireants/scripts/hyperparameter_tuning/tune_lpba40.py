@@ -29,6 +29,9 @@ import ray
 from ray import tune, air
 from ray.air import session
 from ray.tune.search import ConcurrencyLimiter, BasicVariantGenerator
+import os
+
+ROOT = os.environ['DATAPATH_R']
 
 def seg_preprocessor_full(segmentation: torch.Tensor, labels_all: np.ndarray):
     ''' custom preprocessor for IBSR dataset that maps only the common structures '''
@@ -41,9 +44,10 @@ def registration_run(config):
     ''' This is the main function that uses the config from ray.tune and
     performs image registration across the dataset
     '''
+    global ROOT
     sitk.ProcessObject_SetGlobalWarningDisplay(False)
-    DATA_DIR = "/data/rohitrango/brain_data/LPBA40/registered_pairs/"
-    LABEL_DIR = "/data/rohitrango/brain_data/LPBA40/registered_label_pairs/"
+    DATA_DIR = f"{ROOT}/brain_data/LPBA40/registered_pairs/"
+    LABEL_DIR = f"{ROOT}/brain_data/LPBA40/registered_label_pairs/"
     # first label is background 
     labels_all = np.array([  0,  21,  22,  23,  24,  25,  26,  27,  28,  29,  30,  31,  32,
             33,  34,  41,  42,  43,  44,  45,  46,  47,  48,  49,  50,  61,

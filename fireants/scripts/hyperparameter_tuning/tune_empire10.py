@@ -24,12 +24,10 @@ from ray import tune, air
 from ray.air import session
 from ray.tune.search import ConcurrencyLimiter, BasicVariantGenerator
 
-SCANS_PATH = "/data/rohitrango/EMPIRE10/scans_v2/"
-MASKS_PATH = "/data/rohitrango/EMPIRE10/lungMasks_v2/"
-OUT_PATH = "/data/rohitrango/EMPIRE10/submission_v2/"
-# SCANS_PATH = "/data/rohitrango/EMPIRE10/scans/"
-# MASKS_PATH = "/data/rohitrango/EMPIRE10/lungMasks/"
-# OUT_PATH = "/data/rohitrango/EMPIRE10/submission/"
+ROOT = os.environ['DATAPATH_R']
+SCANS_PATH = f'{ROOT}/EMPIRE10/scans_v2/'
+MASKS_PATH = f'{ROOT}/EMPIRE10/lungMasks_v2/'
+OUT_PATH = f'{ROOT}/EMPIRE10/submission_v2/'
 
 class DiceLossModule(nn.Module):
     # Dice loss in the form of nn Module to pass into affine step 

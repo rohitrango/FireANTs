@@ -76,7 +76,7 @@ def test_greedy_crosscorrelation(fused_ops, fused_cc, fixed_image_path, moving_i
 
 
 if __name__ == "__main__":
-
+    import os
     # variable to determine whether to run long optim
     # if this is false, we want to see memory usage and dont care about dice
     run_long_optim = os.getenv('RUN_LONG_OPTIM', 'false').lower() == 'true'
@@ -87,10 +87,11 @@ if __name__ == "__main__":
     else:
         iterations = [10, 5, 2]
 
-    fixed_image_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_norm.nii.gz"
-    fixed_seg_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_seg35.nii.gz"
-    moving_image_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_norm.nii.gz"
-    moving_seg_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_seg35.nii.gz"
+    path = os.environ['DATA_PATH2']
+    fixed_image_path = f"{path}/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_norm.nii.gz"
+    fixed_seg_path = f"{path}/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_seg35.nii.gz"
+    moving_image_path = f"{path}/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_norm.nii.gz"
+    moving_seg_path = f"{path}/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_seg35.nii.gz"
     if not run_long_optim:
         fixed_seg_path = None
         moving_seg_path = None

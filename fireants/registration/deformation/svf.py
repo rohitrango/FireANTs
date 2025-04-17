@@ -130,8 +130,10 @@ def get_gpu_memory():
     return torch.cuda.memory_allocated() / 1024 / 1024
 
 if __name__ == '__main__':
-    img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
-    img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz')
+    import os
+    path = os.environ['DATAPATH_R']
+    img1 = Image.load_file(f'{path}/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
+    img2 = Image.load_file(f'{path}/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz')
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2,])
     deformation = StationaryVelocity(fixed, moving, dtype=torch.float64)
@@ -149,8 +151,8 @@ if __name__ == '__main__':
     gc.collect()
     print(f"GPU memory after float64: {get_gpu_memory()}")
 
-    img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
-    img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz')
+    img1 = Image.load_file(f'{path}/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
+    img2 = Image.load_file(f'{path}/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz')
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2,])
     deformation = StationaryVelocity(fixed, moving, dtype=torch.float32)

@@ -488,8 +488,9 @@ class FakeBatchedImages:
 if __name__ == '__main__':
     from fireants.utils.util import get_tensor_memory_details
     from glob import glob
-    # files = sorted(glob("/data/rohitrango/IBSR_braindata/IBSR_01/*nii.gz"))
-    file = "/mnt/rohit_data2/fMOST/subject/15257_red_mm_IRA.nii.gz"
+    import os
+    # files = sorted(glob(f"{os.environ['DATAPATH_R']}/IBSR_braindata/IBSR_01/*nii.gz"))
+    file = f"{os.environ['DATA_PATH2']}/fMOST/subject/15257_red_mm_IRA.nii.gz"
     # torch.cuda.memory._record_memory_history()
 
     image = Image.load_file(file)
@@ -505,10 +506,10 @@ if __name__ == '__main__':
 
     # Check concatenation
     mem_start = torch.cuda.memory_allocated()
-    t1 = Image.load_file("/data/rohitrango/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t1.nii.gz")
-    t2 = Image.load_file("/data/rohitrango/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t2.nii.gz")
-    t1ce = Image.load_file("/data/rohitrango/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t1ce.nii.gz")
-    flair = Image.load_file("/data/rohitrango/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_flair.nii.gz")
+    t1 = Image.load_file(f"{os.environ['DATAPATH_R']}/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t1.nii.gz")
+    t2 = Image.load_file(f"{os.environ['DATAPATH_R']}/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t2.nii.gz")
+    t1ce = Image.load_file(f"{os.environ['DATAPATH_R']}/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t1ce.nii.gz")
+    flair = Image.load_file(f"{os.environ['DATAPATH_R']}/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_flair.nii.gz")
     t1.concatenate(t2, t1ce, flair)
     print(t1.array.shape)
     print(t2.is_array_present, t1ce.is_array_present, flair.is_array_present)

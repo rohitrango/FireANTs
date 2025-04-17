@@ -15,6 +15,7 @@ from fireants.tests.cc_mem_test import fast_lncc
 import itertools
 import logging
 logger = logging.getLogger(__name__)
+torch.backends.cudnn.benchmark = True
 
 reduction_table = {
     'none': ffo.Reduction.NONE,
@@ -163,6 +164,9 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         self.smooth_dr = float(smooth_dr)
         self.use_ants_gradient = use_ants_gradient
         self.use_separable = use_separable
+    
+    def get_image_padding(self) -> int:
+        return (self.kernel_size - 1) // 2
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """

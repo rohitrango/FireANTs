@@ -10,16 +10,27 @@ from typing import Union, Tuple, List, Optional, Dict, Any, Callable
 from fireants.types import ItemOrList
 import fireants_fused_ops as ffo
 
-def get_min_coords(Z, Y, X, align_corners):
+def get_min_coords3d(Z, Y, X, align_corners):
     if not align_corners:
         return -1.0 + 1.0/X, -1.0 + 1.0/Y, -1.0 + 1.0/Z
     return -1.0, -1.0, -1.0
 
 # ZYX order
-def get_max_coords(Z, Y, X, align_corners):
+def get_max_coords3d(Z, Y, X, align_corners):
     if not align_corners:
         return 1.0 - 1.0/X, 1.0 - 1.0/Y, 1.0 - 1.0/Z
     return 1.0, 1.0, 1.0
+
+def get_min_coords2d(Y, X, align_corners):
+    if not align_corners:
+        return -1.0 + 1.0/X, -1.0 + 1.0/Y
+    return -1.0, -1.0
+
+# ZYX order
+def get_max_coords2d(Y, X, align_corners):
+    if not align_corners:
+        return 1.0 - 1.0/X, 1.0 - 1.0/Y
+    return 1.0, 1.0
 
 GRID_SAMPLE_INTERPOLATION_MODES = {
     "bilinear": 0,
@@ -58,9 +69,9 @@ class FusedGridSampler3d(torch.autograd.Function):
             Z, Y, X = grid.shape[1:-1]
         # get min and max coords
         if min_coords is None:
-            min_coords = get_min_coords(Z, Y, X, align_corners)
+            min_coords = get_min_coords3d(Z, Y, X, align_corners)
         if max_coords is None:
-            max_coords = get_max_coords(Z, Y, X, align_corners)
+            max_coords = get_max_coords3d(Z, Y, X, align_corners)
         # get output
         output = ffo.fused_grid_sampler_3d_forward(input, affine, grid, Z, Y, X, min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], is_displacement, GRID_SAMPLE_INTERPOLATION_MODES[interpolation_mode], GRID_SAMPLE_PADDING_MODES[padding_mode], align_corners)
         # save everything for backward
@@ -119,9 +130,9 @@ class FusedWarpComposer3d(torch.autograd.Function):
         Z, Y, X = grid.shape[1:-1]
         # get min and max coords
         if min_coords is None:
-            min_coords = get_min_coords(Z, Y, X, align_corners)
+            min_coords = get_min_coords3d(Z, Y, X, align_corners)
         if max_coords is None:
-            max_coords = get_max_coords(Z, Y, X, align_corners)
+            max_coords = get_max_coords3d(Z, Y, X, align_corners)
         # get output
         output = ffo.fused_grid_composer_3d_forward(input, affine, grid, min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], align_corners)
         # save everything for backward
@@ -167,9 +178,9 @@ class FusedAffineWarp3d(torch.autograd.Function):
         '''
         Z, Y, X = grid.shape[1:-1]
         if min_coords is None:
-            min_coords = get_min_coords(Z, Y, X, align_corners)
+            min_coords = get_min_coords3d(Z, Y, X, align_corners)
         if max_coords is None:
-            max_coords = get_max_coords(Z, Y, X, align_corners)
+            max_coords = get_max_coords3d(Z, Y, X, align_corners)
         # get output
         assert affine is None or affine.is_contiguous(), "affine must be contiguous"
         assert grid.is_contiguous(), "grid must be contiguous"
@@ -206,6 +217,8 @@ def fused_grid_sampler_3d(
     mode: str = "bilinear",
     padding_mode: str = "zeros",
     align_corners: bool = True,
+    min_coords: Optional[tuple] = None,
+    max_coords: Optional[tuple] = None,
     out_shape: tuple = None,
     is_displacement: bool = True
 ) -> torch.Tensor:
@@ -240,7 +253,7 @@ def fused_grid_sampler_3d(
         out_shape = out_shape[-3:]
     else:
         out_shape = grid.shape[1:-1]
-    output = FusedGridSampler3d.apply(input, affine, grid, mode, padding_mode, align_corners, out_shape, None, None, is_displacement)
+    output = FusedGridSampler3d.apply(input, affine, grid, mode, padding_mode, align_corners, out_shape, min_coords, max_coords, is_displacement)
     return output
 
 def fused_warp_composer_3d(
@@ -248,6 +261,8 @@ def fused_warp_composer_3d(
     affine: Optional[torch.Tensor] = None,
     v: torch.Tensor = None,
     align_corners: bool = True,
+    min_coords: Optional[torch.Tensor] = None,
+    max_coords: Optional[torch.Tensor] = None,
     grid: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
@@ -264,12 +279,14 @@ def fused_warp_composer_3d(
     assert u.is_contiguous(), "input must be contiguous"
     assert affine is None or affine.is_contiguous(), "affine must be contiguous"
     assert v.is_contiguous(), "grid must be contiguous"    
-    output = FusedWarpComposer3d.apply(u, affine, v, align_corners, None, None)
+    output = FusedWarpComposer3d.apply(u, affine, v, align_corners, min_coords, max_coords)
     return output
 
 def fused_affine_warp_3d(
     affine: Optional[torch.Tensor],
     grid: torch.Tensor,
     align_corners: bool = True,
+    min_coords: Optional[torch.Tensor] = None,
+    max_coords: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    return FusedAffineWarp3d.apply(affine, grid, align_corners, None, None)
+    return FusedAffineWarp3d.apply(affine, grid, align_corners, min_coords, max_coords)

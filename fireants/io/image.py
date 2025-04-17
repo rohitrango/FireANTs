@@ -19,6 +19,26 @@ from fireants.utils.globals import PERMITTED_ANTS_WARP_EXT
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+def divide_size_into_chunks(size: int, world_size: int) -> list:
+    '''
+    Divide a size into as-equal-as-possible chunks based on world size for distributed
+    
+    Args:
+        size (int): The total size to be divided
+        world_size (int): Number of processes to divide the size across
+        
+    Returns:
+        list: List of chunk sizes that sum up to the original size
+    '''
+    base_size = size // world_size
+    remainder = size % world_size
+    chunks = [base_size] * world_size
+    
+    # Distribute remainder across first 'remainder' processes
+    for i in range(remainder):
+        chunks[i] += 1
+    return chunks
+
 class Image:
     '''`Image` is a class to handle medical images with SimpleITK backend and PyTorch tensor support.
 
@@ -266,6 +286,38 @@ class BatchedImages:
         # create metadata
         self.torch2phy = torch.cat([x.torch2phy for x in self.images], dim=0)
         self.phy2torch = torch.cat([x.phy2torch for x in self.images], dim=0)
+    
+    def set_device(self, device_name):
+        # set the device for the batch tensor
+        self.batch_tensor = self.batch_tensor.to(device_name)
+        self.torch2phy = self.torch2phy.to(device_name)
+        self.phy2torch = self.phy2torch.to(device_name)
+
+    
+    def _shard_dim(self, dim_to_shard, rank, world_size):
+        size = self.batch_tensor.shape[dim_to_shard+2]
+        chunk_sizes = divide_size_into_chunks(size, world_size)
+        # check 
+        start = sum(chunk_sizes[:rank])
+        end = sum(chunk_sizes[:rank+1])
+        # store the full tensor into batch_tensor_full, and sharded version in 
+        self.batch_tensor_full = self.batch_tensor
+        self.batch_tensor = self.batch_tensor_full.narrow_copy(dim_to_shard+2, start, end-start)
+        print(f"Sharded batch tensor shape: {self.batch_tensor.shape} and rank: {rank}/{world_size}")
+        self._shard_start = start
+        self._shard_end = end
+        self._shard_dim = dim_to_shard
+    
+    def _save_shards(self, dim_to_shard, world_size):
+        size = self.batch_tensor.shape[dim_to_shard+2]
+        chunk_size = (size + world_size - 1) // world_size
+        chunks = []
+        for _ in range(world_size):
+            start = _ * chunk_size
+            end = min(start + chunk_size, size)
+            chunks.append((start, end))
+        self._sharded_chunks = chunks
+
 
     def __call__(self):
         '''Get the batch of images.
@@ -299,7 +351,7 @@ class BatchedImages:
     @property
     def device(self):
         '''Get the device where the image tensors are stored.'''
-        return self.images[0].device
+        return self.batch_tensor.device
     
     @property
     def dims(self):
@@ -313,7 +365,8 @@ class BatchedImages:
     @property
     def shape(self):
         '''Get the shape of the images.'''
-        shape = list(self.images[0].shape)
+        # shape = list(self.images[0].shape)
+        shape = list(self.batch_tensor.shape)
         shape[0] = self.n_images
         return shape
     

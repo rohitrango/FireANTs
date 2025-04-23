@@ -385,13 +385,14 @@ class FakeBatchedImages:
     We will use the metadata of the BatchedImages object to create a FakeBatchedImages object.
     with the content of the tensor.
     '''
-    def __init__(self, tensor: torch.Tensor, batched_images: BatchedImages) -> None:
+    def __init__(self, tensor: torch.Tensor, batched_images: BatchedImages, ignore_size_match: bool = False) -> None:
         batched_size = list(deepcopy(batched_images().shape))
         tensor_size = list(deepcopy(tensor.shape))
         # ignore channel dimension differences
         batched_size[1] = 1
         tensor_size[1] = 1
-        check_and_raise_cond(tuple(batched_size) == tuple(tensor_size), "Tensor size must match the size of the batched images", ValueError)
+        if not ignore_size_match:
+            check_and_raise_cond(tuple(batched_size) == tuple(tensor_size), "Tensor size must match the size of the batched images", ValueError)
         self.tensor = tensor
         self.batched_images = batched_images
     

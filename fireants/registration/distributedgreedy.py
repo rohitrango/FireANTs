@@ -100,7 +100,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
         self.rank = rank = int(os.environ['RANK'])
         self.world_size = world_size = int(os.environ['WORLD_SIZE'])
         self.master_rank = master_rank = int(os.environ.get("MASTER_RANK", 0))
-        print(f"Running Distributed Greedy on rank {self.rank} out of {self.world_size} with master_rank {self.master_rank}")
+        logger.info(f"Running Distributed Greedy on rank {self.rank} out of {self.world_size} with master_rank {self.master_rank}")
         # initialize abstract registration
         super().__init__(scales=scales, iterations=iterations, fixed_images=fixed_images, moving_images=moving_images, 
                          loss_type=loss_type, mi_kernel_type=mi_kernel_type, cc_kernel_type=cc_kernel_type, custom_loss=custom_loss, 
@@ -391,9 +391,36 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                 transformed_images.append(moved_image.detach() if isinstance(moved_image, torch.Tensor) else moved_image)
         
         print(f"Rank {rank} finished optimization")
+        # cleanup optimization state
+        self.warp.optimizer.cleanup()
 
         if save_transformed:
             return transformed_images
+    
+    def get_moved_image_fullres(self, ):
+        '''
+        Get moved image at full resolution 
+        '''
+        fixed_t2p = self.fixed_images.get_torch2phy().to(self.dtype)
+        moving_p2t = self.moving_images.get_phy2torch().to(self.dtype)
+        # get shape of sharded image
+        fixed_sharded_size = self.fixed_images.shape[2:]
+        moving_sharded_size = self.moving_images.shape[2:]
+        # save initial affine transform to initialize grid 
+        affine_map_init = (torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]).contiguous().to(self.dtype)
+        # get sharded arrays
+        fixed_sharded_array = self.fixed_images()
+        moving_sharded_array = self.moving_images()
+        # gather moving image
+        moving_image_blur, moving_gather_stats = gather_and_concat(moving_sharded_array, self.rank, self.world_size, self.master_rank, True, self.dim_to_shard)
+        # Get stats for min and max coords
+        min_coords_moving, max_coords_moving = calculate_bbox_from_gather_stats(moving_gather_stats, self.rank, self.world_size, self.dims)
+        # get coordinates to interpolate
+        moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=self.warp.get_warp(), mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_moving, max_coords=max_coords_moving)
+        # gather it up again
+        del moving_image_blur
+        moved_image, _ = gather_and_concat(moved_image, self.rank, self.world_size, self.master_rank, True, self.dim_to_shard)
+        return moved_image
 
 
 if __name__ == '__main__':
@@ -418,13 +445,30 @@ if __name__ == '__main__':
     path = Path(f'{path}/fMOST/subject/')
     img1 = Image.load_file(str(path / "192333_red_mm_SLA.nii.gz"), device='cpu')
     img2 = Image.load_file(str(path / "191820_red_mm_SLA.nii.gz"), device='cpu')
-    print(torch.cuda.memory_summary(device=rank, abbreviated=False))
+    # clamp
+    # img1.array = torch.clamp(img1.array, 20, 150) - 20
+    # img2.array = torch.clamp(img2.array, 20, 150) - 20
+    # batchify
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2, ])
-    reg = DistributedGreedyRegistration(scales=[4, 2, 1], iterations=[200, 100, 50], fixed_images=fixed, moving_images=moving, 
-                                optimizer='Adam', optimizer_lr=0.5, loss_type='cc')
+    reg = DistributedGreedyRegistration(scales=[12, 8, 4, 2, 1], iterations=[200, 200, 200, 100, 50], 
+                                cc_kernel_size=9,
+                                smooth_grad_sigma=0,
+                                smooth_warp_sigma=0,
+                                # loss_params={'use_ants_gradient': True},
+                                fixed_images=fixed, moving_images=moving, 
+                                optimizer='Adam', optimizer_lr=0.5, loss_type='fusedcc')
     reg.optimize()
     print(f"Optimized from rank {rank}")
+
+    # get moved image
+    print("Gathering moved image")
+    moved_image = reg.get_moved_image_fullres().to(torch.uint8)
+    if rank == 0:
+        print("Saving moved image")
+        moved_image = FakeBatchedImages(moved_image, fixed, ignore_size_match=True)
+        moved_image.write_image("fmost_moved_image.nii.gz")
+
     dist.destroy_process_group()
 
     # torch.cuda.memory._dump_snapshot(f"pkls/greedy_dist_{rank}.pickle")

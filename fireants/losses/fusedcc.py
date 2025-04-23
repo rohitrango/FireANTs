@@ -17,6 +17,8 @@ import logging
 logger = logging.getLogger(__name__)
 torch.backends.cudnn.benchmark = True
 
+MAX_INT32_NUMEL = 2**31 - 1
+
 reduction_table = {
     'none': ffo.Reduction.NONE,
     'sum': ffo.Reduction.SUM,
@@ -40,16 +42,33 @@ class FusedNCC3d(torch.autograd.Function):
         kernel_vol = kernel_size ** 3
 
         if use_separable:
-            filt1 = torch.ones(5*C, 1, kernel_size, 1, 1, device=input_img.device, dtype=input_img.dtype) / kernel_size
-            filt2 = torch.ones(5*C, 1, 1, kernel_size, 1, device=input_img.device, dtype=input_img.dtype) / kernel_size
-            filt3 = torch.ones(5*C, 1, 1, 1, kernel_size, device=input_img.device, dtype=input_img.dtype) / kernel_size
-            interm = F.conv3d(interm, filt1, padding='same', stride=1, groups=interm.shape[1])
-            interm = F.conv3d(interm, filt2, padding='same', stride=1, groups=interm.shape[1])
-            interm = F.conv3d(interm, filt3, padding='same', stride=1, groups=interm.shape[1])
+            if interm.numel() >= MAX_INT32_NUMEL:
+                # numel is too large for group convolution, fallback to singular
+                filt1 = torch.ones(1, 1, kernel_size, 1, 1, device=input_img.device, dtype=input_img.dtype) / kernel_size
+                filt2 = torch.ones(1, 1, 1, kernel_size, 1, device=input_img.device, dtype=input_img.dtype) / kernel_size
+                filt3 = torch.ones(1, 1, 1, 1, kernel_size, device=input_img.device, dtype=input_img.dtype) / kernel_size
+                for c in range(5*C):
+                    interm[:, c:c+1] = F.conv3d(interm[:, c:c+1], filt1, padding='same', stride=1, groups=1)
+                    interm[:, c:c+1] = F.conv3d(interm[:, c:c+1], filt2, padding='same', stride=1, groups=1)
+                    interm[:, c:c+1] = F.conv3d(interm[:, c:c+1], filt3, padding='same', stride=1, groups=1)
+            else:
+                filt1 = torch.ones(5*C, 1, kernel_size, 1, 1, device=input_img.device, dtype=input_img.dtype) / kernel_size
+                filt2 = torch.ones(5*C, 1, 1, kernel_size, 1, device=input_img.device, dtype=input_img.dtype) / kernel_size
+                filt3 = torch.ones(5*C, 1, 1, 1, kernel_size, device=input_img.device, dtype=input_img.dtype) / kernel_size
+                interm = F.conv3d(interm, filt1, padding='same', stride=1, groups=interm.shape[1])
+                interm = F.conv3d(interm, filt2, padding='same', stride=1, groups=interm.shape[1])
+                interm = F.conv3d(interm, filt3, padding='same', stride=1, groups=interm.shape[1])
         else:
-            avg_filt = torch.ones(5*C, 1, kernel_size, kernel_size, kernel_size, device=input_img.device, dtype=input_img.dtype) / kernel_vol
-            padding = (kernel_size - 1) // 2
-            interm = F.conv3d(interm, avg_filt, padding=padding, stride=1, groups=interm.shape[1])
+            if interm.numel() >= MAX_INT32_NUMEL:
+                # numel is too large for group convolution, fallback to singular
+                avg_filt = torch.ones(1, 1, kernel_size, kernel_size, kernel_size, device=input_img.device, dtype=input_img.dtype) / kernel_vol
+                padding = (kernel_size - 1) // 2
+                for c in range(5*C):
+                    interm[:, c:c+1] = F.conv3d(interm[:, c:c+1], avg_filt, padding=padding, stride=1, groups=1)
+            else:
+                avg_filt = torch.ones(5*C, 1, kernel_size, kernel_size, kernel_size, device=input_img.device, dtype=input_img.dtype) / kernel_vol
+                padding = (kernel_size - 1) // 2
+                interm = F.conv3d(interm, avg_filt, padding=padding, stride=1, groups=interm.shape[1])
 
         out = ffo.cc3d_fwd_interm_v1(interm, int(kernel_vol), reduction, nr, dr)
         ctx.save_for_backward(interm, input_img, target_img, out)
@@ -68,14 +87,17 @@ class FusedNCC3d(torch.autograd.Function):
         kernel_size, nr, dr, reduction, use_ants_gradient, use_separable = ctx.kernel_size, ctx.nr, ctx.dr, ctx.reduction, ctx.use_ants_gradient, ctx.use_separable
         B, C, H, W, D = input_img.shape
 
+        input_too_large = interm.numel() >= MAX_INT32_NUMEL
+        inp_size = 5*C if not input_too_large else 1
+
         # initialize filters
         if use_separable:
-            filt1 = torch.ones(5*C, 1, kernel_size, 1, 1, device=input_img.device, dtype=input_img.dtype) 
-            filt2 = torch.ones(5*C, 1, 1, kernel_size, 1, device=input_img.device, dtype=input_img.dtype)
-            filt3 = torch.ones(5*C, 1, 1, 1, kernel_size, device=input_img.device, dtype=input_img.dtype)
+            filt1 = torch.ones(inp_size, 1, kernel_size, 1, 1, device=input_img.device, dtype=input_img.dtype) 
+            filt2 = torch.ones(inp_size, 1, 1, kernel_size, 1, device=input_img.device, dtype=input_img.dtype)
+            filt3 = torch.ones(inp_size, 1, 1, 1, kernel_size, device=input_img.device, dtype=input_img.dtype)
             pad1, pad2, pad3 = ((kernel_size - 1) // 2, 0, 0), (0, 0, (kernel_size - 1) // 2), (0, 0, (kernel_size - 1) // 2)
         else:
-            avg_filt = torch.ones(5*C, 1, kernel_size, kernel_size, kernel_size, device=input_img.device, dtype=input_img.dtype) 
+            avg_filt = torch.ones(inp_size, 1, kernel_size, kernel_size, kernel_size, device=input_img.device, dtype=input_img.dtype) 
             padding = (kernel_size - 1) // 2
 
         # initialize gradients
@@ -97,22 +119,42 @@ class FusedNCC3d(torch.autograd.Function):
             if grad_target_img is not None:
                 # convolve with "one" filter depending on whether separable or not
                 if use_separable:
-                    interm = F.conv3d(interm, filt1, padding='same', stride=1, groups=interm.shape[1])
-                    interm = F.conv3d(interm, filt2, padding='same', stride=1, groups=interm.shape[1])
-                    interm = F.conv3d(interm, filt3, padding='same', stride=1, groups=interm.shape[1])
+                    if input_too_large:
+                        for c in range(5*C):
+                            interm[:, c:c+1] = F.conv3d(interm[:, c:c+1], filt1, padding='same', stride=1, groups=1)
+                            interm[:, c:c+1] = F.conv3d(interm[:, c:c+1], filt2, padding='same', stride=1, groups=1)
+                            interm[:, c:c+1] = F.conv3d(interm[:, c:c+1], filt3, padding='same', stride=1, groups=1)
+                    else:
+                        interm = F.conv3d(interm, filt1, padding='same', stride=1, groups=interm.shape[1])
+                        interm = F.conv3d(interm, filt2, padding='same', stride=1, groups=interm.shape[1])
+                        interm = F.conv3d(interm, filt3, padding='same', stride=1, groups=interm.shape[1])
                 else:
-                    interm = F.conv3d(interm, avg_filt, padding=padding, stride=1, groups=interm.shape[1])
+                    if input_too_large:
+                        for c in range(5*C):
+                            interm[:, c:c+1] = F.conv3d(interm[:, c:c+1], avg_filt, padding=padding, stride=1, groups=1)
+                    else:
+                        interm = F.conv3d(interm, avg_filt, padding=padding, stride=1, groups=interm.shape[1])
             else:
                 if use_separable:
-                    filt1 = filt1[:3*C]
-                    filt2 = filt2[:3*C]
-                    filt3 = filt3[:3*C]
-                    interm[:, :3*C, :, :, :] = F.conv3d(interm[:, :3*C, :, :, :], filt1, padding='same', stride=1, groups=3*C)
-                    interm[:, :3*C, :, :, :] = F.conv3d(interm[:, :3*C, :, :, :], filt2, padding='same', stride=1, groups=3*C)
-                    interm[:, :3*C, :, :, :] = F.conv3d(interm[:, :3*C, :, :, :], filt3, padding='same', stride=1, groups=3*C)
+                    if input_too_large:
+                        for c in range(3*C):
+                            interm[:, c:c+1] = F.conv3d(interm[:, c:c+1], filt1, padding='same', stride=1, groups=1)
+                            interm[:, c:c+1] = F.conv3d(interm[:, c:c+1], filt2, padding='same', stride=1, groups=1)
+                            interm[:, c:c+1] = F.conv3d(interm[:, c:c+1], filt3, padding='same', stride=1, groups=1)
+                    else:
+                        filt1 = filt1[:3*C]
+                        filt2 = filt2[:3*C]
+                        filt3 = filt3[:3*C]
+                        interm[:, :3*C, :, :, :] = F.conv3d(interm[:, :3*C, :, :, :], filt1, padding='same', stride=1, groups=3*C)
+                        interm[:, :3*C, :, :, :] = F.conv3d(interm[:, :3*C, :, :, :], filt2, padding='same', stride=1, groups=3*C)
+                        interm[:, :3*C, :, :, :] = F.conv3d(interm[:, :3*C, :, :, :], filt3, padding='same', stride=1, groups=3*C)
                 else:
-                    avg_filt = avg_filt[:3*C]
-                    interm[:, :3*C, :, :, :] = F.conv3d(interm[:, :3*C, :, :, :], avg_filt, padding=padding, stride=1, groups=3*C)
+                    if input_too_large:
+                        for c in range(3*C):
+                            interm[:, c:c+1] = F.conv3d(interm[:, c:c+1], avg_filt, padding=padding, stride=1, groups=1)
+                    else:
+                        avg_filt = avg_filt[:3*C]
+                        interm[:, :3*C, :, :, :] = F.conv3d(interm[:, :3*C, :, :, :], avg_filt, padding=padding, stride=1, groups=3*C)
         # solve for grad_input_img and grad_target_img
         ffo.cc3d_bwd_compute_grads(interm, input_img, target_img, grad_input_img, grad_target_img)
 

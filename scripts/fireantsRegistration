@@ -5,6 +5,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+import textwrap
 import torch
 import logging
 from typing import List, Optional, Union, Tuple
@@ -44,49 +45,126 @@ def is_compatible_next_transform(prev_transforms: List[str], transform_type: str
     return all([t in compat_table[transform_type] for t in prev_transforms])
 
 def parse_args():
-    class CustomHelpFormatter(argparse.RawDescriptionHelpFormatter):
-        def format_help(self):
-            return show_help(None)
+    class RawDefaultsHelpFormatter(
+        argparse.RawTextHelpFormatter, argparse.ArgumentDefaultsHelpFormatter
+    ):
+        pass
 
-    parser = argparse.ArgumentParser(description='FireANTs Registration Tool', formatter_class=CustomHelpFormatter)
+    parser = argparse.ArgumentParser(formatter_class=RawDefaultsHelpFormatter, add_help = False,
+                                     description='''FireANTs Registration Tool
+
+    This tool provides a command-line interface for medical image registration, similar to ANTs' antsRegistration.
+
+    Example Usage:
+    ------------
+    ./fireantsRegistration \\
+    --output demo_output/fireantsTransform \\
+    --initial-moving-transform [fixed.nii.gz,moving.nii.gz,2] \\
+    --transform Rigid[3e-2] \\
+    --metric MI[fixed.nii.gz,moving.nii.gz,gaussian,16] \\
+    --convergence [100x50x25x10,1e-6,10] \\
+    --shrink-factors 8x4x2x1 \\
+    --transform Affine[3e-2] \\
+    --metric CC[fixed.nii.gz,moving.nii.gz,5] \\
+    --convergence [100x50x25x10,1e-4,10] \\
+    --shrink-factors 8x4x2x1 \\
+    --transform SyN[0.2] \\
+    --metric MSE[fixed.nii.gz,moving.nii.gz] \\
+    --convergence [100x70x50x20,1e-4,10] \\
+    --shrink-factors 8x4x2x1
+
+    Notes:
+    -----
+    1. Transforms must be specified in order: Rigid -> Affine -> SyN/Greedy
+    2. Each transform requires its own metric, convergence, and shrink-factors
+    3. Number of shrink factors must match number of iterations in convergence
+    4. For SyN/Greedy registration, smooth_warp_sigma and smooth_grad_sigma can be specified
+    either in the transform parameters or as command-line arguments
+    ''')
+
     # Required arguments
-    parser.add_argument('--output', type=str, required=True,
-                      help='Output prefix and warped image path [prefix,warped_image]')
-    parser.add_argument('--winsorize-image-intensities', type=str, default=None,
-                      help='Winsorize image intensities [lower,upper]')
-    parser.add_argument('--initial-moving-transform', type=str,
-                      help='Initial transform [fixed,moving,type] or transform file')
+    required_parser = parser.add_argument_group("Required arguments")
+    required_parser.add_argument('--output', type=str, required=True,
+                    help='Output prefix and warped image path [prefix,warped_image]')
+    required_parser.add_argument('--winsorize-image-intensities', type=str, default=None,
+                    help='Winsorize image intensities [lower,upper]. Parameters can be quantiles [0,1] or percentiles [0,100]')
+    required_parser.add_argument('--initial-moving-transform', type=str, required=True,
+                    help=textwrap.dedent('''\
+                    Initial transform [fixed,moving,type]. Type can be:
+                            - 1: match by center of mass
+                            - 2: match by mid-point (geometric center of images)
+                            - 3: match by point of origin
+                    If not provided, the default initial transform is Identity.
+                    '''))
     # these are all the rigid/affine/deformable params
-    parser.add_argument('--transform', type=str, action='append', required=True,
-                      help='Transform type and parameters [type,params]. Can be specified multiple times.')
-    parser.add_argument('--metric', type=str, action='append', required=True,
-                      help='Similarity metric [fixed,moving,weight,params]. One per transform.')
-    parser.add_argument('--convergence', type=str, action='append', required=True,
-                      help='Convergence parameters [iterations,tolerance,window]. One per transform.')
-    parser.add_argument('--shrink-factors', type=str, action='append', required=True,
-                      help='Shrink factors for multi-resolution. One per transform.')
+    required_parser.add_argument('--transform', type=str, required=True, action='append',
+                    help=textwrap.dedent('''\
+                    Transform type and parameters, as Type[params]. Can be specified multiple times for multi-stage
+                    registration, with stages run in order. Supported transforms:
+                        - Rigid[gradient_step,optimizer=Adam,scaling=False]
+                        - Affine[gradient_step,optimizer=Adam]
+                        - SyN[gradient_step,optimizer=Adam,smooth_warp_sigma,smooth_grad_sigma]
+                        - Greedy[gradient_step,optimizer=Adam,smooth_warp_sigma,smooth_grad_sigma]
 
-    # unused args (kept for compatibility only)
-    parser.add_argument('--use-histogram-matching', type=int, default=0,
-                      help='Use histogram matching (0 or 1)')
-    parser.add_argument('--smoothing-sigmas', type=str, action='append', required=False,
-                      help='Smoothing sigmas for multi-resolution. One per transform (ignored, kept for compatibility).')
-    parser.add_argument('--interpolation', type=str, default='Linear',
-                      choices=['Linear', 'NearestNeighbor'],
-                      help='Interpolation type for warped image')
-    # extra args
-    parser.add_argument('--smooth_warp_sigma', type=float, default=0.25, help='Smoothing sigma for the warp field')
-    parser.add_argument('--smooth_grad_sigma', type=float, default=0.5, help='Smoothing sigma for the gradient field')
-    parser.add_argument('--normalize-image-intensities', action='store_true', help="Normalize image intensities to [0,1]")
+                    Transform parameters:
+                        gradient_step: step size for the optimizer, typically 0.1 to 0.25
+
+                        optimizer: optimizer to use, default is Adam
+
+                        smooth_warp_sigma: smoothing sigma for the warp field (for SyN/Greedy)
+                        smooth_grad_sigma: smoothing sigma for the gradient field (for SyN/Greedy)
+                    '''))
+    required_parser.add_argument('--metric', type=str, required=True, action='append',
+                    help=textwrap.dedent('''\
+                    Similarity metric [fixed,moving,weight,params]. One per transform.
+
+                    Supported metrics
+                        - MSE[fixed,moving] or MeanSquares[fixed,moving] or L2[fixed,moving] (mean squared error)
+                        - CC[fixed,moving,kernel_size=5] (cross-correlation)
+                        - MI[fixed,moving,kernel_type=gaussian,num_bins=32] (mutual information)
+                        - Custom[fixed,moving,module.path.ClassName,param1=value1,...] (user-defined metric)
+                    '''))
+    required_parser.add_argument('--convergence', type=str, required=True, action='append',
+                    help=textwrap.dedent('''\
+                    Convergence parameters [iterations,tolerance,window]. One per transform, containing:
+                        - iterations: number per level, in format MxNxP.
+                        - tolerance: convergence tolerance, larger values converge faster.
+                        - window: size of moving window over which to check for convergence.'''))
+    required_parser.add_argument('--shrink-factors', type=str, required=True, action='append',
+                    help=textwrap.dedent('''\
+                    Shrink factors for multi-resolution registration. One per transform. Shrink factors are integers in
+                    the format QxRxS, eg 4x2x1. The number of shrink factors must match the number of levels in the
+                    convergence arg'''))
 
     # device args
-    parser.add_argument('--device', type=str, default='cuda:0',
-                      help='Device to run the registration on. Default is cuda:0.')
+    device_parser = parser.add_argument_group("Device arguments")
+    device_parser.add_argument('--device', type=str, default='cuda:0', help='Device to use for registration.')
 
-    parser.add_argument('-x', '--mask', type=str,
-                      help='Mask image or [fixed_mask,moving_mask]')
-    parser.add_argument('--verbose', action='store_true',
-                      help='Enable verbose output')
+    # extra args
+    optional_parser = parser.add_argument_group("General optional arguments")
+    optional_parser.add_argument('--smooth_warp_sigma', type=float, default=0.25, help='Smoothing sigma for the warp field. '
+                                 'Only used if not provided in the transform parameters')
+    optional_parser.add_argument('--smooth_grad_sigma', type=float, default=0.5, help='Smoothing sigma for the gradient field. '
+                                 'Only used if not provided in the transform parameters')
+    optional_parser.add_argument('--normalize-image-intensities', action='store_true',
+                                 help="Normalize image intensities to [0,1]")
+    optional_parser.add_argument('-x', '--mask', type=str, help='Mask image or [fixed_mask,moving_mask].')
+    optional_parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
+    optional_parser.add_argument('-h', '--help', action='help', help='Show this help message and exit')
+
+    # unused args (kept for compatibility only)
+    unused_parser = parser.add_argument_group("Unused arguments (some may be implemented in the future)")
+    unused_parser.add_argument('--use-histogram-matching', type=int, default=0, help='Use histogram matching (0 or 1)')
+    unused_parser.add_argument('--smoothing-sigmas', type=str, action='append', required=False, help='Smoothing sigmas for '
+                        'multi-resolution. One per transform (ignored, kept for compatibility).')
+    unused_parser.add_argument('--interpolation', type=str, default='Linear',
+                    choices=['Linear', 'NearestNeighbor'],
+                    help='Interpolation type for warped image')
+
+    if len(sys.argv) == 1:
+        parser.print_usage()
+        print(f"\nRun {os.path.basename(sys.argv[0])} --help for more information")
+        sys.exit(1)
 
     return parser.parse_args()
 
@@ -277,114 +355,6 @@ def load_image(path: str, is_mask: bool = False, device: str = 'cuda:0') -> Imag
         logger.error(f"Error loading image {path}: {e}")
         sys.exit(1)
 
-def show_help(args: argparse.Namespace):
-    ''' show a verbose help message '''
-    help_text = """
-FireANTs Registration Tool
-=========================
-
-This tool provides a command-line interface for medical image registration, similar to ANTs' antsRegistration.
-
-Required Arguments:
-------------------
---output [prefix,warped_image]
-    Output prefix for transforms and warped image path. If only prefix is provided, warped image will be saved as prefix_warped.nii.gz
-
---transform [type,params]
-    Transform type and parameters. Can be specified multiple times for multi-stage registration.
-    Supported types:
-    - Rigid[gradient_step,optimizer=Adam,scaling=False]
-    - Affine[gradient_step,optimizer=Adam]
-    - SyN[gradient_step,optimizer=Adam,smooth_warp_sigma,smooth_grad_sigma]
-    - Greedy[gradient_step,optimizer=Adam,smooth_warp_sigma,smooth_grad_sigma]
-
---metric [type,fixed,moving,params]
-    Similarity metric for registration. Must be specified once per transform.
-    Supported types:
-    - MSE[fixed,moving] or MeanSquares[fixed,moving] or L2[fixed,moving]
-    - CC[fixed,moving,kernel_size=5]
-    - MI[fixed,moving,kernel_type=gaussian,num_bins=32]
-    - Custom[fixed,moving,module.path.ClassName,param1=value1,...]
-
---convergence [iterations,tolerance,window]
-    Convergence parameters. Must be specified once per transform.
-    Format: [100x50x25x10,1e-6,10] where:
-    - iterations: comma-separated list of iterations per scale
-    - tolerance: convergence tolerance
-    - window: number of iterations to check for convergence
-
---shrink-factors [factors]
-    Shrink factors for multi-resolution optimization. Must be specified once per transform.
-    Format: 8x4x2x1 (must match number of iterations in --convergence)
-
-Optional Arguments:
------------------
---initial-moving-transform [fixed,moving,type]
-    Initial transform to align images before registration.
-    type can be:
-    - 1: match by center of mass
-    - 2: match by mid-point
-    - 3: match by point of origin
-
---winsorize-image-intensities [lower,upper]
-    Clip image intensities to specified quantiles [0,1] or percentiles [0,100]
-
---normalize-image-intensities
-    Normalize image intensities to [0,1] range
-
---mask [fixed_mask,moving_mask]
-    Mask images for registration. Must provide both fixed and moving masks.
-
---device [cuda:0]
-    Device to run registration on. Default is cuda:0.
-
---smooth_warp_sigma [0.25]
-    Smoothing sigma for the warp field (for SyN/Greedy)
-
---smooth_grad_sigma [0.5]
-    Smoothing sigma for the gradient field (for SyN/Greedy)
-
---verbose
-    Enable verbose output
-
-Deprecated/Unused Options (kept for compatibility):
------------------------------------------------
---use-histogram-matching [0]
-    Not implemented yet, will be ignored
-
---smoothing-sigmas [sigmas]
-    Not used, kept for compatibility with ANTs
-
---interpolation [Linear]
-    Not used, kept for compatibility with ANTs
-
-Example Usage:
-------------
-./fireantsRegistration \\
-  --output demo_output/fireantsTransform \\
-  --initial-moving-transform [fixed.nii.gz,moving.nii.gz,2] \\
-  --transform Rigid[3e-2] \\
-  --metric MI[fixed.nii.gz,moving.nii.gz,gaussian,16] \\
-  --convergence [100x50x25x10,1e-6,10] \\
-  --shrink-factors 8x4x2x1 \\
-  --transform Affine[3e-2] \\
-  --metric CC[fixed.nii.gz,moving.nii.gz,5] \\
-  --convergence [100x50x25x10,1e-4,10] \\
-  --shrink-factors 8x4x2x1 \\
-  --transform SyN[0.2] \\
-  --metric MSE[fixed.nii.gz,moving.nii.gz] \\
-  --convergence [100x70x50x20,1e-4,10] \\
-  --shrink-factors 8x4x2x1
-
-Notes:
------
-1. Transforms must be specified in order: Rigid -> Affine -> SyN/Greedy
-2. Each transform requires its own metric, convergence, and shrink-factors
-3. Number of shrink factors must match number of iterations in convergence
-4. For SyN/Greedy registration, smooth_warp_sigma and smooth_grad_sigma can be specified
-   either in the transform parameters or as command-line arguments
-"""
-    print(help_text)
 
 def main():
     args = parse_args()

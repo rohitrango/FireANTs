@@ -225,7 +225,7 @@ def prepare_prev_transform(prev_transform, prev_transform_type, transform_type, 
     ''' prepare the previous transform for the next transform.
 
         device and dimensionality are taken from the previous transform unless it is None,
-        in which care the default parameters are used.
+        in which case the default parameters are used.
 
     '''
     if prev_transform_type is None:

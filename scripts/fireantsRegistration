@@ -221,6 +221,7 @@ def parse_metric(metric_str: str) -> Tuple[str, List[Union[str, float]]]:
 
     return metric_type, pd
 
+
 def prepare_prev_transform(prev_transform, prev_transform_type, transform_type):
     ''' prepare the previous transform for the next transform. '''
     if prev_transform_type is None:

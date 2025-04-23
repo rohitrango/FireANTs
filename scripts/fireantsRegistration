@@ -47,7 +47,7 @@ def parse_args():
     class CustomHelpFormatter(argparse.RawDescriptionHelpFormatter):
         def format_help(self):
             return show_help(None)
-    
+
     parser = argparse.ArgumentParser(description='FireANTs Registration Tool', formatter_class=CustomHelpFormatter)
     # Required arguments
     parser.add_argument('--output', type=str, required=True,
@@ -87,7 +87,7 @@ def parse_args():
                       help='Mask image or [fixed_mask,moving_mask]')
     parser.add_argument('--verbose', action='store_true',
                       help='Enable verbose output')
-    
+
     return parser.parse_args()
 
 def preprocess_images(fixed_image, moving_image, normalize_image_intensities, winsorize_image_intensities):
@@ -104,8 +104,8 @@ def preprocess_images(fixed_image, moving_image, normalize_image_intensities, wi
     return fixed_image, moving_image
 
 def winsorize(array: torch.Tensor, w1: float, w2: float) -> torch.Tensor:
-    ''' winsorize the image intensities 
-    
+    ''' winsorize the image intensities
+
     doing this in numpy because torch percentile breaks for large tensors
     '''
     nparray = array.cpu().numpy()
@@ -119,7 +119,7 @@ def winsorize(array: torch.Tensor, w1: float, w2: float) -> torch.Tensor:
         raise ValueError(f"Unsupported winsorize parameters: {w1}, {w2}")
     nparray[nparray < w1] = w1
     nparray[nparray > w2] = w2
-    nparray = (nparray - w1) 
+    nparray = (nparray - w1)
     return torch.from_numpy(nparray).to(array.device).to(array.dtype)
 
 def parse_moment_transform(transform_type: str) -> Tuple[bool, str]:
@@ -221,9 +221,12 @@ def parse_metric(metric_str: str) -> Tuple[str, List[Union[str, float]]]:
 
     return metric_type, pd
 
+
 def prepare_prev_transform(prev_transform, prev_transform_type, transform_type):
-    ''' prepare the previous transform for the next transform '''
-    if prev_transform_type == 'Moments':
+    ''' prepare the previous transform for the next transform. '''
+    if prev_transform_type is None:
+        return {}
+    elif prev_transform_type == 'Moments':
         if transform_type == 'Rigid':
             return {
                 'init_translation': prev_transform.get_rigid_transl_init().detach(),
@@ -254,7 +257,7 @@ def prepare_prev_transform(prev_transform, prev_transform_type, transform_type):
         }
     else:
         raise ValueError(f"Unsupported transform type combination: {prev_transform_type} -> {transform_type}")
-                
+
 def parse_convergence(conv_str: str) -> Tuple[List[int], float, int]:
     """Parse convergence string like '[1000x500x250x100,1e-6,10]'."""
     iterations = [int(x) for x in conv_str.split('[')[1].split(',')[0].split('x')]
@@ -403,7 +406,7 @@ def main():
         if not is_compatible_next_transform(prev_transforms, transform_type):
             logger.error(f"Transforms must be in order, {transform_str} is not compatible with {prev_transforms}")
         prev_transforms.append(transform_type)
-    
+
     # check if number of scales are consistent in convergence, shrink_factors
     for i, (conv_str, shrink_str) in enumerate(zip(args.convergence, args.shrink_factors)):
         iterations, tolerance, window = parse_convergence(conv_str)
@@ -415,12 +418,12 @@ def main():
     # TODO: implement histogram matching
     if args.use_histogram_matching:
         logger.warning("Histogram matching not implemented yet, ignoring this parameter...")
-    
+
     # Set up logging
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
         logger.setLevel(logging.DEBUG)
-    
+
     # Parse output paths
     try:
         output_prefix, warped_image_file = args.output.split(',')
@@ -430,7 +433,7 @@ def main():
         # maybe only prefix was provided
         output_prefix = args.output
         warped_image_file = output_prefix + "_warped.nii.gz"
-    
+
     # Load masks if provided
     if args.mask:
         if ',' in args.mask:
@@ -456,7 +459,7 @@ def main():
         # initialize the batch
         fixed_batch = BatchedImages([fixed_image])
         moving_batch = BatchedImages([moving_image])
-        # initialize the transform type    
+        # initialize the transform type
         moments, ori = parse_moment_transform(transform_type)
         # run moment matching
         moments_reg = MomentsRegistration(
@@ -474,7 +477,7 @@ def main():
     # initialize previous transform
     prev_transform = moments_reg
     prev_transform_type = 'Moments' if moments_reg is not None else None
-    
+
     # Process each transform in sequence
     for i, (transform_str, metric_str, conv_str, shrink_str) in enumerate(zip(args.transform, args.metric, args.convergence, args.shrink_factors)):
     # Parse multi-resolution parameters
@@ -544,7 +547,7 @@ def main():
         else:
             logger.error(f"Unsupported transform type: {transform_type}")
             sys.exit(1)
-        
+
         # Run registration
         logger.info(f"Starting Step {i+1}/{len_transform}: {transform_type} registration...")
         reg.optimize(save_transformed=False)
@@ -554,21 +557,21 @@ def main():
         del prev_transform
         prev_transform = reg
         prev_transform_type = transform_type
-        
+
         # # Save results
         # output_dir = Path(output_prefix).parent
         # output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # # Save transformed image
         # moved_image = reg.evaluate(fixed_batch, moving_batch)
         # reg.save_moved_images(moved_image, warped_image)
         # logger.info(f"Saved warped image to {warped_image}")
-        
+
         # # Save transform
         # transform_path = f"{output_prefix}0GenericAffine.mat"
         # reg.save_as_ants_transforms(transform_path)
         # logger.info(f"Saved transform to {transform_path}")
-        
+
         # Save inverse transform if available
         # if hasattr(reg, 'get_inverse_warped_coordinates'):
         #     try:
@@ -578,7 +581,7 @@ def main():
         #     except NotImplementedError:
         #         logger.warning("Inverse transform not implemented for this registration type")
         # logger.info("Registration completed successfully")
-    
+
     # create output directory
     parent_path = Path(warped_image_file).parent
     parent_path.mkdir(parents=True, exist_ok=True)
@@ -587,7 +590,7 @@ def main():
     final_moving_image = load_image(moving_path, device=args.device)
     final_moving_batch = BatchedImages([final_moving_image])
     moved_image = reg.evaluate(fixed_batch, final_moving_batch)
-    # save 
+    # save
     moved_image = FakeBatchedImages(moved_image, fixed_batch)
     moved_image.write_image(warped_image_file)
     logger.info(f"Saved warped image to {warped_image_file}")
@@ -602,6 +605,6 @@ def main():
 
 
 if __name__ == '__main__':
-    main() 
+    main()
 
 

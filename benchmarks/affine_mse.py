@@ -65,10 +65,11 @@ def test_affine_mse(fused_ops, fixed_image_path, moving_image_path, fixed_seg_pa
 
 
 if __name__ == "__main__":
-    fixed_image_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_norm.nii.gz"
-    # fixed_seg_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_seg35.nii.gz"
-    moving_image_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_norm.nii.gz"
-    # moving_seg_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_seg35.nii.gz"
+    import os
+    fixed_image_path = f"{os.environ['DATA_PATH2']}/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_norm.nii.gz"
+    # fixed_seg_path = f"{os.environ['DATA_PATH2']}/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_seg35.nii.gz"
+    moving_image_path = f"{os.environ['DATA_PATH2']}/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_norm.nii.gz"
+    # moving_seg_path = f"{os.environ['DATA_PATH2']}/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_seg35.nii.gz"
     fixed_seg_path = None
     moving_seg_path = None
     _ = test_affine_mse(True, fixed_image_path, moving_image_path, fixed_seg_path, moving_seg_path)

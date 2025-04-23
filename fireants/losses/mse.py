@@ -18,6 +18,10 @@ class NoOp(nn.Module):
     
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         return torch.tensor(0.0).to(pred.dtype).to(pred.device)
+    
+    def get_image_padding(self) -> int:
+        return 0
+        
 
 class MeanSquaredError(nn.Module):
     """
@@ -42,6 +46,9 @@ class MeanSquaredError(nn.Module):
         """
         mse = F.mse_loss(pred, target, reduction=self.reduction)
         return mse
+    
+    def get_image_padding(self) -> int:
+        return 0
 
 
 if __name__ == '__main__':

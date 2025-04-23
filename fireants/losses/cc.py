@@ -239,6 +239,9 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         self.checkpointing = checkpointing
         self.use_separable_override = use_separable_override
 
+    def get_image_padding(self) -> int:
+        return (self.kernel_size - 1) // 2
+
     def get_kernel_vol(self):
         vol = self.kernel
         for _ in range(self.ndim - 1):

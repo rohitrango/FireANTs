@@ -58,6 +58,11 @@ class WarpSGD:
         # gaussian smoothing parameters (if any)
         self.smoothing_gaussians = smoothing_gaussians
         self.grad_gaussians = grad_gaussians
+    
+    def cleanup(self):
+        # manually clean up
+        del self.velocity
+        del self.grid
 
     def set_data_and_size(self, warp, size, grid_copy=None):
         ''' change the optimization variables sizes '''

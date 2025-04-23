@@ -118,6 +118,9 @@ def downsample(image: torch.Tensor, size: List[int], mode: str, sigma: Optional[
     if use_fft and ffo is None:
         logger.warn("fireants_fused_ops is not found, will default to standard downsampling")
         use_fft = False
+    if image.dtype != torch.float32:
+        logger.warn(f"Downsampling not supported for dtype {image.dtype}, will default to standard downsampling")
+        use_fft = False
 
     if use_fft:
         return downsample_fft(image, size)
@@ -169,7 +172,6 @@ def downsample_fft(image: torch.Tensor, size: List[int], padding=1) -> torch.Ten
             im_fft = im_fft[:, :, padding:-padding, padding:-padding, padding:-padding]
     
     # print("after padding", im_fft.shape)
-
     im_fft = torch.fft.ifftshift(im_fft, dim=dims)
     im_fft = torch.real(torch.fft.ifftn(im_fft, dim=dims)).contiguous()
     return im_fft

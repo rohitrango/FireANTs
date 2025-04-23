@@ -271,14 +271,17 @@ if __name__ == '__main__':
     from fireants.io.image import Image, BatchedImages
     import torch
     import traceback
+    import os
     torch.cuda.memory._record_memory_history()
     img_dtype = torch.bfloat16
-    # img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t2.nii.gz', dtype=img_dtype)
-    # img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t2.nii.gz', dtype=img_dtype)
+    # path = os.environ['DATAPATH_R']
+    # img1 = Image.load_file(f'{path}/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t2.nii.gz', dtype=img_dtype)
+    # img2 = Image.load_file(f'{path}/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t2.nii.gz', dtype=img_dtype)
 
     ### works at native resolution with bf16 and PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:512" and mse loss
-    img1 = Image.load_file("/mnt/rohit_data2/fMOST/subject/15257_red_mm_IRA.nii.gz", dtype=img_dtype)
-    img2 = Image.load_file("/mnt/rohit_data2/fMOST/subject/17109_red_mm_SLA.nii.gz", dtype=img_dtype)
+    path = os.environ['DATA_PATH2']
+    img1 = Image.load_file(f"{path}/fMOST/subject/15257_red_mm_IRA.nii.gz", dtype=img_dtype)
+    img2 = Image.load_file(f"{path}/fMOST/subject/17109_red_mm_SLA.nii.gz", dtype=img_dtype)
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2,])
     # iterations = [1000, 500, 250, 100]

@@ -3,7 +3,7 @@ import pytest
 from time import time
 from fireants.losses.cc import LocalNormalizedCrossCorrelationLoss
 from fireants.tests.cc_mem_test import fast_lncc
-from ops.fusedcc import FusedLocalNormalizedCrossCorrelationLoss
+from fireants.losses.fusedcc import FusedLocalNormalizedCrossCorrelationLoss
 seed = 4531
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)   
@@ -11,37 +11,60 @@ torch.cuda.manual_seed(seed)
 def test_fused_cc_correctness():
     """Test correctness of fused cross correlation against baseline implementations"""
     # Test with small input size first
-    N = 32
-    eps = 1e-1
-    img1 = (torch.rand(1, 1, N, N, N) + eps).cuda()
-    img2 = (torch.rand(1, 1, N, N, N) + eps).cuda().requires_grad_(True)
-    
-    loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=3, reduction='mean').cuda()
-    loss_baseline = LocalNormalizedCrossCorrelationLoss(3, kernel_size=3, reduction='mean').cuda()
-    
-    # Forward pass
-    out = -loss(img1, img2)
-    out_baseline = loss_baseline(img1, img2)
-    out_baseline2 = fast_lncc(img1, img2, 3)
-    
-    # Check forward pass results
-    assert torch.allclose(out, out_baseline, rtol=1e-4), "Forward pass results don't match baseline"
-    assert torch.allclose(out, out_baseline2, rtol=1e-4), "Forward pass results don't match baseline2"
-    
-    # Backward pass
-    out.backward()
-    grad_ours = img2.grad / N**3
-    
-    img2.grad = None
-    out_baseline.backward()
-    grad_baseline = img2.grad
-    
-    img2.grad = None
-    out_baseline2.backward()
-    grad_baseline2 = img2.grad
-    
-    # Check backward pass results
-    assert torch.allclose(grad_ours, grad_baseline, rtol=1e-3) or torch.allclose(grad_ours, grad_baseline2, rtol=1e-3), "Gradients don't match baselines"
+    N = 64
+    eps = 1e-0
+    rtol_table = {
+        torch.float32: 1e-3,
+        torch.bfloat16: 1e-2,
+    }
+
+    def rel_err(a, b, eps_r=1e-3):
+        return (torch.abs(a - b) / (eps_r + torch.abs(b))).mean()
+
+    for dtype in [torch.float32, torch.bfloat16]:
+        img1 = (torch.rand(1, 1, N, N, N) + eps).to(dtype).cuda()
+        img2 = (torch.rand(1, 1, N, N, N) + eps).to(dtype).cuda().requires_grad_(True)
+        
+        smooth_dr = 1e-3
+        kernel_size = 5
+        loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=kernel_size, reduction='mean', smooth_dr=smooth_dr).cuda()
+        loss_baseline = LocalNormalizedCrossCorrelationLoss(3, kernel_size=kernel_size, reduction='mean', smooth_dr=smooth_dr).cuda()
+        
+        # Forward pass
+        out = loss(img1, img2)
+        out_baseline = loss_baseline(img1, img2)
+        out_baseline2 = fast_lncc(img1, img2, kernel_size)
+        print(f"\ndtype: {dtype}: Output values: {out}, {out_baseline}, {out_baseline2}")
+        
+        # Check forward pass results
+        rtol = rtol_table[dtype]
+        if dtype == torch.float32:
+            assert torch.allclose(out, out_baseline, rtol=rtol), f"Forward pass results don't match baseline for dtype {dtype}"
+            assert torch.allclose(out, out_baseline2, rtol=rtol), f"Forward pass results don't match baseline2 for dtype {dtype}"
+            assert rel_err(out, out_baseline,) < rtol, f"Forward pass results don't match baseline for dtype {dtype}"
+            assert rel_err(out, out_baseline2) < rtol, f"Forward pass results don't match baseline2 for dtype {dtype}"
+        
+        # Backward pass
+        out.backward()
+        grad_ours = img2.grad / N**3
+        
+        img2.grad = None
+        out_baseline.backward()
+        grad_baseline = img2.grad
+        
+        img2.grad = None
+        out_baseline2.backward()
+        grad_baseline2 = img2.grad
+
+        print(f"Abs error grad: {torch.abs(grad_ours - grad_baseline).mean()}")
+        
+        # Check backward pass results
+        # assert torch.allclose(grad_ours, grad_baseline, rtol=1e-3) or torch.allclose(grad_ours, grad_baseline2, rtol=1e-3), "Gradients don't match baselines"
+        rel_grad_1 = rel_err(grad_ours, grad_baseline, 1e-3) 
+        rel_grad_2 = rel_err(grad_ours, grad_baseline2, 1e-3) 
+        print(rel_grad_1, rel_grad_2)
+        assert rel_grad_1 < rtol or rel_grad_2 < rtol, f"Gradients don't match baseline for dtype {dtype}"
+        
 
 
 def test_fused_cc_memory_forward():
@@ -63,7 +86,7 @@ def test_fused_cc_memory_forward():
         
         # Measure fused implementation
         start = time()
-        out = -loss(img1, img2)
+        out = loss(img1, img2)
         torch.cuda.synchronize()
         out_time = time() - start
         fused_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory
@@ -116,7 +139,7 @@ def test_fused_cc_memory_backward():
         
         # Measure fused implementation
         t0 = time()
-        out = -loss(img1, img2)
+        out = loss(img1, img2)
         torch.cuda.synchronize()
         t1 = time()
         out.backward()

@@ -3,8 +3,8 @@ import pytest
 from time import time
 from torch import nn
 from torch.nn import functional as F
-from ops.fusedgridsampler import FusedGridSampler3d
-from ops.baseline_grid_sampler import baseline_grid_sampler_3d
+from fireants.interpolator.grid_sample import torch_grid_sampler_3d as baseline_grid_sampler_3d
+from fireants.interpolator.fused_grid_sample import FusedGridSampler3d
 # set seeds
 seed = 4531
 torch.manual_seed(seed)
@@ -39,8 +39,8 @@ def test_fused_sampler_correctness():
                         align_corners, output_shape, None, None, False
                     )
                     output_baseline = baseline_grid_sampler_3d(
-                        input, affine_3d=affine_3d, out_shape=output_shape,
-                        interpolation_mode=mode, padding_mode=padding,
+                        input, affine=affine_3d, out_shape=output_shape,
+                        mode=mode, padding_mode=padding,
                         align_corners=align_corners
                     )
                     
@@ -63,7 +63,7 @@ def test_fused_sampler_correctness():
                     )
                     output_baseline = baseline_grid_sampler_3d(
                         input, grid=grid, is_displacement=False,
-                        interpolation_mode=mode, padding_mode=padding,
+                        mode=mode, padding_mode=padding,
                         align_corners=align_corners
                     )
                     
@@ -85,8 +85,8 @@ def test_fused_sampler_correctness():
                         align_corners, output_shape, None, None, True
                     )
                     output_baseline = baseline_grid_sampler_3d(
-                        input, affine_3d=affine_3d, grid=disp, is_displacement=True,
-                        interpolation_mode=mode, padding_mode=padding,
+                        input, affine=affine_3d, grid=disp, is_displacement=True,
+                        mode=mode, padding_mode=padding,
                         align_corners=align_corners
                     )
                     
@@ -100,6 +100,97 @@ def test_fused_sampler_correctness():
                     print(f"Mode: {mode}, Padding: {padding}, Align corners: {align_corners}")
                     print(f"Relative error: {rel_error}")
                     assert rel_error < 1e-4, f"Results don't match for displacement case"
+
+def test_fused_sampler_mixed_precision_correctness():
+    """Test correctness of fused grid sampler against baseline implementation"""
+    # Test with different input sizes and shapes
+    test_cases = [
+        # (input_shape, output_shape)
+        ((1, 1, 32, 32, 32), (16, 16, 16)),  # Downsampling
+        ((1, 1, 16, 16, 16), (32, 32, 32)),  # Upsampling
+        ((1, 1, 64, 64, 64), (32, 32, 32)),  # Downsampling
+        ((1, 1, 32, 32, 32), (64, 64, 64)),  # Upsampling
+    ]
+    
+    for input_shape, output_shape in test_cases:
+        # Generate random input and affine matrix
+        input = torch.randn(input_shape).cuda().abs() + 1e-3
+        affine_3d = torch.linalg.matrix_exp(torch.randn(3, 3))
+        affine_3d = torch.cat([affine_3d, 0.01 * torch.randn(3, 1)], dim=1)[None].cuda()
+        
+        # Test with different interpolation modes
+        for mode in ["bilinear", "nearest"]:
+            # Test with different padding modes
+            for padding in ["zeros", "border"]:
+                # Test with both align_corners settings
+                for align_corners in [True, False]:
+                    # Case 1: Affine-only transformation
+                    output = FusedGridSampler3d.apply(
+                        input.to(torch.bfloat16), affine_3d, None, mode, padding, 
+                        align_corners, output_shape, None, None, False
+                    )
+                    output_baseline = baseline_grid_sampler_3d(
+                        input, affine=affine_3d, out_shape=output_shape,
+                        mode=mode, padding_mode=padding,
+                        align_corners=align_corners
+                    )
+                    
+                    # Check shapes match
+                    assert output.shape == output_baseline.shape, f"Shape mismatch for affine-only case"
+                    
+                    # Check results match
+                    rel_error = (torch.abs(output - output_baseline) / (1e-5 + torch.abs(output_baseline))).mean()
+                    print(f"\nAffine-only case:")
+                    print(f"Input shape: {input_shape}, Output shape: {output_shape}")
+                    print(f"Mode: {mode}, Padding: {padding}, Align corners: {align_corners}")
+                    print(f"Relative error: {rel_error}")
+                    assert rel_error < 1e-2, f"Results don't match for affine-only case"
+                    
+                    # Case 2: Full warp field
+                    grid = torch.randn(1, *output_shape, 3).cuda() * 0.01 + F.affine_grid(torch.eye(3, 4)[None].cuda(), (1, 1, *output_shape), align_corners=align_corners)
+                    output = FusedGridSampler3d.apply(
+                        input.to(torch.bfloat16), None, grid, mode, padding, 
+                        align_corners, output_shape, None, None, False
+                    )
+                    output_baseline = baseline_grid_sampler_3d(
+                        input, grid=grid, is_displacement=False,
+                        mode=mode, padding_mode=padding,
+                        align_corners=align_corners
+                    )
+                    
+                    # Check shapes match
+                    assert output.shape == output_baseline.shape, f"Shape mismatch for full warp case"
+                    
+                    # Check results match
+                    rel_error = (torch.abs(output - output_baseline) / (1e-5 + torch.abs(output_baseline))).mean()
+                    print(f"\nFull warp case:")
+                    print(f"Input shape: {input_shape}, Output shape: {output_shape}")
+                    print(f"Mode: {mode}, Padding: {padding}, Align corners: {align_corners}")
+                    print(f"Relative error: {rel_error}")
+                    assert rel_error < 1e-2, f"Results don't match for full warp case"
+                    
+                    # Case 3: Displacement field
+                    disp = torch.randn(1, *output_shape, 3).cuda() * 0.01
+                    output = FusedGridSampler3d.apply(
+                        input.to(torch.bfloat16), affine_3d, disp, mode, padding, 
+                        align_corners, output_shape, None, None, True
+                    )
+                    output_baseline = baseline_grid_sampler_3d(
+                        input, affine=affine_3d, grid=disp, is_displacement=True,
+                        mode=mode, padding_mode=padding,
+                        align_corners=align_corners
+                    )
+                    
+                    # Check shapes match
+                    assert output.shape == output_baseline.shape, f"Shape mismatch for displacement case"
+                    
+                    # Check results match
+                    rel_error = (torch.abs(output - output_baseline) / (1e-5 + torch.abs(output_baseline))).mean()
+                    print(f"\nDisplacement case:")
+                    print(f"Input shape: {input_shape}, Output shape: {output_shape}")
+                    print(f"Mode: {mode}, Padding: {padding}, Align corners: {align_corners}")
+                    print(f"Relative error: {rel_error}")
+                    assert rel_error < 1e-2, f"Results don't match for displacement case"
 
 def test_fused_sampler_performance():
     """Test performance of fused grid sampler against baseline implementation"""
@@ -148,8 +239,8 @@ def test_fused_sampler_performance():
             # Measure baseline implementation
             start = time()
             output_baseline = baseline_grid_sampler_3d(
-                input, affine_3d=aff, grid=grid, is_displacement=is_disp, out_shape=output_shape,
-                interpolation_mode="bilinear", padding_mode="zeros",
+                input, affine=aff, grid=grid, is_displacement=is_disp, out_shape=output_shape,
+                mode="bilinear", padding_mode="zeros",
                 align_corners=False
             )
             torch.cuda.synchronize()

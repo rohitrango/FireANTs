@@ -307,13 +307,15 @@ if __name__ == '__main__':
     from time import time
     from fireants.registration.affine import AffineRegistration
     import gc
+    import os
 
     for img_dtype in [torch.bfloat16, torch.float32]:
         # Record starting memory
         start_mem = get_gpu_memory(clear=True)
         # print(f"Starting memory for {img_dtype}: {start_mem} MB")
-        img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz', dtype=img_dtype)
-        img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz', dtype=img_dtype)
+        path = os.environ['DATAPATH_R']
+        img1 = Image.load_file(f'{path}/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz', dtype=img_dtype)
+        img2 = Image.load_file(f'{path}/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz', dtype=img_dtype)
         fixed = BatchedImages([img1, ])
         moving = BatchedImages([img2,])
         transform = 0

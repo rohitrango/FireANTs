@@ -316,9 +316,12 @@ class MomentsRegistration(AbstractRegistration):
 
 if __name__ == '__main__':
     from fireants.io.image import Image, BatchedImages
+    import os
     img_dtype = torch.bfloat16
-    img1 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz', dtype=img_dtype)
-    img2 = Image.load_file('/data/rohitrango/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t1.nii.gz', dtype=img_dtype)
+
+    path = os.environ['DATAPATH_R']
+    img1 = Image.load_file(f'{path}/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz', dtype=img_dtype)
+    img2 = Image.load_file(f'{path}/BRATS2021/training/BraTS2021_00599/BraTS2021_00599_t1.nii.gz', dtype=img_dtype)
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2,])
     transform = MomentsRegistration(1, fixed, moving, moments=2,)

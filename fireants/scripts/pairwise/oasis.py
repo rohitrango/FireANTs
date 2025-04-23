@@ -20,8 +20,7 @@ import os.path as osp
 import ray
 from fireants.scripts.evalutils import compute_metrics
 
-# ROOT_DIR = "/data/rohitrango/OASIS/"
-ROOT_DIR = "/mnt/rohit_data2/neurite-OASIS"
+ROOT_DIR = f"{os.environ['DATA_PATH2']}/neurite-OASIS"
 
 def dice_score(p, q):
     ''' computes the dice score between two tensors '''

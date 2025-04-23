@@ -38,18 +38,20 @@ def test_greedy_crosscorrelation(fused_ops, fused_cc, fixed_image_path, moving_i
 
     # initialize registration
     loss = 'fusedcc' if fused_cc else 'cc'
+    # loss = 'mse'
     start = time()
-    loss_params = {'use_ants_gradient': True} if fused_cc else {}
+    loss_params = {'use_ants_gradient': True, 'use_separable': True} if fused_cc else {}
     reg = GreedyRegistration([4, 2, 1], iterations,
                              fixed_batch, moving_batch, 
                              blur=True,
-                             dtype=dtype,
+                             dtype=dtype if not fused_ops else torch.float32,
                              loss_params=loss_params,
                              optimizer_params={'offload': False},
-                            #  smooth_warp_sigma=0.25,
-                            #  smooth_grad_sigma=0.5,
-                             smooth_warp_sigma=0,
-                             smooth_grad_sigma=0,
+                             cc_kernel_size=7,
+                             smooth_warp_sigma=0.25,
+                             smooth_grad_sigma=0.5,
+                            #  smooth_warp_sigma=0,
+                            #  smooth_grad_sigma=0,
                              optimizer_lr=0.5,
                              loss_type=loss, optimizer='Adam', max_tolerance_iters=1000)
     reg.optimize(False)
@@ -74,7 +76,7 @@ def test_greedy_crosscorrelation(fused_ops, fused_cc, fixed_image_path, moving_i
 
 
 if __name__ == "__main__":
-
+    import os
     # variable to determine whether to run long optim
     # if this is false, we want to see memory usage and dont care about dice
     run_long_optim = os.getenv('RUN_LONG_OPTIM', 'false').lower() == 'true'
@@ -85,10 +87,11 @@ if __name__ == "__main__":
     else:
         iterations = [10, 5, 2]
 
-    fixed_image_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_norm.nii.gz"
-    fixed_seg_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_seg35.nii.gz"
-    moving_image_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_norm.nii.gz"
-    moving_seg_path = "/mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_seg35.nii.gz"
+    path = os.environ['DATA_PATH2']
+    fixed_image_path = f"{path}/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_norm.nii.gz"
+    fixed_seg_path = f"{path}/neurite-OASIS/OASIS_OAS1_0247_MR1/aligned_seg35.nii.gz"
+    moving_image_path = f"{path}/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_norm.nii.gz"
+    moving_seg_path = f"{path}/neurite-OASIS/OASIS_OAS1_0186_MR1/aligned_seg35.nii.gz"
     if not run_long_optim:
         fixed_seg_path = None
         moving_seg_path = None

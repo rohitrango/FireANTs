@@ -72,6 +72,12 @@ class WarpAdam:
         self.smoothing_gaussians = smoothing_gaussians
         self.grad_gaussians = grad_gaussians
     
+    def cleanup(self):
+        # manually clean up
+        del self.exp_avg
+        del self.exp_avg_sq
+        del self.grid
+    
     def set_data_and_size(self, warp, size, grid_copy=None):
         ''' change the optimization variables sizes '''
         self.warp = warp

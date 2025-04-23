@@ -221,25 +221,10 @@ def parse_metric(metric_str: str) -> Tuple[str, List[Union[str, float]]]:
 
     return metric_type, pd
 
-def prepare_prev_transform(prev_transform, prev_transform_type, transform_type, default_device='cuda:0', default_dims=3):
-    ''' prepare the previous transform for the next transform.
-
-        device and dimensionality are taken from the previous transform unless it is None,
-        in which care the default parameters are used.
-
-    '''
+def prepare_prev_transform(prev_transform, prev_transform_type, transform_type):
+    ''' prepare the previous transform for the next transform. '''
     if prev_transform_type is None:
-        # return identity transform
-        if transform_type == 'Rigid':
-            return {
-                'init_translation': torch.zeros(default_dims, device = default_device),
-                'init_moment': torch.eye(default_dims, device=default_device),
-            }
-        else:
-            key = 'init_rigid' if transform_type == 'Affine' else 'init_affine'
-            return {
-                key: torch.eye(default_dims, device=default_device),
-            }
+        return {}
     elif prev_transform_type == 'Moments':
         if transform_type == 'Rigid':
             return {
@@ -520,8 +505,7 @@ def main():
         iterations, tolerance, window = parse_convergence(conv_str)
 
         # gather parameters to pass to the registration from previous step
-        prev_transform_params = prepare_prev_transform(prev_transform, prev_transform_type, transform_type,
-                                                       default_device=args.device, default_dims=fixed_image.dims)
+        prev_transform_params = prepare_prev_transform(prev_transform, prev_transform_type, transform_type)
         merged_params = {**prev_transform_params, **transform_params, **metric_params}
         merged_params['tolerance'] = tolerance
         merged_params['max_tolerance_iters'] = window

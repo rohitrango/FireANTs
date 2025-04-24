@@ -119,6 +119,16 @@ def gather_and_concat(tensor, rank, world_size, master_rank, is_state_sharded, d
             tensor = torch.cat(tensors, dim=dim_to_shard+2)
         return tensor, stats
 
+def crop_distributed_padding(tensor, rank, world_size, image_padding, dim_to_shard):
+    ''' undo the effects of add_distributed_padding '''
+    shape = list(tensor.shape)
+    # if rank = 0, didnt get any padding from previous slice
+    # if rank = world_size - 1, didnt get any padding from next slice
+    start_crop_idx = 0 if rank == 0 else image_padding 
+    end_crop_idx = shape[dim_to_shard+2] if rank == world_size - 1 else shape[dim_to_shard+2] - image_padding
+    return tensor.narrow_copy(dim_to_shard+2, start_crop_idx, end_crop_idx-start_crop_idx).contiguous()
+
+
 def add_distributed_padding(tensor, rank, world_size, image_padding, dim_to_shard):
     '''
     utility to add some padding to the tensor depending on its rank

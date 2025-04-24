@@ -11,10 +11,9 @@ from fireants.io.image import Image, BatchedImages
 from fireants.utils.imageutils import scaling_and_squaring, _find_integrator_n
 from fireants.types import devicetype
 from fireants.losses.cc import gaussian_1d, separable_filtering
-from fireants.utils.util import grad_smoothing_hook
 from fireants.utils.imageutils import jacobian
 from fireants.registration.optimizers.sgd import WarpSGD
-from fireants.registration.optimizers.adam import WarpAdam
+from fireants.registration.optimizers.adam import WarpAdam, _get_smoothing_wrapper
 from fireants.utils.globals import MIN_IMG_SHARDED_SIZE as MIN_IMG_SIZE
 
 from logging import getLogger
@@ -61,8 +60,11 @@ class CompositiveDistributedWarp(nn.Module, AbstractDeformation):
 
         # attach grad hook if smooothing of the gradient is required
         self.smoothing_grad_sigma = smoothing_grad_sigma
+        self.image_padding = 0
         if smoothing_grad_sigma > 0:
             self.smoothing_grad_gaussians = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=fixed_images.device, dtype=dtype) + smoothing_grad_sigma)]
+            self.image_padding = [(len(x)-1)//2 for x in self.smoothing_grad_gaussians][self.dim_to_shard]
+        self.smoothing_wrapper = _get_smoothing_wrapper(self)
         self.attach_grad_hook()
 
         # if the warp is also to be smoothed, add this constraint to the optimizer (in the optimizer_params dict)
@@ -74,6 +76,12 @@ class CompositiveDistributedWarp(nn.Module, AbstractDeformation):
 
         if oparams.get('freeform') is None:
             oparams['freeform'] = freeform
+
+        # distributed parameters
+        oparams['rank'] = self.rank
+        oparams['world_size'] = self.world_size
+        oparams['master_rank'] = self.master_rank
+        oparams['dim_to_shard'] = self.dim_to_shard
         # add optimizer
         optimizer = optimizer.lower()
         if optimizer == 'sgd':
@@ -86,6 +94,8 @@ class CompositiveDistributedWarp(nn.Module, AbstractDeformation):
     def attach_grad_hook(self):
         ''' attack the grad hook to the velocity field if needed '''
         if self.smoothing_grad_sigma > 0:
+            def grad_smoothing_hook(grad, gaussians):
+                return self.smoothing_wrapper(grad, gaussians, self.image_padding)
             hook = partial(grad_smoothing_hook, gaussians=self.smoothing_grad_gaussians)
             self.warp.register_hook(hook)
     

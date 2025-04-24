@@ -445,17 +445,18 @@ if __name__ == '__main__':
     path = Path(f'{path}/fMOST/subject/')
     img1 = Image.load_file(str(path / "192333_red_mm_SLA.nii.gz"), device='cpu')
     img2 = Image.load_file(str(path / "191820_red_mm_SLA.nii.gz"), device='cpu')
-    # clamp
-    # img1.array = torch.clamp(img1.array, 20, 150) - 20
-    # img2.array = torch.clamp(img2.array, 20, 150) - 20
-    # batchify
+    ## clamp
+    minval = 15
+    img1.array = torch.clamp(img1.array, minval, 150) - minval
+    img2.array = torch.clamp(img2.array, minval, 150) - minval
+    ## batchify
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2, ])
     reg = DistributedGreedyRegistration(scales=[12, 8, 4, 2, 1], iterations=[200, 200, 200, 100, 50], 
                                 cc_kernel_size=9,
-                                smooth_grad_sigma=0,
-                                smooth_warp_sigma=0,
-                                # loss_params={'use_ants_gradient': True},
+                                smooth_grad_sigma=1.0,
+                                smooth_warp_sigma=0.5,
+                                loss_params={'use_ants_gradient': True},
                                 fixed_images=fixed, moving_images=moving, 
                                 optimizer='Adam', optimizer_lr=0.5, loss_type='fusedcc')
     reg.optimize()
@@ -470,5 +471,3 @@ if __name__ == '__main__':
         moved_image.write_image("fmost_moved_image.nii.gz")
 
     dist.destroy_process_group()
-
-    # torch.cuda.memory._dump_snapshot(f"pkls/greedy_dist_{rank}.pickle")

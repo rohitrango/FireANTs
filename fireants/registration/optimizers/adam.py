@@ -5,6 +5,7 @@ from torch.nn import functional as F
 from fireants.utils.imageutils import jacobian as jacobian_fn
 from fireants.losses.cc import separable_filtering
 from fireants.interpolator import fireants_interpolator
+from fireants.registration.distributed.utils import add_distributed_padding, crop_distributed_padding
 import logging
 logger = logging.getLogger(__name__)
 torch.backends.cudnn.benchmark = True
@@ -18,6 +19,28 @@ try:
 except ImportError:
     logger.warning("Fused ops not found, using baseline implementation")
 
+## Function for smoothing
+def _get_smoothing_wrapper(optimizer):
+    ''' 
+    Get wrapper for smoothing
+    '''
+    if optimizer.world_size <= 1:
+        def smoothing_wrapper_nodist(tensor, kernels, padding=0):
+            # tensor is a warp field
+            tensor = separable_filtering(tensor.permute(*optimizer.permute_vtoimg), kernels).permute(*optimizer.permute_imgtov)
+            return tensor
+        return smoothing_wrapper_nodist
+    else:
+        # write a distributed version
+        def smoothing_wrapper_dist(tensor, kernels, padding=0):
+            if padding > 0:
+                tensor = add_distributed_padding(tensor, optimizer.rank, optimizer.world_size, padding, optimizer.dim_to_shard-1) # 2 will be added to dim_to_shard anyway
+            tensor = separable_filtering(tensor.permute(*optimizer.permute_vtoimg), kernels).permute(*optimizer.permute_imgtov).contiguous()
+            if padding > 0:
+                tensor = crop_distributed_padding(tensor, optimizer.rank, optimizer.world_size, padding, optimizer.dim_to_shard-1)
+            return tensor
+        return smoothing_wrapper_dist
+
 class WarpAdam:
     ''' at the moment we only support a single warp function 
     also supports multi-scale (by simply interpolating to the target size)
@@ -30,6 +53,11 @@ class WarpAdam:
                  grad_gaussians=None,
                  freeform=False,
                  offload=False,   # try offloading to CPU
+                 # distributed params
+                 rank: int = 0, 
+                 world_size: int = 1, 
+                 master_rank: int = 0, 
+                 dim_to_shard: int = 0,
                  dtype: torch.dtype = torch.float32):
         # init
         self.dtype = dtype
@@ -60,7 +88,6 @@ class WarpAdam:
         # warp grad params
         self.exp_avg = torch.zeros_like(warp, device=self.device if not self.offload else 'cpu')
         self.exp_avg_sq = torch.zeros_like(warp, device=self.device if not self.offload else 'cpu')
-
         self.permute_imgtov = (0, *range(2, self.n_dims+2), 1)  # [N, HWD, dims] -> [N, HWD, dims] -> [N, dims, HWD]
         self.permute_vtoimg = (0, self.n_dims+1, *range(1, self.n_dims+1))  # [N, dims, HWD] -> [N, HWD, dims]
         # set grid
@@ -70,7 +97,20 @@ class WarpAdam:
         self.initialize_grid(warp.shape[1:-1])
         # gaussian smoothing parameters (if any)
         self.smoothing_gaussians = smoothing_gaussians
-        self.grad_gaussians = grad_gaussians
+        self.grad_gaussians = grad_gaussians            # unused
+        # distributed params
+        self.rank = rank
+        self.world_size = world_size
+        self.master_rank = master_rank
+        self.dim_to_shard = dim_to_shard
+        # get padding lengths
+        if self.smoothing_gaussians is not None:
+            self.padding_smoothing = [len(x) for x in self.smoothing_gaussians] if isinstance(self.smoothing_gaussians, (list, tuple)) else [len(self.smoothing_gaussians) for _ in range(self.n_dims)]
+            self.padding_smoothing = (self.padding_smoothing[self.dim_to_shard] - 1) // 2
+        else:
+            self.padding_smoothing = 0
+        # get wrapper around smoothing for distributed / not distributed
+        self.smoothing_wrapper = _get_smoothing_wrapper(self)
     
     def cleanup(self):
         # manually clean up
@@ -179,7 +219,7 @@ class WarpAdam:
             # self.warp.data.copy_(grad + self.warp.data)
             self.warp.data.add_(grad)
             if self.smoothing_gaussians is not None:
-                self.warp.data = separable_filtering(self.warp.data.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)
+                self.warp.data = self.smoothing_wrapper(self.warp.data, self.smoothing_gaussians, self.padding_smoothing)
         else:
             # This is the diffeomorphic update
             # gradmax = self.eps + grad.reshape(grad.shape[0], -1).abs().max(1).values  # [B,]
@@ -201,5 +241,5 @@ class WarpAdam:
             # w = grad
             # smooth result if asked for
             if self.smoothing_gaussians is not None:
-                grad = separable_filtering(grad.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)
+                grad = self.smoothing_wrapper(grad, self.smoothing_gaussians, self.padding_smoothing)
             self.warp.data.copy_(grad)

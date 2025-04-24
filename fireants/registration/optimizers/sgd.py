@@ -5,6 +5,7 @@ from fireants.utils.imageutils import jacobian as jacobian_fn
 # from fireants.utils.imageutils import compute_inverse_warp_displacement
 from fireants.losses.cc import separable_filtering
 from fireants.interpolator import fireants_interpolator
+from fireants.registration.optimizers.adam import _get_smoothing_wrapper
 # import matplotlib.pyplot as plt
 import logging
 logger = logging.getLogger(__name__)
@@ -19,6 +20,11 @@ class WarpSGD:
                  momentum=0, dampening=0, weight_decay=0, nesterov=False, scaledown=False, multiply_jacobian=False,
                  smoothing_gaussians=None, grad_gaussians=None,
                  freeform=False,
+                 # distributed params
+                 rank: int = 0, 
+                 world_size: int = 1, 
+                 master_rank: int = 0, 
+                 dim_to_shard: int = 0,
                  dtype: torch.dtype = torch.float32):
         # init
         self.dtype = dtype
@@ -58,6 +64,19 @@ class WarpSGD:
         # gaussian smoothing parameters (if any)
         self.smoothing_gaussians = smoothing_gaussians
         self.grad_gaussians = grad_gaussians
+        # distributed params
+        self.rank = rank
+        self.world_size = world_size
+        self.master_rank = master_rank
+        self.dim_to_shard = dim_to_shard
+        # get padding lengths
+        if self.smoothing_gaussians is not None:
+            self.padding_smoothing = [len(x) for x in self.smoothing_gaussians] if isinstance(self.smoothing_gaussians, (list, tuple)) else [len(self.smoothing_gaussians) for _ in range(self.n_dims)]
+            self.padding_smoothing = (self.padding_smoothing[self.dim_to_shard] - 1) // 2
+        else:
+            self.padding_smoothing = 0
+        # get wrapper around smoothing for distributed / not distributed
+        self.smoothing_wrapper = _get_smoothing_wrapper(self)
     
     def cleanup(self):
         # manually clean up
@@ -148,6 +167,6 @@ class WarpSGD:
             grad.add_(fireants_interpolator.warp_composer(self.warp.data, affine=self.affine_init, v=grad, grid=self.grid, align_corners=True))
         # smooth result if asked for
         if self.smoothing_gaussians is not None:
-            grad = separable_filtering(grad.permute(*self.permute_vtoimg), self.smoothing_gaussians).permute(*self.permute_imgtov)
+            grad = self.smoothing_wrapper(grad, self.smoothing_gaussians, self.padding_smoothing)
         self.warp.data.copy_(grad)
         pass

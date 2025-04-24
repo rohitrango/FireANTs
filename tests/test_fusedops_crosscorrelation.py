@@ -3,7 +3,8 @@ import pytest
 from time import time
 from fireants.losses.cc import LocalNormalizedCrossCorrelationLoss
 from fireants.tests.cc_mem_test import fast_lncc
-from fused_ops.ops.fusedcc import FusedLocalNormalizedCrossCorrelationLoss
+from fireants.losses.fusedcc import FusedLocalNormalizedCrossCorrelationLoss
+# from fused_ops.ops.fusedcc import FusedLocalNormalizedCrossCorrelationLoss
 seed = 4531
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)   
@@ -20,7 +21,7 @@ def test_fused_cc_correctness():
     loss_baseline = LocalNormalizedCrossCorrelationLoss(3, kernel_size=3, reduction='mean').cuda()
     
     # Forward pass
-    out = -loss(img1, img2)
+    out = loss(img1, img2)
     out_baseline = loss_baseline(img1, img2)
     out_baseline2 = fast_lncc(img1, img2, 3)
     
@@ -63,7 +64,7 @@ def test_fused_cc_memory_forward():
         
         # Measure fused implementation
         start = time()
-        out = -loss(img1, img2)
+        out = loss(img1, img2)
         torch.cuda.synchronize()
         out_time = time() - start
         fused_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory
@@ -116,7 +117,7 @@ def test_fused_cc_memory_backward():
         
         # Measure fused implementation
         t0 = time()
-        out = -loss(img1, img2)
+        out = loss(img1, img2)
         torch.cuda.synchronize()
         t1 = time()
         out.backward()

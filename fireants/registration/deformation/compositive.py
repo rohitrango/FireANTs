@@ -63,9 +63,6 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
         if self.smoothing_warp_sigma > 0:
             smoothing_warp_gaussians = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=fixed_images.device, dtype=dtype) + smoothing_warp_sigma)]
             oparams['smoothing_gaussians'] = smoothing_warp_gaussians
-        # if self.smoothing_grad_sigma > 0:
-        #     smoothing_grad_gaussians = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=fixed_images.device) + smoothing_grad_sigma)]
-        #     oparams['grad_gaussians'] = smoothing_grad_gaussians
 
         if oparams.get('freeform') is None:
             oparams['freeform'] = freeform

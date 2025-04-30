@@ -87,6 +87,10 @@ class FusedNCC3d(torch.autograd.Function):
         kernel_size, nr, dr, reduction, use_ants_gradient, use_separable = ctx.kernel_size, ctx.nr, ctx.dr, ctx.reduction, ctx.use_ants_gradient, ctx.use_separable
         B, C, H, W, D = input_img.shape
 
+        # add reduction
+        # if reduction == ffo.Reduction.MEAN:
+        #     grad_output /= (H * W * D)
+
         input_too_large = interm.numel() >= MAX_INT32_NUMEL
         inp_size = 5*C if not input_too_large else 1
 
@@ -172,7 +176,7 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
     def __init__(
         self,
         spatial_dims: int = 3,
-        kernel_size: int = 3,
+        kernel_size: Union[int, List[int]] = 3,
         reduction: str = "mean",
         smooth_nr: float = 0,
         smooth_dr: float = 1e-5,
@@ -197,7 +201,9 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
             raise ValueError(f"Unsupported ndim: {self.ndim}-d, only 1-d, 2-d, and 3-d inputs are supported")
         self.reduction = reduction
 
-        self.kernel_size = kernel_size
+        # keep list if kernel_size is list, else empty list
+        self.kernel_size_list = kernel_size if isinstance(kernel_size, (list, tuple)) else None
+        self.kernel_size = kernel_size[0] if isinstance(kernel_size, (list, tuple)) else kernel_size
         if self.kernel_size % 2 == 0:
             raise ValueError(f"kernel_size must be odd, got {self.kernel_size}")
 
@@ -206,6 +212,21 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         self.smooth_dr = float(smooth_dr)
         self.use_ants_gradient = use_ants_gradient
         self.use_separable = use_separable
+    
+    def set_scales(self, scales):
+        ''' function is called at initialization of abstract registration '''
+        self.scales = scales
+        if self.kernel_size_list:
+            assert len(self.kernel_size_list) == len(self.scales), "kernel_size must be a list of the same length as scales"
+    
+    def set_iterations(self, iterations):
+        ''' function is called at initialization of abstract registration '''
+        self.iterations = iterations
+    
+    def set_current_scale_and_iterations(self, scale, iters):
+        if self.kernel_size_list:
+            idx = self.scales.index(scale)
+            self.kernel_size = self.kernel_size_list[idx]
     
     def get_image_padding(self) -> int:
         return (self.kernel_size - 1) // 2

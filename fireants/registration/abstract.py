@@ -131,6 +131,15 @@ class AbstractRegistration(ABC):
             self.loss_fn = MeanSquaredError(reduction=reduction)
         else:
             raise ValueError(f"Loss type {loss_type} not supported")
+        
+        # see if loss can store the iterations
+        if hasattr(self.loss_fn, 'set_iterations'):
+            logger.info("Setting iterations for loss function")
+            self.loss_fn.set_iterations(self.iterations)
+        if hasattr(self.loss_fn, 'set_scales'):
+            logger.info("Setting scales for loss function")
+            self.loss_fn.set_scales(self.scales)
+
         self.print_init_msg()
 
     def print_init_msg(self):

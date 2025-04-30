@@ -294,6 +294,10 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
             #### Set size for warp field (and let it figure out whether to shard or not)
             self.warp.set_size(size_sharded_down)
 
+            # set loss function
+            if hasattr(self.loss_fn, 'set_current_scale_and_iterations'):
+                self.loss_fn.set_current_scale_and_iterations(scale, iters)
+
             # get sharded state
             # is_state_sharded = self.warp.is_state_sharded
             is_state_sharded = True
@@ -328,7 +332,6 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
         
             # TODO: from stats, save the min/max coordinates 
             min_coords_moving, max_coords_moving = calculate_bbox_from_gather_stats(moving_gather_stats, self.rank, self.world_size, self.dims)
-            print(f"Rank: {self.rank}, min_coords_moving: {min_coords_moving}, max_coords_moving: {max_coords_moving}")
 
             # run different subroutines depending on whether state is sharded or not
             if is_state_sharded:
@@ -349,7 +352,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                         moved_coords = self.get_warped_coordinates(self.fixed_images, self.moving_images)  
                         loss = loss + self.warp_reg(moved_coords)
                     loss.backward()
-                    if self.progress_bar and rank == self.master_rank:
+                    if self.progress_bar and self.rank == self.master_rank:
                         pbar.set_description("rank:{}/{}, scale: {}, iter: {}/{}, loss: {:4f}".format(self.rank, self.world_size, scale, i, iters, loss.item()/scale_factor))
                     # optimize the velocity field
                     self.warp.step()
@@ -363,7 +366,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                 # run on rank 0
                 raise NotImplementedError("Non sharded version not supported for simplicity")
                 moved_image = None
-                if rank == self.master_rank:
+                if self.rank == self.master_rank:
                     for i in pbar:
                         self.warp.set_zero_grad()
                         warp_field = self.warp.get_warp()  # [N, HWD, 3]
@@ -389,11 +392,22 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
             # save transformed image
             if save_transformed:
                 transformed_images.append(moved_image.detach() if isinstance(moved_image, torch.Tensor) else moved_image)
+            
+            # cleanup memory
+            if scale > 1:
+                del moving_image_blur, fixed_image_down 
+                if not save_transformed:
+                    del moved_image
+            
+            # sync and clean
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            torch.distributed.barrier()
         
-        print(f"Rank {rank} finished optimization")
+        print(f"Rank {self.rank} finished optimization")
         # cleanup optimization state
         self.warp.optimizer.cleanup()
-
+        torch.distributed.barrier()
         if save_transformed:
             return transformed_images
     
@@ -436,10 +450,11 @@ if __name__ == '__main__':
     dist.init_process_group(backend='nccl', rank=rank, world_size=world_size)
     torch.cuda.set_device(rank)
 
-    # torch.cuda.memory._record_memory_history()
     # data_path = os.environ['DATAPATH_R']
     # img1 = Image.load_file(f'{data_path}/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz', device='cpu')
     # img2 = Image.load_file(f'{data_path}/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz', device='cpu')
+
+    torch.cuda.memory._record_memory_history()
 
     path = os.environ['DATA_PATH2']
     path = Path(f'{path}/fMOST/subject/')
@@ -453,14 +468,16 @@ if __name__ == '__main__':
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2, ])
     reg = DistributedGreedyRegistration(scales=[12, 8, 4, 2, 1], iterations=[200, 200, 200, 100, 50], 
-                                cc_kernel_size=9,
-                                smooth_grad_sigma=1.0,
-                                smooth_warp_sigma=0.5,
+                                cc_kernel_size=15,
+                                smooth_grad_sigma=2.0,
+                                smooth_warp_sigma=1.0,
                                 loss_params={'use_ants_gradient': True},
                                 fixed_images=fixed, moving_images=moving, 
                                 optimizer='Adam', optimizer_lr=0.5, loss_type='fusedcc')
     reg.optimize()
     print(f"Optimized from rank {rank}")
+
+    torch.cuda.memory._dump_snapshot(f"memory_snapshot_{rank}.pkl")
 
     # get moved image
     print("Gathering moved image")

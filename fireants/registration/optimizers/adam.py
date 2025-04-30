@@ -53,6 +53,7 @@ class WarpAdam:
                  grad_gaussians=None,
                  freeform=False,
                  offload=False,   # try offloading to CPU
+                 reset=False,
                  # distributed params
                  rank: int = 0, 
                  world_size: int = 1, 
@@ -81,6 +82,7 @@ class WarpAdam:
         self.step_t = 0    # initialize step to 0
         self.weight_decay = weight_decay
         self.multiply_jacobian = multiply_jacobian
+        self.reset = reset
         self.scaledown = scaledown   # if true, the scale the gradient even if norm is below 1
         # offload params
         self.device = warp.device
@@ -129,10 +131,17 @@ class WarpAdam:
                 self.exp_avg = self.exp_avg.to(self.device)
                 self.exp_avg_sq = self.exp_avg_sq.to(self.device)
 
-            self.exp_avg = F.interpolate(self.exp_avg.detach().permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True, 
-                                ).permute(*self.permute_imgtov)
-            self.exp_avg_sq = F.interpolate(self.exp_avg_sq.detach().permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True, 
-                                ).permute(*self.permute_imgtov)
+            # if resetting, we dont need to interpolate at all
+            if self.reset:
+                logger.info("Resetting optimizer")
+                warp_size = [self.batch_size, *size, self.n_dims]
+                self.exp_avg = torch.zeros(warp_size, device=self.device if not self.offload else 'cpu')
+                self.exp_avg_sq = torch.zeros(warp_size, device=self.device if not self.offload else 'cpu')
+            else:
+                self.exp_avg = F.interpolate(self.exp_avg.detach().permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True, 
+                                    ).permute(*self.permute_imgtov)
+                self.exp_avg_sq = F.interpolate(self.exp_avg_sq.detach().permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True, 
+                                    ).permute(*self.permute_imgtov)
             
             # offload it back to CPU
             if self.offload:

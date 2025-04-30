@@ -5,6 +5,7 @@
 #include "FusedGridComposer.h"
 #include "FusedGenerateGrid.h"
 #include "GaussianBlurFFT.h"
+#include "MutualInformation.h"
 #include "common.h"
 
 PYBIND11_MODULE(fireants_fused_ops, m) {
@@ -14,6 +15,11 @@ PYBIND11_MODULE(fireants_fused_ops, m) {
             .value("MEAN", Reduction::MEAN)
             .value("SUM", Reduction::SUM)
             .value("NONE", Reduction::NONE).export_values();
+
+    py::enum_<KernelType>(m, "KernelType", py::arithmetic())
+            .value("GAUSSIAN", KernelType::GAUSSIAN)
+            .value("BSPLINE", KernelType::BSPLINE)
+            .value("DELTA", KernelType::DELTA).export_values();
 
     // cross-correlation forward
     m.def("cc3d_fwd_interm_v1", &cc3d_fwd_interm_v1, "Forward pass of cross-correlation given intermediates", 
@@ -64,4 +70,6 @@ PYBIND11_MODULE(fireants_fused_ops, m) {
     
     m.def("gaussian_blur_fft3", &gaussian_blur_fft3, "Gaussian blur in fft space",
         py::arg("im_fft"), py::arg("zs"), py::arg("ys"), py::arg("xs"), py::arg("ze"), py::arg("ye"), py::arg("xe"), py::arg("multiplier"));
+    
+    m.def("mutual_information_histogram_fwd", &mutual_information_histogram_fwd, "Mutual information histogram forward", py::arg("input_img"), py::arg("target_img"), py::arg("num_bins"), py::arg("kernel_type") = KernelType::GAUSSIAN);
 }

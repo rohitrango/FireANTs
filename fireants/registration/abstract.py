@@ -49,7 +49,7 @@ class AbstractRegistration(ABC):
                 This is the fastest similarity metric, but it is not robust to outliers, multi-modal images, or even intensity inhomogeneities within the same modality. Good for testing registration pipelines.
             - 'custom': Custom loss function (see `custom_loss` for more details)
             - 'noop': No similarity metric  (this is useful for testing regularizations)
-        mi_kernel_type (str, optional): Kernel type for mutual information loss. Default: 'b-spline'
+        mi_kernel_type (str, optional): Kernel type for mutual information loss. Default: 'gaussian'
         cc_kernel_type (str, optional): Kernel type for cross correlation loss. Default: 'rectangular'
         custom_loss (nn.Module, optional): Custom loss module if loss_type='custom'.
             See [Custom Loss Functions](../advanced/customloss.md) for more details on how to implement custom loss functions.
@@ -74,7 +74,7 @@ class AbstractRegistration(ABC):
                 scales: List[int], iterations: List[float], 
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
-                mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
+                mi_kernel_type: str = 'gaussian', cc_kernel_type: str = 'rectangular',
                 custom_loss: nn.Module = None,
                 loss_params: dict = {},
                 cc_kernel_size: int = 3, 
@@ -122,6 +122,9 @@ class AbstractRegistration(ABC):
             from fireants.losses.fusedcc import FusedLocalNormalizedCrossCorrelationLoss
             self.loss_fn = FusedLocalNormalizedCrossCorrelationLoss(spatial_dims=self.dims, 
                                                     kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
+        elif loss_type == 'fusedmi':
+            from fireants.losses.fusedmi import FusedGlobalMutualInformationLoss
+            self.loss_fn = FusedGlobalMutualInformationLoss(kernel_type=mi_kernel_type, reduction=reduction, **loss_params)
         elif loss_type == 'custom':
             self.loss_fn = custom_loss
         elif loss_type == 'noop':

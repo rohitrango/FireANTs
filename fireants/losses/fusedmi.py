@@ -7,6 +7,7 @@ from torch.nn import functional as F
 from typing import Optional
 import os
 import fireants_fused_ops as ffo
+from fireants.losses.mi import allgather_mi
 import logging
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,11 @@ class MI_histogram_kernel(torch.autograd.Function):
         if target_img.requires_grad:
             grad_target = torch.zeros_like(target_img)
         ffo.mutual_information_histogram_bwd(input_img, target_img, grad_pab, grad_pa, grad_pb, num_bins, grad_input, grad_target, kernel_type)
+        sample_size = input_img.flatten(2).shape[2]
+        if grad_input is not None:
+            grad_input.mul_(sample_size)
+        if grad_target is not None:
+            grad_target.mul_(sample_size)
         return grad_input, grad_target, None, None
 
 
@@ -74,6 +80,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
             smooth_dr: a small constant added to the denominator to avoid nan.
         """
         super().__init__()
+        logger.info(f"Initializing FusedGlobalMutualInformationLoss with kernel_type={kernel_type}, num_bins={num_bins}, reduction={reduction}, normalize_image_if_required={normalize_image_if_required}, smooth_nr={smooth_nr}, smooth_dr={smooth_dr}")
         if num_bins <= 0:
             raise ValueError("num_bins must > 0, got {num_bins}")
         self.kernel_type = kernel_type_dict[kernel_type]
@@ -133,12 +140,12 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         pab, pa, pb = MI_histogram_kernel.apply(pred, target, self.num_bins, self.kernel_type)
 
         if self.world_size is not None and self.world_size > 1:
-            pab, pa, pb = allgather_mi.apply(pab, pa, pb)
+            pab, pa, pb = allgather_mi.apply(pab, pa, pb, pred.flatten(2).shape[2])
             # divide by total number of samples (this is not exact but approximate)
             papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))
         else:
             papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))  # (batch, num_bins, num_bins)
-
+        
         mi = torch.sum(
             pab * torch.log((pab + self.smooth_nr) / (papb + self.smooth_dr) + self.smooth_dr), dim=(-1, -2)
         )  # (batch)

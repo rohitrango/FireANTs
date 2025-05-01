@@ -9,19 +9,30 @@ import os
 
 class allgather_mi(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, pab, pa, pb):
-        torch.distributed.all_reduce(pa, op=torch.distributed.ReduceOp.AVG)
-        torch.distributed.all_reduce(pb, op=torch.distributed.ReduceOp.AVG)
+    def forward(ctx, pab, pa, pb, sample_size):
+        # get sample size
+        total_size = torch.tensor([sample_size], dtype=torch.long, device=pab.device)
+        torch.distributed.all_reduce(total_size, op=torch.distributed.ReduceOp.SUM)
+        total_size = total_size.item()
+        wt = sample_size * 1.0 / total_size
+        # allreduce the histograms
+        pa.mul_(wt)
+        pb.mul_(wt)
+        pab.mul_(wt)
+        torch.distributed.all_reduce(pa, op=torch.distributed.ReduceOp.SUM)
+        torch.distributed.all_reduce(pb, op=torch.distributed.ReduceOp.SUM)
         torch.distributed.all_reduce(pab, op=torch.distributed.ReduceOp.SUM)
+        ctx.wt = wt
+        # make sure they are weighted correctly
+        # rank = os.environ.get('RANK', 0)
+        # print(f"Rank: {rank}, Weight: {wt}", pab.flatten(2).sum(2), pa.flatten(2).sum(2), pb.flatten(2).sum(2))
         return pab, pa, pb
 
     @staticmethod
     def backward(ctx, grad_pab, grad_pa, grad_pb):
         # get scaling factor
-        world_size = os.environ.get('WORLD_SIZE', None)
-        assert world_size is not None, "WORLD_SIZE environment variable is not set"
-        world_size = int(world_size)
-        return grad_pab, grad_pa.div(world_size) if grad_pa is not None else grad_pa, grad_pb.div(world_size) if grad_pb is not None else grad_pb
+        wt = ctx.wt
+        return wt * grad_pab, wt * grad_pa if grad_pa is not None else grad_pa, wt * grad_pb if grad_pb is not None else grad_pb, None
 
 class GlobalMutualInformationLoss(nn.Module):
     """
@@ -189,7 +200,7 @@ class GlobalMutualInformationLoss(nn.Module):
 
         if self.world_size is not None and self.world_size > 1:
             pab = torch.bmm(wa.permute(0, 2, 1), wb.to(wa))
-            pab, pa, pb = allgather_mi.apply(pab, pa, pb)
+            pab, pa, pb = allgather_mi.apply(pab, pa, pb, wa.shape[1])
             # divide by total number of samples (this is not exact but approximate)
             pab = pab.div(self.world_size * wa.shape[1])
             papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))

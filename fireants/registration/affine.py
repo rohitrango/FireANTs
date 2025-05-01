@@ -43,7 +43,7 @@ class AffineRegistration(AbstractRegistration):
         optimizer_params (dict, optional): Additional parameters for optimizer. Defaults to {}.
         loss_params (dict, optional): Additional parameters for loss function. Defaults to {}.
         optimizer_lr (float, optional): Learning rate for optimizer. Defaults to 0.1.
-        mi_kernel_type (str, optional): Kernel type for MI loss. Defaults to 'b-spline'.
+        mi_kernel_type (str, optional): Kernel type for MI loss. Defaults to 'gaussian'
         cc_kernel_type (str, optional): Kernel type for CC loss. Defaults to 'rectangular'.
         cc_kernel_size (int, optional): Kernel size for CC loss. Defaults to 3.
         tolerance (float, optional): Convergence tolerance. Defaults to 1e-6.
@@ -65,7 +65,7 @@ class AffineRegistration(AbstractRegistration):
                 optimizer: str = 'Adam', optimizer_params: dict = {},
                 loss_params: dict = {},
                 optimizer_lr: float = 3e-2,
-                mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
+                mi_kernel_type: str = 'gaussian', cc_kernel_type: str = 'rectangular',
                 cc_kernel_size: int = 3,
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
                 around_center: bool = True,

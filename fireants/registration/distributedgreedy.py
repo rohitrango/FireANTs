@@ -114,6 +114,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
         self.reduction = reduction
         # find sharding strategy (spatial dim to shard)
         self.dim_to_shard = get_dim_to_shard(self.dims, world_size, fixed_images.shape, moving_images.shape)
+        logger.info(f"Sharding along dim: {self.dim_to_shard}")
         # shard the image now
         self.fixed_images._shard_dim(self.dim_to_shard, rank, world_size)
         self.moving_images._shard_dim(self.dim_to_shard, rank, world_size)
@@ -164,46 +165,10 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                                              smooth_warp_sigma: float = 0, smooth_grad_sigma: float = 0,
                                              shape=None, displacement=False):
         ''' Get inverse warped coordinates for the moving image.
-
         This method is useful to analyse the effect of how the moving coordinates (fixed images) are transformed
         '''
         raise NotImplementedError
-        moving_arrays = moving_images()
-        if shape is None:
-            shape = moving_images.shape
-        else:
-            shape = [moving_arrays.shape[0], 1] + list(shape) 
-
-        # TODO: Change this eventually
-        warp = self.warp.get_warp().detach().clone()
-        # warp = warp + F.affine_grid(torch.eye(self.dims, self.dims+1, device=warp.device)[None], [1, 1] + list(warp.shape[1:-1]), align_corners=True)
-        # get affine warp from displacement map
-        # warp = fireants_interpolator.affine_warp(None, warp, align_corners=True)
-        warp_inv = compositive_warp_inverse(moving_images, warp, displacement=True) #, smooth_warp_sigma=smooth_warp_sigma, smooth_grad_sigma=smooth_grad_sigma)
-        # resample if needed
-        mode = "bilinear" if self.dims == 2 else "trilinear"
-        if tuple(warp_inv.shape[1:-1]) != tuple(shape[2:]):
-            warp_inv = F.interpolate(warp_inv.permute(*self.warp.permute_vtoimg), size=shape[2:], mode=mode, align_corners=True).permute(*self.warp.permute_imgtov)
-        
-        # get affine transform
-        fixed_t2p = fixed_images.get_torch2phy()
-        moving_p2t = moving_images.get_phy2torch()
-        # save initial affine transform to initialize grid 
-        affine_map_init = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))
-        affine_map_inv  = torch.linalg.inv(affine_map_init)
-        # get A^-1 * v[y]
-        if self.dims == 2:
-            warp_inv = torch.einsum('bhwx,byx->bhwy', warp_inv, affine_map_inv[:, :-1, :-1])
-        elif self.dims == 3:
-            warp_inv = torch.einsum('bhwdx,byx->bhwdy', warp_inv, affine_map_inv[:, :-1, :-1])
-        else:
-            raise ValueError('Invalid number of dimensions: {}'.format(self.dims))
-        #### grid = A^-1 y - A^-1 b = apply A^-1 to regular grid
-        return {
-            'affine': affine_map_inv[:, :-1].contiguous(),
-            'grid': warp_inv,
-        }
-
+      
     def get_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], \
                                      moving_images: Union[BatchedImages, FakeBatchedImages], \
                                      shape=None, displacement=False):
@@ -226,9 +191,10 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                 If displacement=True, displacement field, displacements in normalized [-1,1] space
                 Shape: [N, H, W, [D], dims]
         """
-        raise NotImplementedError
+        if not fixed_images.is_sharded:
+            fixed_images._shard_dim(self.dim_to_shard, self.rank, self.world_size)
 
-        fixed_arrays = fixed_images() 
+        fixed_arrays = fixed_images()  # could be sharded
         if shape is None:
             shape = fixed_images.shape
         else:
@@ -238,7 +204,13 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
         moving_p2t = moving_images.get_phy2torch().to(self.dtype)
         # save initial affine transform to initialize grid 
         affine_map_init = (torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]).contiguous()
-        # set affine coordinates
+        if displacement:
+            # ⚠️ *WARNING*: this is tricky - if fixed and moving images do not have the same physical space transformation, then the affine matrix to be subtracted should be moving_p2t @ fixed_t2p
+            # For now, the assumption is that `get_warp_parameters()` is to be strictly used within pytorch space only
+            # other functions like `save_as_ants_transforms()` should be modified to handle these kind of cases
+            affine_map_init = affine_map_init - torch.eye(self.dims, self.dims+1)[None].to(self.dtype)
+
+        # get displacement field
         warp_field = self.warp.get_warp()
 
         # resize the warp field if needed
@@ -410,27 +382,42 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
         torch.distributed.barrier()
         if save_transformed:
             return transformed_images
-    
-    def get_moved_image_fullres(self, ):
+
+    def evaluate(self, fixed_images: Union[BatchedImages, torch.Tensor], moving_images: Union[BatchedImages, torch.Tensor], shape=None):
         '''
-        Get moved image at full resolution 
+        Get moved image at full resolution
+
+        Implementation of this method is different than AbstractRegistration because of an extra allgather step
         '''
-        fixed_t2p = self.fixed_images.get_torch2phy().to(self.dtype)
-        moving_p2t = self.moving_images.get_phy2torch().to(self.dtype)
+        if isinstance(fixed_images, torch.Tensor):
+            fixed_images = FakeBatchedImages(fixed_images, self.fixed_images)
+        if isinstance(moving_images, torch.Tensor):
+            moving_images = FakeBatchedImages(moving_images, self.moving_images)
+        
+        # shard image
+        if not fixed_images.is_sharded:
+            fixed_images._shard_dim(self.dim_to_shard, self.rank, self.world_size)
+            fixed_images.set_device(self.device)
+        if not moving_images.is_sharded:
+            moving_images._shard_dim(self.dim_to_shard, self.rank, self.world_size)
+            moving_images.set_device(self.device)
+
+        # get metadata
+        fixed_t2p = fixed_images.get_torch2phy().to(self.dtype)
+        moving_p2t = moving_images.get_phy2torch().to(self.dtype)
         # get shape of sharded image
-        fixed_sharded_size = self.fixed_images.shape[2:]
-        moving_sharded_size = self.moving_images.shape[2:]
+        fixed_sharded_size = fixed_images.shape[2:]
+        moving_sharded_size = moving_images.shape[2:]
         # save initial affine transform to initialize grid 
-        affine_map_init = (torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]).contiguous().to(self.dtype)
-        # get sharded arrays
-        fixed_sharded_array = self.fixed_images()
-        moving_sharded_array = self.moving_images()
+        moving_sharded_array = moving_images()
         # gather moving image
         moving_image_blur, moving_gather_stats = gather_and_concat(moving_sharded_array, self.rank, self.world_size, self.master_rank, True, self.dim_to_shard)
         # Get stats for min and max coords
         min_coords_moving, max_coords_moving = calculate_bbox_from_gather_stats(moving_gather_stats, self.rank, self.world_size, self.dims)
         # get coordinates to interpolate
-        moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=self.warp.get_warp(), mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_moving, max_coords=max_coords_moving)
+        moved_coords = self.get_warp_parameters(fixed_images, moving_images, shape=shape)
+        # note that we have to provide (min, max) coordinates too
+        moved_image = fireants_interpolator(moving_image_blur, **moved_coords, mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_moving, max_coords=max_coords_moving)
         # gather it up again
         del moving_image_blur
         moved_image, _ = gather_and_concat(moved_image, self.rank, self.world_size, self.master_rank, True, self.dim_to_shard)
@@ -480,11 +467,11 @@ if __name__ == '__main__':
     torch.cuda.memory._dump_snapshot(f"memory_snapshot_{rank}.pkl")
 
     # get moved image
-    print("Gathering moved image")
-    moved_image = reg.get_moved_image_fullres().to(torch.uint8)
-    if rank == 0:
-        print("Saving moved image")
-        moved_image = FakeBatchedImages(moved_image, fixed, ignore_size_match=True)
-        moved_image.write_image("fmost_moved_image.nii.gz")
+    # print("Gathering moved image")
+    # moved_image = reg.get_moved_image_fullres().to(torch.uint8)
+    # if rank == 0:
+    #     print("Saving moved image")
+    #     moved_image = FakeBatchedImages(moved_image, fixed, ignore_size_match=True)
+    #     moved_image.write_image("fmost_moved_image.nii.gz")
 
     dist.destroy_process_group()

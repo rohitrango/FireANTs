@@ -286,13 +286,14 @@ class BatchedImages:
         # create metadata
         self.torch2phy = torch.cat([x.torch2phy for x in self.images], dim=0)
         self.phy2torch = torch.cat([x.phy2torch for x in self.images], dim=0)
+        # sharding info 
+        self.is_sharded = False
     
     def set_device(self, device_name):
         # set the device for the batch tensor
         self.batch_tensor = self.batch_tensor.to(device_name)
         self.torch2phy = self.torch2phy.to(device_name)
         self.phy2torch = self.phy2torch.to(device_name)
-
     
     def _shard_dim(self, dim_to_shard, rank, world_size):
         size = self.batch_tensor.shape[dim_to_shard+2]
@@ -307,6 +308,7 @@ class BatchedImages:
         self._shard_start = start
         self._shard_end = end
         self._shard_dim = dim_to_shard
+        self.is_sharded = True
     
     def _save_shards(self, dim_to_shard, world_size):
         size = self.batch_tensor.shape[dim_to_shard+2]
@@ -395,6 +397,7 @@ class FakeBatchedImages:
             check_and_raise_cond(tuple(batched_size) == tuple(tensor_size), "Tensor size must match the size of the batched images", ValueError)
         self.tensor = tensor
         self.batched_images = batched_images
+        self.is_sharded = True   # assume that it inherits a sharded image
     
     def __call__(self):
         return self.tensor

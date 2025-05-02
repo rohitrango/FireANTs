@@ -96,17 +96,21 @@ __global__ void mutual_information_histogram_bwd_kernel_basic(
 
     int64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     // Get global thread index and decompose into bin_idx and (b,c,sample_idx)
-    index_t bin_idx = idx % num_bins;
-    index_t sample_idx = (idx / num_bins) % num_samples;
-    index_t c_idx = (idx / (num_samples * num_bins)) % channels;
-    index_t b_idx = idx / (num_samples * num_bins * channels);
+    index_t bin_idx = static_cast<index_t>(idx % num_bins);
+    idx = idx / num_bins;
+    index_t sample_idx = static_cast<index_t>((idx) % num_samples);
+    idx = idx / num_samples;
+    index_t c_idx = static_cast<index_t>((idx / num_bins) % channels);
+    idx = idx / channels;
+    index_t b_idx = static_cast<index_t>(idx);
     // get batch index of starting thread
-    index_t b_start = (blockIdx.x * blockDim.x) / (num_samples * num_bins * channels);
+    index_t b_start = static_cast<index_t>((blockIdx.x * blockDim.x) / (num_samples * num_bins * channels));
 
-    while (b_start < batch_size) { 
+    // while (b_start < batch_size) { 
+    if (b_start < batch_size) {
         // if out of bounds, compute some other thing and we will not write to memory
         bool out_of_bounds = b_idx >= batch_size;
-        b_idx -= static_cast<index_t>(out_of_bounds);
+        b_idx -= (out_of_bounds ? 1 : 0);
 
         //  processing gradients for (b, c, n)
         opmath_t shared_grad_pa_j = grad_pa[bin_idx + num_bins * (c_idx + channels * b_idx)];  // (b, c, i)
@@ -193,14 +197,13 @@ __global__ void mutual_information_histogram_bwd_kernel_basic(
         __syncthreads();
             
         // update counter
-        idx += blockDim.x * gridDim.x;
-        bin_idx = idx % num_bins;
-        sample_idx = (idx / num_bins) % num_samples;
-        c_idx = (idx / (num_samples * num_bins)) % channels;
-        b_idx = idx / (num_samples * num_bins * channels);
-        b_start = (idx - threadIdx.x) / (num_samples * num_bins * channels);
+        // idx += blockDim.x * gridDim.x;
+        // bin_idx = idx % num_bins;
+        // sample_idx = (idx / num_bins) % num_samples;
+        // c_idx = (idx / (num_samples * num_bins)) % channels;
+        // b_idx = idx / (num_samples * num_bins * channels);
+        // b_start = (idx - threadIdx.x) / (num_samples * num_bins * channels);
     }
-
 }
 
 void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &target_img, torch::Tensor &grad_pab, torch::Tensor &grad_pa, torch::Tensor &grad_pb, int num_bins, torch::Tensor &grad_input_img, std::optional<torch::Tensor> &grad_target_img, KernelType kernel_type) {
@@ -242,9 +245,13 @@ void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &t
     int64_t num_samples = input_img.numel() / (batch_size * channels);
 
     dim3 blockSize(BLOCKSIZE_3D);
-    int effective_thread_size = BLOCKSIZE_3D / num_bins;   // if there are 64 bins, then effective number of threads = 512 / 64 = 8 (8 individual samples are worked on within a block)
+    // int effective_thread_size = BLOCKSIZE_3D / num_bins;   // if there are 64 bins, then effective number of threads = 512 / 64 = 8 (8 individual samples are worked on within a block)
     // dim3 gridSize(std::min(GET_BLOCKS_v2(batch_size * channels * num_samples, effective_thread_size), static_cast<int64_t>(65536)));
-    dim3 gridSize(GET_BLOCKS_v2(batch_size * channels * num_samples, effective_thread_size));
+    // dim3 gridSize(GET_BLOCKS_v2(batch_size * channels * num_samples, effective_thread_size));
+    dim3 gridSize(GET_BLOCKS_v2(batch_size * channels * num_samples * num_bins, BLOCKSIZE_3D));
+
+    // constexpr int64_t max_int = std::numeric_limits<int>::max();
+    // bool isLargeIndex = (batch_size * channels * num_samples * num_bins) > max_int;
 
     AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16, input_img.scalar_type(), "mutual_information_histogram_bwd", [&] {
         if (canUse32BitIndexMath(input_img)) {
@@ -262,9 +269,7 @@ void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &t
                 static_cast<int>(num_samples),
                 kernel_type
             );
-            C10_CUDA_KERNEL_LAUNCH_CHECK();
-        }
-        else {
+        } else {
             mutual_information_histogram_bwd_kernel_basic<<<gridSize, blockSize, 0, stream>>>(
                 input_img.data_ptr<scalar_t>(),
                 target_img.data_ptr<scalar_t>(),
@@ -279,8 +284,8 @@ void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &t
                 static_cast<int64_t>(num_samples),
                 kernel_type
             );
-            C10_CUDA_KERNEL_LAUNCH_CHECK();
         }
+        C10_CUDA_KERNEL_LAUNCH_CHECK();
     });
 }
 
@@ -304,6 +309,9 @@ __global__ void mutual_information_histogram_fwd_kernel_basic(
     index_t agg_idx = id % num_aggregates;
     index_t ch_idx = (id / num_aggregates) % channels;
     index_t b_idx = (id / (num_aggregates * channels)) % batch_size;
+
+    // index
+    index_t pa_idx = num_bins * (agg_idx + num_aggregates * (ch_idx + channels * b_idx));  // [b, c, agg, ?]
     
     for (index_t n = agg_idx; n < num_samples; n += num_aggregates) {
         // load i and j
@@ -319,9 +327,9 @@ __global__ void mutual_information_histogram_fwd_kernel_basic(
         if (j_bin_idx >= num_bins) j_bin_idx = num_bins - 1;
 
         // add to histogram
-        pab[j_bin_idx + num_bins * (i_bin_idx + num_bins * (agg_idx + num_aggregates * (ch_idx + channels * b_idx)))] += 1;
-        pa[i_bin_idx + num_bins * (agg_idx + num_aggregates * (ch_idx + channels * b_idx))] += 1;
-        pb[j_bin_idx + num_bins * (agg_idx + num_aggregates * (ch_idx + channels * b_idx))] += 1;
+        pab[j_bin_idx + num_bins * (i_bin_idx + pa_idx)] += 1;
+        pa[i_bin_idx + pa_idx] += 1;
+        pb[j_bin_idx + pa_idx] += 1;
     }
 }
 

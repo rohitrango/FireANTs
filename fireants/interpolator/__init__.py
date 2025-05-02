@@ -67,9 +67,9 @@ class GridSampleDispatcher:
             raise ValueError("Cannot set use_ffo to True when fused operations are not available")
         self._use_ffo = value
     
-    def _get_image_dim(self, *args, image_idx: int = 0, **kwargs) -> int:
+    def _get_image_dim(self, *args, image_idx: int = 0, arg_name: str = "image", **kwargs) -> int:
         ''' return spatial dimensions of image '''
-        image = kwargs.get('image', None)
+        image = kwargs.get(arg_name, None)
         if image is None:
             image = args[image_idx]
         if isinstance(image, torch.Tensor):
@@ -89,7 +89,7 @@ class GridSampleDispatcher:
     
     def affine_warp(self, *args, **kwargs) -> Any:
         ''' Dispatch to appropriate affine warp implementation '''
-        dim = self._get_image_dim(*args, image_idx=1, **kwargs)
+        dim = self._get_image_dim(*args, image_idx=1, **kwargs, arg_name="grid")
         return self._registry[self._use_ffo][f'affine_warp_{dim}d'](*args, **kwargs)
 
     ### individual functions

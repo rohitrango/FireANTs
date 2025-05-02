@@ -174,6 +174,7 @@ def downsample_fft(image: torch.Tensor, size: List[int], padding=1) -> torch.Ten
     # print("after padding", im_fft.shape)
     im_fft = torch.fft.ifftshift(im_fft, dim=dims)
     im_fft = torch.real(torch.fft.ifftn(im_fft, dim=dims)).contiguous()
+    im_fft = torch.clamp(im_fft, image.min().item(), image.max().item())
     return im_fft
     
 

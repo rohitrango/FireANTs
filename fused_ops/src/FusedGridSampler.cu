@@ -240,7 +240,7 @@ __global__ void fused_grid_sampler_3d_forward_kernel(
                 // + (c, iz_tsw, iy_tsw, ix_tsw) * tsw + (c, iz_tse, iy_tse, ix_tse) * tse
                 // + (c, iz_bnw, iy_bnw, ix_bnw) * bnw + (c, iz_bne, iy_bne, ix_bne) * bne
                 // + (c, iz_bsw, iy_bsw, ix_bsw) * bsw + (c, iz_bse, iy_bse, ix_bse) * bse
-                scalar_t out_acc = 0;
+                opmath_t out_acc = 0;
                 if (within_bounds_3d(iz_tnw, iy_tnw, ix_tnw, Di, Hi, Wi)) {
                     out_acc += inp_ptr_NC[ix_tnw + Wi * (iy_tnw + Hi * iz_tnw)] * tnw;
                 }

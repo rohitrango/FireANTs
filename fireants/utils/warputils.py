@@ -172,7 +172,10 @@ def compositive_warp_inverse(image: BatchedImages, ref_disp: torch.Tensor,
         ref_disp_resized = F.interpolate(ref_disp.permute(*reg.warp.permute_vtoimg), shape, mode=linear, align_corners=True).permute(*reg.warp.permute_imgtov)
         warp.data.copy_(-ref_disp_resized)
         del ref_disp_resized
-    reg.optimize(False)
+    # could be called from within a nograd context
+    with torch.set_grad_enabled(True):
+        reg.optimize(False)
+
     if displacement:
         coords = reg.warp.get_warp()
     else:

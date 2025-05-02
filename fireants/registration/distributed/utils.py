@@ -40,26 +40,45 @@ def should_shard_problem(base_shape, scale, offload):
     remaining_mem = get_gpu_memory()[0]
     return working_mem_required > remaining_mem
 
-def async_send_tensor_ack(tensor, otherrank, myrank):
+def async_send_tensor_ack(tensor, otherrank, myrank, gather_stats_only):
     shape = torch.tensor(tensor.shape, device=tensor.device).long()
     req = dist.isend(shape, dst=otherrank, tag=myrank)
     req.wait()
-    # send the tensor now
-    req = dist.isend(tensor, dst=otherrank, tag=myrank * 10000)
-    return req
+    # send the tensor now if given
+    if gather_stats_only:
+        return None
+    else:
+        req = dist.isend(tensor, dst=otherrank, tag=myrank * 10000)
+        return req
 
-def async_recv_tensor_ack(ref_tensor, otherrank, myrank):
+def async_recv_tensor_ack(ref_tensor, otherrank, myrank, gather_stats_only):
     # receive the shape first
     # use reference tensor for shape, dtype, etc
     sz = torch.zeros(len(ref_tensor.shape), device=torch.cuda.current_device()).long()
     req = dist.irecv(sz, src=otherrank, tag=otherrank)
     req.wait()
-    # receive the tensor now
-    tensor = torch.empty(sz.tolist(), dtype=ref_tensor.dtype, device=ref_tensor.device)
-    req = dist.irecv(tensor, src=otherrank, tag=otherrank * 100)
-    return tensor, req
+    if gather_stats_only:
+        return None, None, sz.tolist()
+    else: 
+        # receive the tensor now
+        tensor = torch.empty(sz.tolist(), dtype=ref_tensor.dtype, device=ref_tensor.device)
+        req = dist.irecv(tensor, src=otherrank, tag=otherrank * 100)
+        return tensor, req, sz.tolist()
 
-def gather_and_concat(tensor, rank, world_size, master_rank, is_state_sharded, dim_to_shard):
+def refactor_grid_to_image_stats(stats):
+    ''' 
+    given stats containing grid shapes, refactor into image shapes
+    '''
+    stats['dim_to_shard'] += 1  # we did a -1 during gather and concat
+    for k in stats:
+        if k == 'dim_to_shard':
+            continue
+        v = stats[k][:-1]       # remove last channel dimension
+        v = [v[0], 1] + list(v[1:])   # insert dummy channel dimension
+        stats[k] = list(v)
+    return stats
+
+def gather_and_concat(tensor, rank, world_size, master_rank, is_state_sharded, dim_to_shard, gather_stats_only=False):
     '''
     utility function to gather subtensors from different processes and then concatenate them along "dim_to_shard"
     if "is_state_sharded" is False, we only need to gather them up to rank 0
@@ -82,18 +101,26 @@ def gather_and_concat(tensor, rank, world_size, master_rank, is_state_sharded, d
                 for nbrrank in range(world_size):
                     if nbrrank == rank:
                         continue
-                    req = async_send_tensor_ack(tensor, nbrrank, rank)
-                    send_reqs.append(req)
+                    # returns none if gather_stats_only is True (we have sent tensor size)
+                    req = async_send_tensor_ack(tensor, nbrrank, rank, gather_stats_only) 
+                    if req is not None:
+                        send_reqs.append(req)
                 [r.wait() for r in send_reqs]
             # receive from poll_rank
             else: 
-                recv_tensor, req = async_recv_tensor_ack(tensor, poll_rank, rank)
+                recv_tensor, req, recv_shape = async_recv_tensor_ack(tensor, poll_rank, rank, gather_stats_only)
                 tensors[poll_rank] = recv_tensor
-                stats[poll_rank] = list(recv_tensor.shape)
-                reqs.append(req)
+                stats[poll_rank] = recv_shape
+                if req is not None:
+                    reqs.append(req)
 
         [r.wait() for r in reqs]
-        return torch.cat(tensors, dim=dim_to_shard+2), stats
+
+        # if gather_stats_only, we only need to return the stats, otherwise return the concatenated tensor too
+        if not gather_stats_only:
+            return torch.cat(tensors, dim=dim_to_shard+2), stats
+        else:
+            return tensor, stats
     else:
         # gather all of them to rank 0
         raise NotImplementedError("TODO: Implement this function")

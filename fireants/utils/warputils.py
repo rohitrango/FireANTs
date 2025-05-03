@@ -159,6 +159,7 @@ def compositive_warp_inverse(image: BatchedImages, ref_disp: torch.Tensor,
         optimizer='adam',
         optimizer_lr=0.5,
         displacement_reg=InverseConsistencyOperator(ref_disp, image),
+        dtype=ref_disp.dtype,
         smooth_grad_sigma=smooth_grad_sigma,
         smooth_warp_sigma=smooth_warp_sigma,
     )

@@ -182,7 +182,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                 align_corners=True,
             ).permute(*self.rev_warp.permute_imgtov)
 
-        rev_inv_warp_field = compositive_warp_inverse(fixed_images, self.rev_warp.get_warp() + fixed_image_vgrid, displacement=True)
+        rev_inv_warp_field = compositive_warp_inverse(fixed_images, rev_warp_field + fixed_image_vgrid, displacement=True)
 
 
 

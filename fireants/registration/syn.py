@@ -165,7 +165,26 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         fixed_image_vgrid  = F.affine_grid(init_grid, fixed_arrays.shape, align_corners=True)
         # get warps
         fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
-        rev_inv_warp_field = compositive_warp_inverse(fixed_images, self.rev_warp.get_warp() + fixed_image_vgrid, displacement=True)
+        rev_warp_field = self.rev_warp.get_warp()
+        if tuple(fwd_warp_field.shape[1:-1]) != tuple(shape[2:]):
+            # interpolate this
+            fwd_warp_field = F.interpolate(
+                fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg),
+                size=shape[2:],
+                mode="trilinear",
+                align_corners=True,
+            ).permute(*self.fwd_warp.permute_imgtov)
+        if tuple(rev_warp_field.shape[1:-1]) != tuple(shape[2:]):
+            rev_warp_field = F.interpolate(
+                self.rev_warp.get_warp().permute(*self.rev_warp.permute_vtoimg),
+                size=shape[2:],
+                mode="trilinear",
+                align_corners=True,
+            ).permute(*self.rev_warp.permute_imgtov)
+
+        rev_inv_warp_field = compositive_warp_inverse(fixed_images, rev_warp_field + fixed_image_vgrid, displacement=True)
+
+
 
         # # smooth them out
         if self.smooth_warp_sigma > 0:

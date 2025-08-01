@@ -1,6 +1,6 @@
-                                 Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
+                              FireANTs License 
+                           Version 1.0, July 2025
+                  Modified from http://www.apache.org/licenses/
 
    TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 
@@ -91,19 +91,41 @@
       modifications, and in Source or Object form, provided that You
       meet the following conditions:
 
-      (a) You must give any other recipients of the Work or
+      (a) Redistribution is only permitted in the following forms:
+          (i)  The original GitHub repository in its entirety
+          (ii) Built wheels distributed through PyPI (Python Package Index)
+               or other package managers officially documented in the
+               project's documentation
+          (iii) Modified forks that retain all original copyright notices,
+                bibliography references from the documentation and research
+                papers cited in the project's documentation, and license
+                details. This applies to both public and private forks,
+                regardless of the extent of modifications
+
+          The above forms of redistribution apply both when using FireANTs
+          as a standalone project and when incorporating it as a dependency
+          in other projects. In both cases, all license terms, including
+          attribution and bibliography requirements, must be maintained.
+
+      (b) Redistribution by copying code (in any quantity, including but not
+          limited to functions, classes, or modules), removing the
+          license text, copyright notices, or bibliography is explicitly
+          prohibited. This applies regardless of whether the code is used
+          for commercial or non-commercial purposes
+
+      (c) You must give any other recipients of the Work or
           Derivative Works a copy of this License; and
 
-      (b) You must cause any modified files to carry prominent notices
+      (d) You must cause any modified files to carry prominent notices
           stating that You changed the files; and
 
-      (c) You must retain, in the Source form of any Derivative Works
+      (e) You must retain, in the Source form of any Derivative Works
           that You distribute, all copyright, patent, trademark, and
           attribution notices from the Source form of the Work,
           excluding those notices that do not pertain to any part of
           the Derivative Works; and
 
-      (d) If the Work includes a "NOTICE" text file as part of its
+      (f) If the Work includes a "NOTICE" text file as part of its
           distribution, then any Derivative Works that You distribute must
           include a readable copy of the attribution notices contained
           within such NOTICE file, excluding those notices that do not
@@ -133,12 +155,20 @@
       this License, without any additional terms or conditions.
       Notwithstanding the above, nothing herein shall supersede or modify
       the terms of any separate license agreement you may have executed
-      with Licensor regarding such Contributions.
+      with Licensor regarding such Contributions. All Contributions must
+      adhere to the same bibliography and attribution requirements as
+      the original Work.
+      
 
-   6. Trademarks. This License does not grant permission to use the trade
-      names, trademarks, service marks, or product names of the Licensor,
-      except as required for reasonable and customary use in describing the
-      origin of the Work and reproducing the content of the NOTICE file.
+   6. Trademarks and Project Names. This License does not grant permission
+      to use the trade names, trademarks, service marks, or product names
+      of the Licensor, except as required for reasonable and customary
+      use in describing the origin of the Work and reproducing the content
+      of the NOTICE file. Modified forks must clearly indicate they are
+      derivative works and may not use the original project name except
+      to reference the original project (e.g., "derived from FireANTs"
+      or "a fork of FireANTs"). The original project name may not be
+      used in a way that suggests endorsement of the modified version.
 
    7. Disclaimer of Warranty. Unless required by applicable law or
       agreed to in writing, Licensor provides the Work (and each
@@ -174,28 +204,3 @@
       of your accepting any such warranty or additional liability.
 
    END OF TERMS AND CONDITIONS
-
-   APPENDIX: How to apply the Apache License to your work.
-
-      To apply the Apache License to your work, attach the following
-      boilerplate notice, with the fields enclosed by brackets "[]"
-      replaced with your own identifying information. (Don't include
-      the brackets!)  The text should be enclosed in the appropriate
-      comment syntax for the file format. We also recommend that a
-      file or class name and description of purpose be included on the
-      same "printed page" as the copyright notice for easier
-      identification within third-party archives.
-
-   Copyright [yyyy] [name of copyright owner]
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.

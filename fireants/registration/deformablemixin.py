@@ -194,6 +194,7 @@ class DeformableMixin:
                     itk_data = fixed_image.images[0].itk_image
                 else:
                     itk_data = fixed_image.images[i].itk_image
+                print("Writing to SimpleITK image... ")
                 # copy itk data
                 warp = sitk.GetImageFromArray(grid)
                 warp.CopyInformation(itk_data)

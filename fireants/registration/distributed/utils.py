@@ -124,27 +124,6 @@ def gather_and_concat(tensor, rank, world_size, master_rank, is_state_sharded, d
     else:
         # gather all of them to rank 0
         raise NotImplementedError("TODO: Implement this function")
-        if rank != master_rank:
-            dist.send(torch.tensor(tensor.shape, device=tensor.device), dst=master_rank)
-            dist.send(tensor, dst=master_rank)
-        else:
-            tensors = [None for _ in range(world_size)]
-            tensors[master_rank] = tensor
-            reqs = []
-            # gather all other tensors
-            for i in range(world_size):
-                if i == master_rank:
-                    continue
-                sz = torch.empty(len(tensor.shape), device=tensor.device)
-                dist.recv(sz, src=i)
-                tensor_i = torch.empty(sz.long(), dtype=tensor.dtype, device=tensor.device)
-                req = dist.recv(tensor_i, src=i)
-                reqs.append(req)
-                tensors[i] = tensor_i
-            # wait for all syncs to be complete, and concatenate them
-            # [r.wait() for r in reqs]
-            tensor = torch.cat(tensors, dim=dim_to_shard+2)
-        return tensor, stats
 
 def crop_distributed_padding(tensor, rank, world_size, image_padding, dim_to_shard):
     ''' undo the effects of add_distributed_padding '''
@@ -209,29 +188,29 @@ def calculate_bbox_from_gather_stats(moving_gather_stats, rank, world_size, dims
     as per the result of align_corners'''
     # store size to be used later
     sz = moving_gather_stats[rank][2:]
-    d2s = moving_gather_stats['dim_to_shard']
+    dim2shard = moving_gather_stats['dim_to_shard']
     # get total size
     total_size = 0
     start_size = 0
     end_size = -1   # to make it inclusive
     for i in range(world_size):
-        total_size += moving_gather_stats[i][d2s+2]
+        total_size += moving_gather_stats[i][dim2shard+2]
         if i < rank:
-            start_size += moving_gather_stats[i][d2s+2]
+            start_size += moving_gather_stats[i][dim2shard+2]
         if i <= rank:
-            end_size += moving_gather_stats[i][d2s+2]
+            end_size += moving_gather_stats[i][dim2shard+2]
     # get actual total size of sharded dim
-    sz[d2s] = total_size
+    sz[dim2shard] = total_size
     # get min and max coords in (z, y, x) format
     mincoords = (get_min_coords3d if dims == 3 else get_min_coords2d)(*sz, align_corners=align_corners)[::-1]
     maxcoords = (get_max_coords3d if dims == 3 else get_max_coords2d)(*sz, align_corners=align_corners)[::-1]
     mincoords, maxcoords = list(mincoords), list(maxcoords)
     # change the dim based on dim_to_shard
     if align_corners:
-        mincoords[d2s] = 2*start_size/(total_size-1) - 1
-        maxcoords[d2s] = 2*end_size/(total_size-1) - 1
+        mincoords[dim2shard] = 2*start_size/(total_size-1) - 1
+        maxcoords[dim2shard] = 2*end_size/(total_size-1) - 1
     else:
-        mincoords[d2s] = (2*start_size+1)/total_size - 1
-        maxcoords[d2s] = (2*end_size+1)/total_size - 1
+        mincoords[dim2shard] = (2*start_size+1)/total_size - 1
+        maxcoords[dim2shard] = (2*end_size+1)/total_size - 1
     return mincoords[::-1], maxcoords[::-1]
     

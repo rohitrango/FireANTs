@@ -87,6 +87,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                 smooth_grad_sigma: float = 1.0,
                 loss_params: dict = {},
                 reduction: str = 'mean',
+                ring_sampler: bool = False,
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
                 init_affine: Optional[torch.Tensor] = None,
                 warp_reg: Optional[Union[Callable, nn.Module]] = None,
@@ -120,6 +121,8 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
         self.moving_images._shard_dim(self.dim_to_shard, rank, world_size)
         self.fixed_images.set_device(self.device)
         self.moving_images.set_device(self.device)
+        # ring sampler enables a ring-attention like sampling of the moving image
+        self.ring_sampler = ring_sampler
 
         # get extra padding
         try:
@@ -286,7 +289,8 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                 moving_image_blur = moving_sharded_array
             
             # allconcat the moving images
-            moving_image_blur, moving_gather_stats = gather_and_concat(moving_image_blur, self.rank, self.world_size, self.master_rank, is_state_sharded, self.dim_to_shard)
+            # if ring_sampler is True, we only need to gather the stats, not the tensor
+            moving_image_blur, moving_gather_stats = gather_and_concat(moving_image_blur, self.rank, self.world_size, self.master_rank, is_state_sharded, self.dim_to_shard, gather_stats_only=self.ring_sampler)
 
             # if the state is not sharded, gather the fixed image into rank 0 (default behavior of `gather_and_concat`)
             # else, just add some padding given by the number 
@@ -312,7 +316,11 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                     self.warp.set_zero_grad()
                     warp_field = self.warp.get_warp()  # [sharded state]
                     # get coordinates to interpolate
-                    moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=warp_field, mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_moving, max_coords=max_coords_moving)
+                    if self.ring_sampler:
+                        moved_image = fireants_ringsampler_interpolator(moving_image_blur, affine=affine_map_init, grid=warp_field, mode='bilinear', align_corners=True, is_displacement=True, stats=moving_gather_stats)
+                        raise NotImplementedError("Ring sampler not implemented")
+                    else:
+                        moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=warp_field, mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_moving, max_coords=max_coords_moving)
                     # pad it 
                     moved_image = add_distributed_padding(moved_image, self.rank, self.world_size, self.image_padding, self.dim_to_shard)
                     loss = self.loss_fn(moved_image, fixed_image_down)
@@ -335,31 +343,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                         break
             else:
                 # sharding is not done, problem size is small enough to do on a single gpu
-                # run on rank 0
                 raise NotImplementedError("Non sharded version not supported for simplicity")
-                moved_image = None
-                if self.rank == self.master_rank:
-                    for i in pbar:
-                        self.warp.set_zero_grad()
-                        warp_field = self.warp.get_warp()  # [N, HWD, 3]
-                        # move the image
-                        moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=warp_field, mode='bilinear', align_corners=True, is_displacement=True)
-                        loss = self.loss_fn(moved_image, fixed_image_down)
-                        # apply regularization on the warp field
-                        if self.displacement_reg is not None:
-                            loss = loss + self.displacement_reg(warp_field)
-                        if self.warp_reg is not None:
-                            # internally should use the fireants interpolator to avoid additional memory allocation
-                            moved_coords = self.get_warped_coordinates(self.fixed_images, self.moving_images)  
-                            loss = loss + self.warp_reg(moved_coords)
-                        loss.backward()
-                        if self.progress_bar:
-                            pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))
-                        # optimize the velocity field
-                        self.warp.step()
-                        # check for convergence
-                        if self.convergence_monitor.converged(loss.item()):
-                            break
 
             # save transformed image
             if save_transformed:

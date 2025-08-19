@@ -47,7 +47,11 @@ def setup_distributed(local_rank, world_size):
     '''
     global logger
     logger.info(f'Setting up distributed training with local rank {local_rank} and world size {world_size}.')
-    dist.init_process_group(backend='nccl')
+    if os.name == 'nt':  # Windows
+        backend = 'gloo'
+    else:  # Linux/Unix
+        backend = 'nccl'
+    dist.init_process_group(backend=backend)
 
 def dist_cleanup(world_size):
     ''' cleanup distributed training '''

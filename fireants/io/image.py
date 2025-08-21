@@ -231,6 +231,22 @@ class Image:
             logger.debug("Deleting the arrays of the other images after concatenation")
             for other in others:
                 other.delete_array()
+    
+    def to(self, device_or_dtype: Union[devicetype, torch.dtype]):
+        '''
+        Move the image to a different device or change its dtype.
+
+        Args:
+            device_or_dtype (Union[devicetype, torch.dtype]): Device to move the image to,
+                or dtype to convert the image to
+
+        Returns:
+            Image: The image on the new device or with the new dtype
+        '''
+        self.array = self.array.to(device_or_dtype)
+        if isinstance(device_or_dtype, (str, torch.device)):
+            self.device = device_or_dtype
+        return self
 
     def __del__(self):
         '''Delete the SimpleITK image and all intermediate variables.'''
@@ -310,6 +326,13 @@ class BatchedImages:
         self.torch2phy = self.torch2phy.to(device_name)
         self.phy2torch = self.phy2torch.to(device_name)
     
+    def to(self, device_or_dtype: Union[devicetype, torch.dtype]):
+        '''
+        Move the batch to a different device or change its dtype.
+        '''
+        self.batch_tensor = self.batch_tensor.to(device_or_dtype)
+        return self
+
     def _shard_dim(self, dim_to_shard, rank, world_size):
         size = self.batch_tensor.shape[dim_to_shard+2]
         chunk_sizes = divide_size_into_chunks(size, world_size)

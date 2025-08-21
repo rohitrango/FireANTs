@@ -169,8 +169,8 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
             warp_inv = F.interpolate(warp_inv.permute(*self.warp.permute_vtoimg), size=shape[2:], mode=mode, align_corners=True).permute(*self.warp.permute_imgtov)
         
         # get affine transform
-        fixed_t2p = fixed_images.get_torch2phy()
-        moving_p2t = moving_images.get_phy2torch()
+        fixed_t2p = fixed_images.get_torch2phy().to(self.dtype)
+        moving_p2t = moving_images.get_phy2torch().to(self.dtype)
         # save initial affine transform to initialize grid 
         affine_map_init = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))
         affine_map_inv  = torch.linalg.inv(affine_map_init)

@@ -73,7 +73,14 @@ class FusedGridSampler3d(torch.autograd.Function):
         if max_coords is None:
             max_coords = get_max_coords3d(Z, Y, X, align_corners)
         # get output
-        output = ffo.fused_grid_sampler_3d_forward(input, affine, grid, Z, Y, X, min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], is_displacement, GRID_SAMPLE_INTERPOLATION_MODES[interpolation_mode], GRID_SAMPLE_PADDING_MODES[padding_mode], align_corners)
+        try:
+            output = ffo.fused_grid_sampler_3d_forward(input, affine, grid, Z, Y, X, min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], is_displacement, GRID_SAMPLE_INTERPOLATION_MODES[interpolation_mode], GRID_SAMPLE_PADDING_MODES[padding_mode], align_corners)
+        except Exception as e:
+            print(f"Error in fused_grid_sampler_3d_forward: {e}")
+            print(f"Input shape: {input.shape}, dtype: {input.dtype}, device: {input.device}")
+            print(f"Affine shape: {affine.shape}, dtype: {affine.dtype}, device: {affine.device}")
+            print(f"Grid shape: {grid.shape}, dtype: {grid.dtype}, device: {grid.device}")
+            raise e
         # save everything for backward
         ctx.save_for_backward(input, affine, grid)
         ctx.interpolation_mode = interpolation_mode

@@ -109,6 +109,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         self.warp_reg = warp_reg
         self.displacement_reg = displacement_reg
 
+
         if deformation_type == 'geodesic':
             fwd_warp = StationaryVelocity(fixed_images, moving_images, integrator_n=integrator_n, dtype=self.dtype,
                                         optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params,
@@ -118,8 +119,10 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                                         smoothing_grad_sigma=smooth_grad_sigma)
         elif deformation_type == 'compositive':
             fwd_warp = CompositiveWarp(fixed_images, moving_images, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params, \
+                dtype=self.dtype,
                                    smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma)
             rev_warp = CompositiveWarp(fixed_images, moving_images, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params, \
+                dtype=self.dtype,
                                    smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma)
             smooth_warp_sigma = 0  # this work is delegated to compositive warp
         else:
@@ -132,12 +135,12 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D+1, D+1]
         B, D1, D2 = init_affine.shape
         if D1 == self.dims+1 and D2 == self.dims+1:
-            self.affine = init_affine.detach()
+            self.affine = init_affine.detach().to(self.dtype)
         elif D1 == self.dims and D2 == self.dims+1:
             # attach row to affine
             row = torch.zeros(self.opt_size, 1, self.dims+1, device=fixed_images.device)
             row[:, 0, -1] = 1.0
-            self.affine = torch.cat([init_affine.detach(), row], dim=1)
+            self.affine = torch.cat([init_affine.detach(), row], dim=1).to(self.dtype)
         else:
             raise ValueError('Invalid initial affine shape: {}'.format(init_affine.shape))
 

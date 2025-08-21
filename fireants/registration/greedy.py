@@ -1,3 +1,18 @@
+# Copyright (c) 2025 Rohit Jena. All rights reserved.
+# 
+# This file is part of FireANTs, distributed under the terms of
+# the FireANTs License version 1.0. A copy of the license can be found
+# in the LICENSE file at the root of this repository.
+#
+# IMPORTANT: This code is part of FireANTs and its use, reproduction, or
+# distribution must comply with the full license terms, including:
+# - Maintaining all copyright notices and bibliography references
+# - Using only approved (re)-distribution channels 
+# - Proper attribution in derivative works
+#
+# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+
+
 import torch
 from torch import nn
 from torch.optim import SGD, Adam
@@ -146,12 +161,8 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         else:
             shape = [moving_arrays.shape[0], 1] + list(shape) 
 
-        # TODO: Change this eventually
         warp = self.warp.get_warp().detach().clone()
-        # warp = warp + F.affine_grid(torch.eye(self.dims, self.dims+1, device=warp.device)[None], [1, 1] + list(warp.shape[1:-1]), align_corners=True)
-        # get affine warp from displacement map
-        # warp = fireants_interpolator.affine_warp(None, warp, align_corners=True)
-        warp_inv = compositive_warp_inverse(moving_images, warp, displacement=True) #, smooth_warp_sigma=smooth_warp_sigma, smooth_grad_sigma=smooth_grad_sigma)
+        warp_inv = compositive_warp_inverse(moving_images, warp, displacement=True) 
         # resample if needed
         mode = "bilinear" if self.dims == 2 else "trilinear"
         if tuple(warp_inv.shape[1:-1]) != tuple(shape[2:]):
@@ -164,7 +175,6 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         affine_map_init = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))
         affine_map_inv  = torch.linalg.inv(affine_map_init)
         # get A^-1 * v[y]
-        print("inverse here")
         if self.dims == 2:
             warp_inv = torch.einsum('bhwx,byx->bhwy', warp_inv, affine_map_inv[:, :-1, :-1])
         elif self.dims == 3:

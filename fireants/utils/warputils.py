@@ -1,3 +1,18 @@
+# Copyright (c) 2025 Rohit Jena. All rights reserved.
+# 
+# This file is part of FireANTs, distributed under the terms of
+# the FireANTs License version 1.0. A copy of the license can be found
+# in the LICENSE file at the root of this repository.
+#
+# IMPORTANT: This code is part of FireANTs and its use, reproduction, or
+# distribution must comply with the full license terms, including:
+# - Maintaining all copyright notices and bibliography references
+# - Using only approved (re)-distribution channels 
+# - Proper attribution in derivative works
+#
+# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+
+
 import numpy as np
 import torch
 from torch import nn
@@ -169,7 +184,6 @@ def compositive_warp_inverse(image: BatchedImages, ref_disp: torch.Tensor,
         B = warp.shape[0]
         shape = list(warp.shape[1:-1])
         linear = 'bilinear' if reg.dims == 2 else 'trilinear'
-        # grid = F.affine_grid(torch.eye(reg.dims, reg.dims+1, device=warp.device)[None], [1,1] + shape, align_corners=True)
         ref_disp_resized = F.interpolate(ref_disp.permute(*reg.warp.permute_vtoimg), shape, mode=linear, align_corners=True).permute(*reg.warp.permute_imgtov)
         warp.data.copy_(-ref_disp_resized)
         del ref_disp_resized

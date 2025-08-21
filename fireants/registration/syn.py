@@ -1,3 +1,18 @@
+# Copyright (c) 2025 Rohit Jena. All rights reserved.
+# 
+# This file is part of FireANTs, distributed under the terms of
+# the FireANTs License version 1.0. A copy of the license can be found
+# in the LICENSE file at the root of this repository.
+#
+# IMPORTANT: This code is part of FireANTs and its use, reproduction, or
+# distribution must comply with the full license terms, including:
+# - Maintaining all copyright notices and bibliography references
+# - Using only approved (re)-distribution channels 
+# - Proper attribution in derivative works
+#
+# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+
+
 from tqdm import tqdm
 import numpy as np
 from typing import List, Optional, Union, Callable
@@ -164,7 +179,24 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         # fixed_image_vgrid  = F.affine_grid(init_grid, fixed_arrays.shape, align_corners=True)
         # get warps
         fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
+        if tuple(fwd_warp_field.shape[1:-1]) != tuple(shape[2:]):
+            # interpolate this
+            fwd_warp_field = F.interpolate(
+                fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg),
+                size=shape[2:],
+                mode="trilinear",
+                align_corners=True,
+            ).permute(*self.fwd_warp.permute_imgtov)
+
+        # compute inverse of rev_warp with the size of `fixed_images`
         rev_inv_warp_field = compositive_warp_inverse(fixed_images, self.rev_warp.get_warp(), displacement=True)
+        if tuple(rev_inv_warp_field.shape[1:-1]) != tuple(shape[2:]):
+            rev_inv_warp_field = F.interpolate(
+                self.rev_warp.get_warp().permute(*self.rev_warp.permute_vtoimg),
+                size=shape[2:],
+                mode="trilinear",
+                align_corners=True,
+            ).permute(*self.rev_warp.permute_imgtov)
 
         # # smooth them out
         if self.smooth_warp_sigma > 0:
@@ -282,17 +314,14 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             # save transformed image
             if save_transformed:
                 fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
-                # rev_inv_warp_field = self.rev_warp.get_inverse_warp(n_iters=50, debug=True, lr=0.1)
-                fixed_image_vgrid = F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)
-                rev_inv_warp_field = compositive_warp_inverse(self.fixed_images, self.rev_warp.get_warp() + fixed_image_vgrid, displacement=True,)
+                rev_inv_warp_field = compositive_warp_inverse(self.fixed_images, self.rev_warp.get_warp(), displacement=True,)
                 # # smooth them out
                 if self.smooth_warp_sigma > 0:
                     fwd_warp_field = separable_filtering(fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg), warp_gaussian).permute(*self.fwd_warp.permute_imgtov)
                     rev_inv_warp_field = separable_filtering(rev_inv_warp_field.permute(*self.rev_warp.permute_vtoimg), warp_gaussian).permute(*self.rev_warp.permute_imgtov)
 
                 # # compose the two warp fields
-                composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field, fixed_image_vgrid)
-                # moved_coords_final = fixed_image_affinecoords + composed_warp
+                composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field)
                 moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=composed_warp, mode='bilinear', align_corners=True, displacement=True)
                 transformed_images.append(moved_image.detach())
                 

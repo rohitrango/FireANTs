@@ -266,6 +266,7 @@ def fused_warp_composer_3d(
     grid: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
+    Computes u \circ (Ax + v)
     
     Args:
         u: Input tensor of shape [B, Z, Y, X, 3]

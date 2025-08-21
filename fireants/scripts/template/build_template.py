@@ -1,3 +1,18 @@
+# Copyright (c) 2025 Rohit Jena. All rights reserved.
+# 
+# This file is part of FireANTs, distributed under the terms of
+# the FireANTs License version 1.0. A copy of the license can be found
+# in the LICENSE file at the root of this repository.
+#
+# IMPORTANT: This code is part of FireANTs and its use, reproduction, or
+# distribution must comply with the full license terms, including:
+# - Maintaining all copyright notices and bibliography references
+# - Using only approved (re)-distribution channels 
+# - Proper attribution in derivative works
+#
+# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+
+
 ''' author: rohitrango
 
 This starter code is to build a template from a list of images and optional labelmaps
@@ -36,7 +51,11 @@ def setup_distributed(local_rank, world_size):
     '''
     global logger
     logger.info(f'Setting up distributed training with local rank {local_rank} and world size {world_size}.')
-    dist.init_process_group(backend='nccl')
+    if os.name == 'nt':  # Windows
+        backend = 'gloo'
+    else:  # Linux/Unix
+        backend = 'nccl'
+    dist.init_process_group(backend=backend)
 
 def dist_cleanup(world_size):
     ''' cleanup distributed training '''

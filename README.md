@@ -34,9 +34,11 @@ In the paper, we use the datasets as following:
 * EMPIRE10 lung registration challenge: [here](https://empire10.grand-challenge.org/)
 * Expansion Microscopy dataset: [here](https://rnr-exm.grand-challenge.org/)
 
-
 ## Contributing
 Feel free to [add issues](https://github.com/rohitrango/fireants/issues/new) or [pull requests](https://github.com/rohitrango/fireants/compare) to the repository. We welcome contributions to the package.
+
+## License
+Please refer to the [LICENSE](LICENSE) file for the license details, especially pertaining to redistribution of code and derivative works.
 
 ## Citation
 
@@ -48,5 +50,18 @@ If you use FireANTs in your research, please cite the following paper:
   author={Jena, Rohit and Chaudhari, Pratik and Gee, James C},
   journal={arXiv preprint arXiv:2404.01249},
   year={2024}
+}
+```
+
+If you use FireANTs-as-a-layer ([Deep Implicit Optimization](https://www.sciencedirect.com/science/article/pii/S1361841525001240?via%3Dihub), [code](https://github.com/rohitrango/DIO)), cite the following paper:
+```
+@article{jena2025deep,
+  title={Deep implicit optimization enables robust learnable features for deformable image registration},
+  author={Jena, Rohit and Chaudhari, Pratik and Gee, James C},
+  journal={Medical Image Analysis},
+  volume={103},
+  pages={103577},
+  year={2025},
+  publisher={Elsevier}
 }
 ```

@@ -22,25 +22,25 @@ from torch.nn import functional as F
 from typing import Optional
 import os
 
+from fireants.registration.distributed import parallel_state
+
 class allgather_mi(torch.autograd.Function):
     @staticmethod
     def forward(ctx, pab, pa, pb, sample_size):
         # get sample size
         total_size = torch.tensor([sample_size], dtype=torch.long, device=pab.device)
-        torch.distributed.all_reduce(total_size, op=torch.distributed.ReduceOp.SUM)
+        parallel_state.all_reduce_across_gp_ranks(total_size, torch.distributed.ReduceOp.SUM)
         total_size = total_size.item()
         wt = sample_size * 1.0 / total_size
         # allreduce the histograms
         pa.mul_(wt)
         pb.mul_(wt)
         pab.mul_(wt)
-        torch.distributed.all_reduce(pa, op=torch.distributed.ReduceOp.SUM)
-        torch.distributed.all_reduce(pb, op=torch.distributed.ReduceOp.SUM)
-        torch.distributed.all_reduce(pab, op=torch.distributed.ReduceOp.SUM)
+        parallel_state.all_reduce_across_gp_ranks(pa, torch.distributed.ReduceOp.SUM)
+        parallel_state.all_reduce_across_gp_ranks(pb, torch.distributed.ReduceOp.SUM)
+        parallel_state.all_reduce_across_gp_ranks(pab, torch.distributed.ReduceOp.SUM)
         ctx.wt = wt
         # make sure they are weighted correctly
-        # rank = os.environ.get('RANK', 0)
-        # print(f"Rank: {rank}, Weight: {wt}", pab.flatten(2).sum(2), pa.flatten(2).sum(2), pb.flatten(2).sum(2))
         return pab, pa, pb
 
     @staticmethod
@@ -105,9 +105,9 @@ class GlobalMutualInformationLoss(nn.Module):
         self.reduction = reduction 
 
         # keep track of worldsize for allgather operation
-        self.world_size = os.environ.get('WORLD_SIZE', None)
-        if self.world_size is not None:
-            self.world_size = int(self.world_size)
+        # self.world_size = os.environ.get('WORLD_SIZE', None)
+        # if self.world_size is not None:
+            # self.world_size = int(self.world_size)
 
         self.smooth_nr = float(smooth_nr)
         self.smooth_dr = float(smooth_dr)
@@ -213,7 +213,8 @@ class GlobalMutualInformationLoss(nn.Module):
             raise ValueError(f"ground truth has differing shape ({target.shape}) from pred ({pred.shape})")
         wa, pa, wb, pb = self.parzen_windowing(pred, target)  # (batch, num_sample, num_bin), (batch, 1, num_bin)
 
-        if self.world_size is not None and self.world_size > 1:
+        # only perform reduction across grid parallel ranks
+        if parallel_state.is_initialized() and parallel_state.get_grid_parallel_size() > 1:
             pab = torch.bmm(wa.permute(0, 2, 1), wb.to(wa))
             pab, pa, pb = allgather_mi.apply(pab, pa, pb, wa.shape[1])
             # divide by total number of samples (this is not exact but approximate)

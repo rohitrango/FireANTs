@@ -24,6 +24,7 @@ from fireants.registration.distributed.utils import add_distributed_padding, cro
 import logging
 logger = logging.getLogger(__name__)
 torch.backends.cudnn.benchmark = True
+from fireants.registration.distributed import parallel_state
 
 def adam_update_fused(grad, exp_avg, exp_avg_sq, beta1, beta2, eps):
     grad.copy_(exp_avg / (beta1) / (exp_avg_sq / (beta2)).sqrt().add_(eps))
@@ -39,7 +40,10 @@ def _get_smoothing_wrapper(optimizer):
     ''' 
     Get wrapper for smoothing
     '''
-    if optimizer.world_size <= 1:
+    gp_group = parallel_state.get_parallel_state().get_current_gp_group() if parallel_state.is_initialized() else [0]
+    gp_size = len(gp_group)
+
+    if gp_size <= 1:
         def smoothing_wrapper_nodist(tensor, kernels, padding=0):
             # tensor is a warp field
             tensor = separable_filtering(tensor.permute(*optimizer.permute_vtoimg), kernels).permute(*optimizer.permute_imgtov)
@@ -49,10 +53,10 @@ def _get_smoothing_wrapper(optimizer):
         # write a distributed version
         def smoothing_wrapper_dist(tensor, kernels, padding=0):
             if padding > 0:
-                tensor = add_distributed_padding(tensor, optimizer.rank, optimizer.world_size, padding, optimizer.dim_to_shard-1) # 2 will be added to dim_to_shard anyway
+                tensor = add_distributed_padding(tensor, padding, optimizer.dim_to_shard-1) # 2 will be added to dim_to_shard anyway
             tensor = separable_filtering(tensor.permute(*optimizer.permute_vtoimg), kernels).permute(*optimizer.permute_imgtov).contiguous()
             if padding > 0:
-                tensor = crop_distributed_padding(tensor, optimizer.rank, optimizer.world_size, padding, optimizer.dim_to_shard-1)
+                tensor = crop_distributed_padding(tensor, padding, optimizer.dim_to_shard-1)
             return tensor
         return smoothing_wrapper_dist
 
@@ -71,8 +75,6 @@ class WarpAdam:
                  reset=False,
                  # distributed params
                  rank: int = 0, 
-                 world_size: int = 1, 
-                 master_rank: int = 0, 
                  dim_to_shard: int = 0,
                  dtype: torch.dtype = torch.float32):
         # init
@@ -117,8 +119,6 @@ class WarpAdam:
         self.grad_gaussians = grad_gaussians            # unused
         # distributed params
         self.rank = rank
-        self.world_size = world_size
-        self.master_rank = master_rank
         self.dim_to_shard = dim_to_shard
         # get padding lengths
         if self.smoothing_gaussians is not None:

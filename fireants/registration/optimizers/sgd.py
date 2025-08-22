@@ -17,11 +17,8 @@
 import torch
 from torch.nn import functional as F
 from fireants.utils.imageutils import jacobian as jacobian_fn
-# from fireants.utils.imageutils import compute_inverse_warp_displacement
-from fireants.losses.cc import separable_filtering
 from fireants.interpolator import fireants_interpolator
 from fireants.registration.optimizers.adam import _get_smoothing_wrapper
-# import matplotlib.pyplot as plt
 import logging
 logger = logging.getLogger(__name__)
 
@@ -37,8 +34,6 @@ class WarpSGD:
                  freeform=False,
                  # distributed params
                  rank: int = 0, 
-                 world_size: int = 1, 
-                 master_rank: int = 0, 
                  dim_to_shard: int = 0,
                  dtype: torch.dtype = torch.float32):
         # init
@@ -81,8 +76,6 @@ class WarpSGD:
         self.grad_gaussians = grad_gaussians
         # distributed params
         self.rank = rank
-        self.world_size = world_size
-        self.master_rank = master_rank
         self.dim_to_shard = dim_to_shard
         # get padding lengths
         if self.smoothing_gaussians is not None:

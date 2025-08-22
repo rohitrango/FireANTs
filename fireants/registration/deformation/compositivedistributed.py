@@ -15,6 +15,7 @@ from fireants.utils.imageutils import jacobian
 from fireants.registration.optimizers.sgd import WarpSGD
 from fireants.registration.optimizers.adam import WarpAdam, _get_smoothing_wrapper
 from fireants.utils.globals import MIN_IMG_SHARDED_SIZE as MIN_IMG_SIZE
+from fireants.registration.distributed import parallel_state
 
 from logging import getLogger
 from copy import deepcopy
@@ -28,7 +29,7 @@ class CompositiveDistributedWarp(nn.Module, AbstractDeformation):
                 optimizer: str = 'Adam', optimizer_lr: float = 1e-2, optimizer_params: dict = {},
                 init_scale: int = 1, 
                 smoothing_grad_sigma: float = 0.5, smoothing_warp_sigma: float = 0.5, 
-                rank: int = 0, world_size: int = 1, master_rank: int = 0, 
+                rank: int = 0,
                 dim_to_shard: int = 0,
                 freeform: bool = False,
                 dtype: torch.dtype = torch.float32,
@@ -41,8 +42,6 @@ class CompositiveDistributedWarp(nn.Module, AbstractDeformation):
         self.freeform = freeform
         # distributed parameters
         self.rank = rank
-        self.world_size = world_size
-        self.master_rank = master_rank
         self.dim_to_shard = dim_to_shard
         # permute indices
         self.permute_imgtov = (0, *range(2, self.n_dims+2), 1)  # [N, HWD, dims] -> [N, HWD, dims] -> [N, dims, HWD]
@@ -79,8 +78,6 @@ class CompositiveDistributedWarp(nn.Module, AbstractDeformation):
 
         # distributed parameters
         oparams['rank'] = self.rank
-        oparams['world_size'] = self.world_size
-        oparams['master_rank'] = self.master_rank
         oparams['dim_to_shard'] = self.dim_to_shard
         # add optimizer
         optimizer = optimizer.lower()
@@ -135,20 +132,3 @@ class CompositiveDistributedWarp(nn.Module, AbstractDeformation):
         self.optimizer.set_data_and_size(self.warp, size)
         # interpolate inverse warp if it exists
         self.initialize_grid()
-
-
-if __name__ == '__main__':
-    img1 = Image.load_file('/data/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz')
-    img2 = Image.load_file('/data/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz')
-    fixed = BatchedImages([img1, ])
-    moving = BatchedImages([img2,])
-    deformation = CompositiveWarp(fixed, moving )
-    for i in range(100):
-        deformation.set_zero_grad() 
-        w = deformation.get_warp()
-        loss = ((w-1/155)**2).mean()
-        if i%10 == 0:
-            print(loss)
-        loss.backward()
-        deformation.step()
-    # w = deformation.get_inverse_warp(debug=True)

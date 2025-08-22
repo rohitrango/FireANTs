@@ -33,21 +33,22 @@ from fireants.utils.globals import PERMITTED_ANTS_WARP_EXT
 # logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+from fireants.registration.distributed import parallel_state
 
-def divide_size_into_chunks(size: int, world_size: int) -> list:
+def divide_size_into_chunks(size: int, gp_size: int) -> list:
     '''
     Divide a size into as-equal-as-possible chunks based on world size for distributed
     
     Args:
         size (int): The total size to be divided
-        world_size (int): Number of processes to divide the size across
-        
+        gp_size (int): Number of processes to divide the size across
+
     Returns:
         list: List of chunk sizes that sum up to the original size
     '''
-    base_size = size // world_size
-    remainder = size % world_size
-    chunks = [base_size] * world_size
+    base_size = size // gp_size
+    remainder = size % gp_size
+    chunks = [base_size] * gp_size
     
     # Distribute remainder across first 'remainder' processes
     for i in range(remainder):
@@ -333,26 +334,32 @@ class BatchedImages:
         self.batch_tensor = self.batch_tensor.to(device_or_dtype)
         return self
 
-    def _shard_dim(self, dim_to_shard, rank, world_size):
+    def _shard_dim(self, dim_to_shard, rank):
+        gp_group = parallel_state.get_parallel_state().get_current_gp_group()
+        gp_size = len(gp_group)
         size = self.batch_tensor.shape[dim_to_shard+2]
-        chunk_sizes = divide_size_into_chunks(size, world_size)
+        chunk_sizes = divide_size_into_chunks(size, gp_size)
+        local_rank = gp_group.index(rank)
         # check 
-        start = sum(chunk_sizes[:rank])
-        end = sum(chunk_sizes[:rank+1])
+        start = sum(chunk_sizes[:local_rank])
+        end = sum(chunk_sizes[:local_rank+1])
         # store the full tensor into batch_tensor_full, and sharded version in 
         self.batch_tensor_full = self.batch_tensor
         self.batch_tensor = self.batch_tensor_full.narrow_copy(dim_to_shard+2, start, end-start)
-        print(f"Sharded batch tensor shape: {self.batch_tensor.shape} and rank: {rank}/{world_size}")
+        print(f"Sharded batch tensor shape: {self.batch_tensor.shape} and rank: {local_rank}/{gp_size}, rank: {rank}")
         self._shard_start = start
         self._shard_end = end
-        self._shard_dim = dim_to_shard
+        self._dim_to_shard = dim_to_shard
         self.is_sharded = True
     
-    def _save_shards(self, dim_to_shard, world_size):
+    def _save_shards(self, dim_to_shard):
+        gp_group = parallel_state.get_parallel_state().get_current_gp_group()
+        gp_size = len(gp_group)
+        # get size and chunk size
         size = self.batch_tensor.shape[dim_to_shard+2]
-        chunk_size = (size + world_size - 1) // world_size
+        chunk_size = (size + gp_size - 1) // gp_size
         chunks = []
-        for _ in range(world_size):
+        for _ in range(gp_size):
             start = _ * chunk_size
             end = min(start + chunk_size, size)
             chunks.append((start, end))

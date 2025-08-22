@@ -3,16 +3,16 @@ Utilities for distributed training
 '''
 import numpy as np
 import torch
-from torch import distributed as dist
-from fireants.interpolator.fused_grid_sample import get_min_coords3d, get_min_coords2d, get_max_coords3d, get_max_coords2d
 import subprocess
 import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+from fireants.interpolator.fused_grid_sample import get_min_coords3d, get_min_coords2d, get_max_coords3d, get_max_coords2d
+from fireants.registration.distributed import parallel_state
 
 __all__ = ['get_dim_to_shard', 'gather_and_concat', 'add_distributed_padding', 'calculate_bbox_from_gather_stats']
 
-def get_dim_to_shard(dims, world_size, fixed_shape, moving_shape):
+def get_dim_to_shard(dims, fixed_shape, moving_shape):
     '''
     dims: number of spatial dims
     world_size: number of processes
@@ -41,28 +41,34 @@ def should_shard_problem(base_shape, scale, offload):
     return working_mem_required > remaining_mem
 
 def async_send_tensor_ack(tensor, otherrank, myrank, gather_stats_only):
+    '''
+    Utility low-level function to asynchronously send a tensor to another rank and gather its shape stats
+    '''
     shape = torch.tensor(tensor.shape, device=tensor.device).long()
-    req = dist.isend(shape, dst=otherrank, tag=myrank)
+    req = parallel_state.isend(shape, dst=otherrank, tag=myrank)
     req.wait()
     # send the tensor now if given
     if gather_stats_only:
         return None
     else:
-        req = dist.isend(tensor, dst=otherrank, tag=myrank * 10000)
+        req = parallel_state.isend(tensor, dst=otherrank, tag=myrank * 10000)
         return req
 
 def async_recv_tensor_ack(ref_tensor, otherrank, myrank, gather_stats_only):
+    '''
+    Utility low-level function to asynchronously receive a tensor from another rank and gather its shape stats
+    '''
     # receive the shape first
     # use reference tensor for shape, dtype, etc
     sz = torch.zeros(len(ref_tensor.shape), device=torch.cuda.current_device()).long()
-    req = dist.irecv(sz, src=otherrank, tag=otherrank)
+    req = parallel_state.irecv(sz, src=otherrank, tag=otherrank)
     req.wait()
     if gather_stats_only:
         return None, None, sz.tolist()
     else: 
         # receive the tensor now
         tensor = torch.empty(sz.tolist(), dtype=ref_tensor.dtype, device=ref_tensor.device)
-        req = dist.irecv(tensor, src=otherrank, tag=otherrank * 100)
+        req = parallel_state.irecv(tensor, src=otherrank, tag=otherrank * 100)
         return tensor, req, sz.tolist()
 
 def refactor_grid_to_image_stats(stats):
@@ -78,38 +84,46 @@ def refactor_grid_to_image_stats(stats):
         stats[k] = list(v)
     return stats
 
-def gather_and_concat(tensor, rank, world_size, master_rank, is_state_sharded, dim_to_shard, gather_stats_only=False):
+def gather_and_concat(tensor, rank, is_state_sharded, dim_to_shard, gather_stats_only=False):
     '''
     utility function to gather subtensors from different processes and then concatenate them along "dim_to_shard"
     if "is_state_sharded" is False, we only need to gather them up to rank 0
+    
+    Note: This function only gathers across grid parallel ranks within the same data parallel group
     '''
     stats = {}
     stats['dim_to_shard'] = dim_to_shard
     if is_state_sharded:
         # keep track of shape
         stats[rank] = list(tensor.shape)
-        # everyone needs to have all copies (this is useful to keep a copy of the moving image in all gpus for example)
-        # send shape and tensor to all other ranks
-        tensors = [None for _ in range(world_size)]
-        tensors[rank] = tensor
+        # Get current grid parallel group
+        gp_group = parallel_state.get_parallel_state().get_current_gp_group()
+        gp_size = len(gp_group)
+        
+        # everyone needs to have all copies within grid parallel group
+        tensors = [None for _ in range(gp_size)]
+        # Map global rank to local index in gp_group
+        local_idx = list(gp_group).index(rank)
+        tensors[local_idx] = tensor
         reqs = []
 
-        for poll_rank in range(world_size):
-            # send info to all other ranks
+        for poll_rank in gp_group:
+            # send info to all other ranks in grid parallel group
             if poll_rank == rank:
                 send_reqs = []
-                for nbrrank in range(world_size):
-                    if nbrrank == rank:
+                for nbr_rank in gp_group:
+                    if nbr_rank == rank:
                         continue
                     # returns none if gather_stats_only is True (we have sent tensor size)
-                    req = async_send_tensor_ack(tensor, nbrrank, rank, gather_stats_only) 
+                    req = async_send_tensor_ack(tensor, nbr_rank, rank, gather_stats_only) 
                     if req is not None:
                         send_reqs.append(req)
                 [r.wait() for r in send_reqs]
             # receive from poll_rank
             else: 
                 recv_tensor, req, recv_shape = async_recv_tensor_ack(tensor, poll_rank, rank, gather_stats_only)
-                tensors[poll_rank] = recv_tensor
+                poll_idx = list(gp_group).index(poll_rank)
+                tensors[poll_idx] = recv_tensor
                 stats[poll_rank] = recv_shape
                 if req is not None:
                     reqs.append(req)
@@ -122,20 +136,27 @@ def gather_and_concat(tensor, rank, world_size, master_rank, is_state_sharded, d
         else:
             return tensor, stats
     else:
-        # gather all of them to rank 0
+        # gather all of them to rank 0 within grid parallel group
         raise NotImplementedError("TODO: Implement this function")
 
-def crop_distributed_padding(tensor, rank, world_size, image_padding, dim_to_shard):
-    ''' undo the effects of add_distributed_padding '''
+def crop_distributed_padding(tensor, image_padding, dim_to_shard):
+    ''' 
+    undo the effects of add_distributed_padding 
+    Note: This function operates within grid parallel group only
+    '''
     shape = list(tensor.shape)
-    # if rank = 0, didnt get any padding from previous slice
-    # if rank = world_size - 1, didnt get any padding from next slice
-    start_crop_idx = 0 if rank == 0 else image_padding 
-    end_crop_idx = shape[dim_to_shard+2] if rank == world_size - 1 else shape[dim_to_shard+2] - image_padding
+    ps = parallel_state.get_parallel_state()
+    
+    # Check if we're at boundaries of grid parallel group
+    has_prev = ps.get_previous_gp_rank() is not None
+    has_next = ps.get_next_gp_rank() is not None
+    
+    # Only crop padding where we have neighbors
+    start_crop_idx = 0 if not has_prev else image_padding 
+    end_crop_idx = shape[dim_to_shard+2] if not has_next else shape[dim_to_shard+2] - image_padding
     return tensor.narrow_copy(dim_to_shard+2, start_crop_idx, end_crop_idx-start_crop_idx).contiguous()
 
-
-def add_distributed_padding(tensor, rank, world_size, image_padding, dim_to_shard):
+def add_distributed_padding(tensor, image_padding, dim_to_shard):
     '''
     utility to add some padding to the tensor depending on its rank
 
@@ -153,37 +174,40 @@ def add_distributed_padding(tensor, rank, world_size, image_padding, dim_to_shar
     # receive slices
     reqs = []
     slice_before, slice_after = [], []
+    ps = parallel_state.get_parallel_state()
+    prev_gp_rank = ps.get_previous_gp_rank()
+    next_gp_rank = ps.get_next_gp_rank()
 
     # receive from previous 
-    if (rank-1) >= 0:
+    if prev_gp_rank is not None:
         slice_before = [torch.empty(tgt_shape, dtype=tensor.dtype, device=tensor.device)]
-        req = dist.irecv(slice_before[0], src=rank-1)
+        req = parallel_state.irecv(slice_before[0], src=prev_gp_rank)
         reqs.append(req)
 
     # send to next
-    if (rank+1) < world_size:
-        req = dist.isend(tensor.narrow_copy(dim_to_shard+2, -image_padding, image_padding), dst=rank+1)
+    if next_gp_rank is not None:
+        req = parallel_state.isend(tensor.narrow_copy(dim_to_shard+2, -image_padding, image_padding), dst=next_gp_rank)
         reqs.append(req)
     
     [r.wait() for r in reqs[::-1]]
     reqs = []
     
     # receive from next
-    if (rank+1) < world_size:
+    if next_gp_rank is not None:
         slice_after = [torch.empty(tgt_shape, dtype=tensor.dtype, device=tensor.device)]
-        req = dist.irecv(slice_after[0], src=rank+1)
+        req = parallel_state.irecv(slice_after[0], src=next_gp_rank)
         reqs.append(req)
     
     # send to previous
-    if (rank-1) >= 0:
-        req = dist.isend(tensor.narrow_copy(dim_to_shard+2, 0, image_padding), dst=rank-1)
+    if prev_gp_rank is not None:
+        req = parallel_state.isend(tensor.narrow_copy(dim_to_shard+2, 0, image_padding), dst=prev_gp_rank)
         reqs.append(req)
 
     [r.wait() for r in reqs[::-1]]
     tensor = torch.cat(slice_before + [tensor] + slice_after, dim=dim_to_shard+2)
     return tensor
 
-def calculate_bbox_from_gather_stats(moving_gather_stats, rank, world_size, dims, align_corners=True):
+def calculate_bbox_from_gather_stats(moving_gather_stats, rank, dims, align_corners=True):
     ''' given the results of gather stats and current rank, worldsize, and dims, return the coordinates
     as per the result of align_corners'''
     # store size to be used later
@@ -193,7 +217,7 @@ def calculate_bbox_from_gather_stats(moving_gather_stats, rank, world_size, dims
     total_size = 0
     start_size = 0
     end_size = -1   # to make it inclusive
-    for i in range(world_size):
+    for i in parallel_state.get_parallel_state().get_current_gp_group():
         total_size += moving_gather_stats[i][dim2shard+2]
         if i < rank:
             start_size += moving_gather_stats[i][dim2shard+2]

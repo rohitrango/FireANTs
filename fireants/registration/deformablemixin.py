@@ -174,10 +174,10 @@ class DeformableMixin:
         affine = ((moving_t2p @ affine - fixed_t2p)[:, :reg.dims]).contiguous()   # this is synchronized
 
         # synchronize grid stats
-        _, grid_gather_stats = gather_and_concat(grid, reg.rank, reg.world_size, reg.master_rank, True, reg.dim_to_shard-1, gather_stats_only=True)
+        _, grid_gather_stats = gather_and_concat(grid, reg.rank, True, reg.dim_to_shard-1, gather_stats_only=True)
         grid_gather_stats = refactor_grid_to_image_stats(grid_gather_stats) 
 
-        min_coords, max_coords = calculate_bbox_from_gather_stats(grid_gather_stats, reg.rank, reg.world_size, reg.dims)
+        min_coords, max_coords = calculate_bbox_from_gather_stats(grid_gather_stats, reg.rank, reg.dims)
         # get updated grid
         grid = fireants_interpolator.affine_warp(affine=affine, grid=grid, min_coords=min_coords, max_coords=max_coords)
 

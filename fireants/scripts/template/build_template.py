@@ -27,8 +27,6 @@ logging.basicConfig()
 import numpy as np
 
 import torch
-from torch import distributed as dist
-
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from torch.nn import functional as F
@@ -38,6 +36,8 @@ from fireants.registration import RigidRegistration, AffineRegistration, GreedyR
 from fireants.scripts.template.template_helpers import *
 from fireants.utils.imageutils import LaplacianFilter
 from fireants.utils.warputils import shape_averaging_invwarp
+
+from fireants.registration.distributed import parallel_state
 
 logger = logging.getLogger("build_template")
 logger.setLevel(logging.INFO)
@@ -49,19 +49,13 @@ def setup_distributed(local_rank, world_size):
     '''
     Setup distributed training
     '''
-    global logger
     logger.info(f'Setting up distributed training with local rank {local_rank} and world size {world_size}.')
-    if os.name == 'nt':  # Windows
-        backend = 'gloo'
-    else:  # Linux/Unix
-        backend = 'nccl'
-    dist.init_process_group(backend=backend)
+    parallel_state.initialize_parallel_state(data_parallel_size=world_size)
 
 def dist_cleanup(world_size):
     ''' cleanup distributed training '''
-    global logger
     logger.info('Cleaning up distributed training')
-    dist.destroy_process_group()
+    parallel_state.cleanup_parallel_state()
 
 def add_shape(avg_warp: torch.Tensor, reg):
     if avg_warp is None:
@@ -100,16 +94,16 @@ def main(args):
     if not check_args(args, logger):
         dist_cleanup(world_size)
         return
+
     debug = args.debug
     if debug:
         logger.setLevel(logging.DEBUG)
         logger.debug("Debug mode activated.")
 
-    # set up DDP
+    # set up parallel state (this will also set up current_device etc)
     setup_distributed(local_rank, world_size)
+    device = parallel_state.get_device()
     logger_zero = logger if local_rank == 0 else None       # a reference to logger for stuff only where I want to print once
-    torch.cuda.set_device(local_rank)
-    device = torch.cuda.current_device()
 
     # set up laplacian filter
     laplace = LaplacianFilter(dims=3, device=device, **dict(args.laplace_params))
@@ -173,7 +167,7 @@ def main(args):
                 del img
             init_template_arr = init_template_arr / total_file_count
             # add template across all processes
-            dist.all_reduce(init_template_arr, op=dist.ReduceOp.SUM)
+            parallel_state.all_reduce_across_dp_ranks(init_template_arr, op=torch.distributed.ReduceOp.SUM)
             init_template.delete_array()
             init_template.array = init_template_arr.detach()
             del init_template_arr
@@ -315,12 +309,12 @@ def main(args):
             del moved_images
         
         # update template
-        dist.all_reduce(updated_template_arr, op=dist.ReduceOp.SUM)
+        parallel_state.all_reduce_across_dp_ranks(updated_template_arr, op=torch.distributed.ReduceOp.SUM)
         
         # perform shape averaging if specified
         if avg_warp is not None:
             avg_warp = avg_warp / total_file_count
-            dist.all_reduce(avg_warp, op=dist.ReduceOp.SUM)
+            parallel_state.all_reduce_across_dp_ranks(avg_warp, op=torch.distributed.ReduceOp.SUM)
             # now we have added all the average grid coordinates, take inverse
             init_template_batch.broadcast(1)
             inverse_avg_warp = shape_averaging_invwarp(init_template_batch, avg_warp)
@@ -354,7 +348,7 @@ def main(args):
             logger.info(f"Saved template {epoch} to {args.save_dir}/template_{epoch}.nii.gz")
 
     # cleanup
-    dist_cleanup(world_size)
+    parallel_state.cleanup_parallel_state()
     
 
 if __name__ == '__main__':

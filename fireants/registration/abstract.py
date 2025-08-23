@@ -238,7 +238,7 @@ class AbstractRegistration(ABC):
         else:
             raise ValueError(f"Invalid warp parameters with keys {params.keys()}")
 
-    def save_moved_images(self, moved_images: Union[BatchedImages, FakeBatchedImages, torch.Tensor], filenames: Union[str, List[str]], moving_to_fixed: bool = True):
+    def save_moved_images(self, moved_images: Union[BatchedImages, FakeBatchedImages, torch.Tensor], filenames: Union[str, List[str]], moving_to_fixed: bool = True, ignore_size_match: bool = False):
         '''
         Save the moved images to disk.
 
@@ -249,9 +249,9 @@ class AbstractRegistration(ABC):
                 if False, we are dealing with an image that is moved from fixed space to moving space            
         '''
         if isinstance(moved_images, BatchedImages):
-            moved_images_save = FakeBatchedImages(moved_images(), moved_images)   # roundabout way to call the fakebatchedimages
+            moved_images_save = FakeBatchedImages(moved_images(), moved_images, ignore_size_match)   # roundabout way to call the fakebatchedimages
         elif isinstance(moved_images, torch.Tensor):
-            moved_images_save = FakeBatchedImages(moved_images, self.fixed_images if moving_to_fixed else self.moving_images)
+            moved_images_save = FakeBatchedImages(moved_images, self.fixed_images if moving_to_fixed else self.moving_images, ignore_size_match)
         else:
             # if it is already a fakebatchedimages, we can just use it
             moved_images_save = moved_images

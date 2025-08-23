@@ -35,7 +35,8 @@ from fireants.registration.deformation.svf import StationaryVelocity
 from fireants.registration.deformation.compositive import CompositiveWarp
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
-from fireants.registration.distributed.utils import gather_and_concat, refactor_grid_to_image_stats, calculate_bbox_from_gather_stats
+from fireants.registration.distributed.utils import gather_and_concat, refactor_grid_to_image_stats, calculate_bbox_from_gather_stats, async_send_tensor_ack, async_recv_tensor_ack
+from fireants.registration.distributed import parallel_state
 
 class DeformableMixin:
     """Mixin class providing common functionality for deformable registration classes.
@@ -149,6 +150,7 @@ class DeformableMixin:
         if isinstance(filenames, str):
             filenames = [filenames]
         assert len(filenames) == reg.opt_size, "Number of filenames should match the number of warps"
+        logger.info(f"Saving {reg.opt_size} transforms to {filenames}")
         # get the warp field
         fixed_image: BatchedImages = reg.fixed_images
         moving_image: BatchedImages = reg.moving_images 
@@ -162,6 +164,8 @@ class DeformableMixin:
         moving_t2p = moving_image.get_torch2phy()
         fixed_t2p = fixed_image.get_torch2phy()
 
+        logger.info(f"device: {parallel_state.get_device()}, moving_t2p: {moving_t2p.device}, fixed_t2p: {fixed_t2p.device}, moved_params: {moved_params['grid'].device}")
+
         # gather grid
         grid = moved_params['grid']   # [B,N,dim]
         affine = moved_params['affine']  # [B, dim, dim+1]
@@ -174,44 +178,86 @@ class DeformableMixin:
         affine = ((moving_t2p @ affine - fixed_t2p)[:, :reg.dims]).contiguous()   # this is synchronized
 
         # synchronize grid stats
+        logger.info(f"Gathering grid stats")
         _, grid_gather_stats = gather_and_concat(grid, reg.rank, True, reg.dim_to_shard-1, gather_stats_only=True)
         grid_gather_stats = refactor_grid_to_image_stats(grid_gather_stats) 
 
+        logger.info(f"Calculating bbox")
         min_coords, max_coords = calculate_bbox_from_gather_stats(grid_gather_stats, reg.rank, reg.dims)
         # get updated grid
+        logger.info(f"Warping grid")
         grid = fireants_interpolator.affine_warp(affine=affine, grid=grid, min_coords=min_coords, max_coords=max_coords)
+        logger.info(f"Grid shape: {grid.shape}")
 
         # save grid in disk and reload into cpu and concat (too big to fit in GPU)
-        for i in range(reg.opt_size):
-            # get grid
-            # TODO: this is bad but i dont know how to do it better for now
-            # nccl backend only allows gpu to gpu comm and i want to avoid it to not trigger OOM
-            grid_i = grid[i].detach().cpu().numpy()  # [H, W, D, dim]
-            tmp_savefile = filenames[i] + f"_sharded_{reg.rank}_of_{reg.world_size}.npz"
-            np.savez(tmp_savefile, grid=grid_i)
-            print(f"Saved sharded grid {i}:{reg.rank}/{reg.world_size} to {tmp_savefile}")
-            torch.distributed.barrier()
 
-            if reg.rank == reg.master_rank:
-                print("Concatenating grid... ")
-                # gather all files
-                grid = []
-                for j in tqdm(range(reg.world_size), total=reg.world_size):
-                    tmp_file = filenames[i] + f"_sharded_{j}_of_{reg.world_size}.npz"
-                    grid.append(np.load(tmp_file)["grid"])
-                    os.remove(tmp_file)
-                # grid = torch.concat(grid, dim=reg.dim_to_shard) 
-                grid = np.concatenate(grid, axis=reg.dim_to_shard)
-                # save this
+        for i in range(reg.opt_size):
+            grid_i = grid[i].detach()  # [H, W, D, dim]
+            additional_grids = [grid_i.cpu()]
+            # get grid parallel ids
+            rank = parallel_state.get_parallel_state().get_rank()
+            grid_parallel_group = parallel_state.get_parallel_state().get_current_gp_group()
+            grid_parallel_group_obj = parallel_state.get_parallel_state().gp_group_obj
+            master_rank = grid_parallel_group[0]
+            is_master = (rank == grid_parallel_group[0])
+            logger.info(f"Rank {rank} is master: {is_master}")
+            
+            # for others, we will send or receive the grid
+            for pollrank in grid_parallel_group[1:]:
+                # fetch
+                if is_master:
+                    print(f"Rank {rank} is fetching from {pollrank}")
+                    tensor, req, sz = async_recv_tensor_ack(grid_i, pollrank, rank, False) # grid_i is passed for its shape length
+                    req.wait()
+                    tensor = tensor.cpu()
+                    additional_grids.append(tensor)
+                else:
+                    # im the pollrank, 
+                    if rank == pollrank:
+                        print(f"Rank {rank} is sending to {master_rank}")
+                        grid_i = grid_i.to(parallel_state.get_device())
+                        async_send_tensor_ack(grid_i, master_rank, rank, False)
+                # distributed
+                torch.distributed.barrier(group=grid_parallel_group_obj)
+            
+            if is_master:
+                # gather all grids
+                grid_i = torch.cat(additional_grids, dim=reg.dim_to_shard).cpu().numpy()
+                # save grid
                 savefile = filenames[i]
-                # get itk image
+                # get itk data
                 if len(fixed_image.images) < i:     # this image is probably broadcasted then
                     itk_data = fixed_image.images[0].itk_image
                 else:
                     itk_data = fixed_image.images[i].itk_image
                 print("Writing to SimpleITK image... ")
                 # copy itk data
-                warp = sitk.GetImageFromArray(grid)
+                warp = sitk.GetImageFromArray(grid_i)
                 warp.CopyInformation(itk_data)
                 sitk.WriteImage(warp, savefile)
                 print(f"Saved grid {i} to {savefile}")
+
+
+        # for i in range(reg.opt_size):
+        #     # get grid
+        #     # TODO: this is bad but i dont know how to do it better for now
+        #     # nccl backend only allows gpu to gpu comm and i want to avoid it to not trigger OOM
+        #     grid_i = grid[i].detach().cpu().numpy()  # [H, W, D, dim]
+        #     tmp_savefile = filenames[i] + f"_sharded_{reg.rank}_of_{reg.world_size}.npz"
+        #     np.savez(tmp_savefile, grid=grid_i)
+        #     print(f"Saved sharded grid {i}:{reg.rank}/{reg.world_size} to {tmp_savefile}")
+        #     torch.distributed.barrier()
+
+        #     if reg.rank == reg.master_rank:
+        #         print("Concatenating grid... ")
+        #         # gather all files
+        #         grid = []
+        #         for j in tqdm(range(reg.world_size), total=reg.world_size):
+        #             tmp_file = filenames[i] + f"_sharded_{j}_of_{reg.world_size}.npz"
+        #             grid.append(np.load(tmp_file)["grid"])
+        #             os.remove(tmp_file)
+        #         # grid = torch.concat(grid, dim=reg.dim_to_shard) 
+        #         grid = np.concatenate(grid, axis=reg.dim_to_shard)
+        #         # save this
+        #         savefile = filenames[i]
+        #         # get itk image

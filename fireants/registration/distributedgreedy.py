@@ -109,7 +109,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                          cc_kernel_size=cc_kernel_size, reduction=reduction,
                          tolerance=tolerance, max_tolerance_iters=max_tolerance_iters, **kwargs)
         # change device to current rank
-        self.device = parallel_state.get_parallel_state().get_device()
+        self.device = parallel_state.get_device()
         self.dims = fixed_images.dims
         self.reduction = reduction
         # find sharding strategy (spatial dim to shard)
@@ -224,6 +224,12 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
             'affine': affine_map_init,
             'grid': warp_field,
         }
+    
+    def save_moved_images(self, moved_images: Union[BatchedImages, FakeBatchedImages, torch.Tensor], filenames: Union[str, List[str]], moving_to_fixed: bool = True, ignore_size_match: bool = False):
+        '''
+        Save the moved images to disk.
+        '''
+        super().save_moved_images(moved_images, filenames, moving_to_fixed, ignore_size_match=True)
 
     def optimize(self, save_transformed=False):
         """Optimize the deformation parameters.
@@ -287,7 +293,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
             
             # allconcat the moving images
             # if ring_sampler is True, we only need to gather the stats, not the tensor
-            moving_image_blur, moving_gather_stats = gather_and_concat(moving_image_blur, self.rank, is_state_sharded, self.dim_to_shard, gather_stats_only=self.ring_sampler)
+            moving_image_blur, moving_gather_stats = gather_and_concat(moving_image_blur, self.rank, is_state_sharded, self.dim_to_shard, gather_stats_only=self.use_ring_sampler)
 
             fixed_image_down = add_distributed_padding(fixed_image_down, self.image_padding, self.dim_to_shard)
             # Get coordinates to transform
@@ -310,7 +316,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                     self.warp.set_zero_grad()
                     warp_field = self.warp.get_warp()  # [sharded state]
                     # get coordinates to interpolate
-                    if self.ring_sampler:
+                    if self.use_ring_sampler:
                         raise NotImplementedError("Ring sampler not implemented")
                         moved_image = fireants_ringsampler_interpolator(moving_image_blur, affine=affine_map_init, grid=warp_field, mode='bilinear', align_corners=True, is_displacement=True, stats=moving_gather_stats)
                     else:

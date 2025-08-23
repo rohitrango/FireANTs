@@ -440,6 +440,9 @@ class FakeBatchedImages:
         tensor_size[1] = 1
         if not ignore_size_match:
             check_and_raise_cond(tuple(batched_size) == tuple(tensor_size), "Tensor size must match the size of the batched images", ValueError)
+        else:
+            if tuple(batched_size) != tuple(tensor_size):
+                logger.warning(f"Tensor size {tuple(tensor_size)} does not match the size of the batched images {tuple(batched_size)}, ignoring size match")
         self.tensor = tensor
         self.batched_images = batched_images
         self.is_sharded = True   # assume that it inherits a sharded image

@@ -5,7 +5,8 @@ import matplotlib.pyplot as plt
 import SimpleITK as sitk
 from time import time
 from fireants.io import Image, BatchedImages
-from fireants.registration import AffineRegistration, GreedyRegistration
+from fireants.registration.affine import AffineRegistration
+from fireants.registration.greedy import GreedyRegistration
 from fireants.interpolator import fireants_interpolator
 from fireants.utils.imageutils import jacobian
 

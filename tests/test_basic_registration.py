@@ -9,7 +9,9 @@ import subprocess
 logging.basicConfig(level=logging.INFO)
 
 # Import FireANTs components
-from fireants.registration import MomentsRegistration, AffineRegistration, RigidRegistration
+from fireants.registration.moments import MomentsRegistration
+from fireants.registration.affine import AffineRegistration
+from fireants.registration.rigid import RigidRegistration
 from fireants.io.image import Image, BatchedImages, FakeBatchedImages
 try:
     from .conftest import dice_loss

@@ -5,7 +5,7 @@ Only works if fireants_fused_ops is installed.
 import os
 import torch
 from fireants.io import Image, BatchedImages
-from fireants.registration import GreedyRegistration
+from fireants.registration.greedy import GreedyRegistration
 import fireants_fused_ops as ffo
 from fireants.interpolator import fireants_interpolator
 from time import time

@@ -228,6 +228,8 @@ class Image:
         check_and_raise_cond(all([torch.allclose(self.phy2torch, other.phy2torch) for other in others]), "Images reside in different physical spaces, using the first image's physical space", logger.warning)
 
         self.array = torch.cat([self.array] + [other.array for other in others], dim=1)
+        self.channels = self.array.shape[1]
+
         if optimize_memory:
             logger.debug("Deleting the arrays of the other images after concatenation")
             for other in others:
@@ -334,7 +336,12 @@ class BatchedImages:
         self.batch_tensor = self.batch_tensor.to(device_or_dtype)
         return self
 
-    def _shard_dim(self, dim_to_shard, rank):
+    def _shard_dim(self, dim_to_shard, rank=None):
+        if self.is_sharded:
+            logger.warning("Batch is already sharded, cannot shard again")
+            return
+        if rank is None:
+            rank = parallel_state.get_parallel_state().get_rank()
         gp_group = parallel_state.get_parallel_state().get_current_gp_group()
         gp_size = len(gp_group)
         size = self.batch_tensor.shape[dim_to_shard+2]

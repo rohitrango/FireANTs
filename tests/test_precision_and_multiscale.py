@@ -7,7 +7,8 @@ import logging
 from torch.profiler import profile, record_function, ProfilerActivity
 from typing import Dict, Any, List, Tuple
 
-from fireants.registration import GreedyRegistration, SyNRegistration
+from fireants.registration.greedy import GreedyRegistration
+from fireants.registration.syn import SyNRegistration
 from fireants.io.image import Image, BatchedImages
 try:
     from .conftest import dice_loss

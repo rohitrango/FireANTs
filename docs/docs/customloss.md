@@ -8,7 +8,8 @@ First, we load the images and masks:
 
 ```python
 from fireants.io import Image, BatchedImages
-from fireants.registration import AffineRegistration, GreedyRegistration
+from fireants.registration.affine import AffineRegistration
+from fireants.registration.greedy import GreedyRegistration
 import matplotlib.pyplot as plt
 from time import time
 

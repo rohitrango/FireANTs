@@ -12,9 +12,6 @@
 #
 # For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
 
-
-
-
 # script contains the parallel state for the registration pipeline
 # currently, FireANTs supports two forms of parallelization:
 #  1. Grid Parallel (for distributing the same image across multiple GPUs)
@@ -31,7 +28,6 @@ import logging
 from logging import getLogger
 import numpy as np
 import torch.distributed
-from torch.distributed.device_mesh import init_device_mesh
 from time import sleep
 
 logger = getLogger(__name__)
@@ -211,11 +207,13 @@ def initialize_parallel_state(
         data_parallel_size: Optional[int] = None,
         backend: Optional[str] = None,
         wait: Optional[float] = None,
+        override_torchrun_check: bool = False,
 ):
     '''
     '''
     assert not torch.distributed.is_initialized(), "Distributed training already initialized"
-    assert launched_with_torchrun(), "Distributed training must be launched with torchrun"
+    if not override_torchrun_check:
+        assert launched_with_torchrun(), "Distributed training must be launched with torchrun"
 
     world_size = int(os.environ.get('WORLD_SIZE', 1))
     current_rank = int(os.environ.get('RANK', 0))

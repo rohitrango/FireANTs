@@ -32,7 +32,11 @@ from omegaconf import DictConfig, OmegaConf
 from torch.nn import functional as F
 
 from fireants.io.image import Image, BatchedImages
-from fireants.registration import RigidRegistration, AffineRegistration, GreedyRegistration, SyNRegistration, MomentsRegistration
+from fireants.registration.rigid import RigidRegistration
+from fireants.registration.affine import AffineRegistration
+from fireants.registration.greedy import GreedyRegistration
+from fireants.registration.syn import SyNRegistration
+from fireants.registration.moments import MomentsRegistration
 from fireants.scripts.template.template_helpers import *
 from fireants.utils.imageutils import LaplacianFilter
 from fireants.utils.warputils import shape_averaging_invwarp

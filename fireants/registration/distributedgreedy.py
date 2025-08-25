@@ -347,6 +347,8 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                         # internally should use the fireants interpolator to avoid additional memory allocation
                         moved_coords = self.get_warped_coordinates(self.fixed_images, self.moving_images)  
                         loss = loss + self.warp_reg(moved_coords)
+                    # allreduce the loss
+                    parallel_state.all_reduce_across_gp_ranks(loss, torch.distributed.ReduceOp.AVG)
                     loss.backward()
                     if self.progress_bar and self.rank == master_rank:
                         pbar.set_description("rank:{} in gp group: {}, scale: {}, iter: {}/{}, loss: {:4f}".format(self.rank, gp_group, scale, i, iters, loss.item()/scale_factor))

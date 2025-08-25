@@ -205,6 +205,8 @@ def recalibrate_affine_grad(grad_affine_buf: torch.Tensor, scale_factor: torch.T
     '''
     Recalibrate the affine gradient.
     '''
+    if grad_affine_buf is None:
+        return
     _, s1, s2 = grad_affine_buf.shape
     grad_affine_buf.data.copy_((scale_factor @ make_homogenous(grad_affine_buf))[:, :s1, :s2])
 
@@ -212,6 +214,8 @@ def recalibrate_grid_grad(grad_grid_buf: torch.Tensor, scale_factor: torch.Tenso
     '''
     Recalibrate the grid gradient.
     '''
+    if grad_grid_buf is None:
+        return
     dims = grad_grid_buf.shape[-1]
     aff = scale_factor[:, :3, :3]
     grad_grid_buf.data.copy_(torch.einsum('bij,b...j->b...i', aff.permute(0, 2, 1), grad_grid_buf).contiguous()).contiguous()
@@ -270,6 +274,7 @@ def distributed_grid_sampler_3d_bwd(grad_output, grad_image, grad_affine, grad_g
     recv_sharded_min_coords = torch.zeros_like(min_img_coords)
     recv_sharded_max_coords = torch.zeros_like(max_img_coords)
     recv_sharded_size = torch.zeros_like(send_sharded_size)
+    grad_image_send_buf = None
 
     # Ring communication
     for ring_id in range(1, gp_size):
@@ -325,7 +330,8 @@ def distributed_grid_sampler_3d_bwd(grad_output, grad_image, grad_affine, grad_g
             add_and_empty(grad_image, grad_image_buf)
         
     # synchronize affine gradients
-    parallel_state.all_reduce_across_gp_ranks(grad_affine, op=torch.distributed.ReduceOp.SUM)
+    if grad_affine is not None:
+        parallel_state.all_reduce_across_gp_ranks(grad_affine, op=torch.distributed.ReduceOp.SUM)
 
 
 # ***********************************************************
@@ -368,8 +374,14 @@ class RingSampler3D(torch.autograd.Function):
         return grad_image, None, None, grad_affine, grad_grid, None, None, None, None, None, None
 
 
+def list_to_tensor(x):
+    if isinstance(x, (list, tuple)):
+        return torch.tensor(x, device=torch.cuda.current_device())
+    return x
+
 def fireants_ringsampler_interpolator(image, affine=None, grid=None, mode='bilinear', padding_mode='zeros', align_corners=True, is_displacement=True, min_coords=None, max_coords=None, min_img_coords=None, max_img_coords=None):
     dims = len(image.shape) - 2
+    min_coords, max_coords, min_img_coords, max_img_coords = list_to_tensor(min_coords), list_to_tensor(max_coords), list_to_tensor(min_img_coords), list_to_tensor(max_img_coords)
     if dims == 3:
         return RingSampler3D.apply(image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement)
     raise ValueError(f"Unsupported dimension: {dims}")

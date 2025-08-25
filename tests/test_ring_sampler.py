@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-from fireants.registration.distributed.ringsampler import distributed_grid_sampler_3d, ring_sampler_3d_fn
+from fireants.registration.distributed.ring_sampler import distributed_grid_sampler_3d_fwd, fireants_ringsampler_interpolator
 from fireants.interpolator.fused_grid_sample import fused_grid_sampler_3d
 from fireants.registration.distributed import parallel_state as ps
 import pytest
@@ -198,7 +198,7 @@ def test_ring_sampler_3d(ring_sampler_env: RingSamplerTestEnv):
 
     
     # Run distributed grid sampler
-    distributed_output = distributed_grid_sampler_3d(
+    distributed_output = distributed_grid_sampler_3d_fwd(
         img_shard.contiguous(),
         img_min_coords,
         img_max_coords,
@@ -239,7 +239,6 @@ def test_ring_sampler_3d(ring_sampler_env: RingSamplerTestEnv):
         assert max_error.item() < 1e-5, f"Relative error {max_error.item()} is too large"
         assert max_rel_error.item() < 1e-3, f"Relative error {max_rel_error.item()} is too large"
     
-
 def test_ring_sampler_backward_3d(ring_sampler_env: RingSamplerTestEnv):
     """Test backward pass of ring sampler"""
     
@@ -315,15 +314,18 @@ def test_ring_sampler_backward_3d(ring_sampler_env: RingSamplerTestEnv):
     grid_min_coords = torch.tensor((-1.0, y_min, -1.0), device=ring_sampler_env.device)
     grid_max_coords = torch.tensor((1.0, y_max, 1.0), device=ring_sampler_env.device)
 
-    output_sharded = ring_sampler_3d_fn(
+    output_sharded = fireants_ringsampler_interpolator(
         img_shard.contiguous(),
-        img_min_coords,
-        img_max_coords,
-        affine_tensor[:, :3, :].contiguous(),
-        grid_shard,
+        affine=affine_tensor[:, :3, :].contiguous(),
+        grid=grid_shard,
+        mode="bilinear",
+        padding_mode="zeros",
+        align_corners=True,
+        is_displacement=True,
+        min_img_coords=img_min_coords,
+        max_img_coords=img_max_coords,
         min_coords=grid_min_coords,
         max_coords=grid_max_coords,
-        is_displacement=True
     )
 
     loss = (output_sharded ** 2).sum()

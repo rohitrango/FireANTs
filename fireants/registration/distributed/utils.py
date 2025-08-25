@@ -222,34 +222,36 @@ def add_distributed_padding(tensor, image_padding, dim_to_shard):
     tensor = torch.cat(slice_before + [tensor] + slice_after, dim=dim_to_shard+2)
     return tensor
 
-def calculate_bbox_from_gather_stats(moving_gather_stats, rank, dims, align_corners=True):
+def calculate_bbox_from_gather_stats(img_gather_stats, rank, dims, align_corners=True):
     ''' given the results of gather stats and current rank, worldsize, and dims, return the coordinates
     as per the result of align_corners'''
     # store size to be used later
-    sz = moving_gather_stats[rank][2:]
-    dim2shard = moving_gather_stats['dim_to_shard']
+    sz = img_gather_stats[rank][2:]
+    dim2shard = img_gather_stats['dim_to_shard']
     # get total size
     total_size = 0
     start_size = 0
     end_size = -1   # to make it inclusive
-    for i in parallel_state.get_parallel_state().get_current_gp_group():
-        total_size += moving_gather_stats[i][dim2shard+2]
+    gp_group = sorted(parallel_state.get_parallel_state().get_current_gp_group())
+    for i in gp_group:
+        total_size += img_gather_stats[i][dim2shard+2]
         if i < rank:
-            start_size += moving_gather_stats[i][dim2shard+2]
+            start_size += img_gather_stats[i][dim2shard+2]
         if i <= rank:
-            end_size += moving_gather_stats[i][dim2shard+2]
+            end_size += img_gather_stats[i][dim2shard+2]
     # get actual total size of sharded dim
     sz[dim2shard] = total_size
     # get min and max coords in (z, y, x) format
+    # we get in zyx order to modify dim2shard, and then reverse it back to xyz order
     mincoords = (get_min_coords3d if dims == 3 else get_min_coords2d)(*sz, align_corners=align_corners)[::-1]
     maxcoords = (get_max_coords3d if dims == 3 else get_max_coords2d)(*sz, align_corners=align_corners)[::-1]
     mincoords, maxcoords = list(mincoords), list(maxcoords)
     # change the dim based on dim_to_shard
     if align_corners:
-        mincoords[dim2shard] = 2*start_size/(total_size-1) - 1
-        maxcoords[dim2shard] = 2*end_size/(total_size-1) - 1
+        mincoords[dim2shard] = 2.0*start_size/(total_size-1.0) - 1.0
+        maxcoords[dim2shard] = 2.0*end_size/(total_size-1.0) - 1.0
     else:
-        mincoords[dim2shard] = (2*start_size+1)/total_size - 1
-        maxcoords[dim2shard] = (2*end_size+1)/total_size - 1
+        mincoords[dim2shard] = (2.0*start_size+1.0)/total_size - 1.0
+        maxcoords[dim2shard] = (2.0*end_size+1.0)/total_size - 1.0
     return mincoords[::-1], maxcoords[::-1]
     

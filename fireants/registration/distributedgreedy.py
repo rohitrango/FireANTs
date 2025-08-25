@@ -41,6 +41,10 @@ from fireants.interpolator import fireants_interpolator
 from fireants.registration.deformablemixin import DeformableMixin
 from fireants.registration.distributed import parallel_state
 from fireants.registration.distributed.utils import *
+try:
+    from fireants.registration.distributed.ring_sampler import fireants_ringsampler_interpolator
+except:
+    fireants_ringsampler_interpolator = None
 
 # logging
 import logging
@@ -219,12 +223,6 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
         moving_p2t = moving_images.get_phy2torch().to(self.dtype)
         # save initial affine transform to initialize grid 
         affine_map_init = (torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]).contiguous()
-        if displacement:
-            # ⚠️ *WARNING*: this is tricky - if fixed and moving images do not have the same physical space transformation, then the affine matrix to be subtracted should be moving_p2t @ fixed_t2p
-            # For now, the assumption is that `get_warp_parameters()` is to be strictly used within pytorch space only
-            # other functions like `save_as_ants_transforms()` should be modified to handle these kind of cases
-            affine_map_init = affine_map_init - torch.eye(self.dims, self.dims+1)[None].to(self.dtype)
-
         # get displacement field
         warp_field = self.warp.get_warp()
 
@@ -309,6 +307,8 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
             # allconcat the moving images
             # if ring_sampler is True, we only need to gather the stats, not the tensor
             moving_image_blur, moving_gather_stats = gather_and_concat(moving_image_blur, self.rank, is_state_sharded, self.dim_to_shard, gather_stats_only=self.use_ring_sampler)
+            # gather fixed image stats (this forms the min/max coords for the sampler)
+            _, fixed_gather_stats = gather_and_concat(fixed_image_down, self.rank, is_state_sharded, self.dim_to_shard, gather_stats_only=True)
 
             fixed_image_down = add_distributed_padding(fixed_image_down, self.image_padding, self.dim_to_shard)
             # Get coordinates to transform
@@ -319,8 +319,9 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
             else:
                 scale_factor = np.prod(fixed_image_down.shape)
         
-            # TODO: from stats, save the min/max coordinates 
+            # get min/max coords for fixed/moving image
             min_coords_moving, max_coords_moving = calculate_bbox_from_gather_stats(moving_gather_stats, self.rank, self.dims)
+            min_coords_fixed, max_coords_fixed = calculate_bbox_from_gather_stats(fixed_gather_stats, self.rank, self.dims)
 
             # run different subroutines depending on whether state is sharded or not
             gp_group = parallel_state.get_parallel_state().get_current_gp_group()
@@ -332,10 +333,10 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                     warp_field = self.warp.get_warp()  # [sharded state]
                     # get coordinates to interpolate
                     if self.use_ring_sampler:
-                        raise NotImplementedError("Ring sampler not implemented")
-                        moved_image = fireants_ringsampler_interpolator(moving_image_blur, affine=affine_map_init, grid=warp_field, mode='bilinear', align_corners=True, is_displacement=True, stats=moving_gather_stats)
+                        moved_image = fireants_ringsampler_interpolator(moving_image_blur, affine=affine_map_init, grid=warp_field, mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_fixed, max_coords=max_coords_fixed,
+                                                                        min_img_coords=min_coords_moving, max_img_coords=max_coords_moving)
                     else:
-                        moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=warp_field, mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_moving, max_coords=max_coords_moving)
+                        moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=warp_field, mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_fixed, max_coords=max_coords_fixed)
                     # pad it 
                     moved_image = add_distributed_padding(moved_image, self.image_padding, self.dim_to_shard)
                     loss = self.loss_fn(moved_image, fixed_image_down)
@@ -402,21 +403,20 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
             moving_images.set_device(self.device)
 
         # get metadata
-        # fixed_t2p = fixed_images.get_torch2phy().to(self.dtype)
-        # moving_p2t = moving_images.get_phy2torch().to(self.dtype)
-        # # get shape of sharded image
-        # fixed_sharded_size = fixed_images.shape[2:]
-        # moving_sharded_size = moving_images.shape[2:]
-        # save initial affine transform to initialize grid 
         moving_sharded_array = moving_images()
-        # gather moving image
-        moving_image_blur, moving_gather_stats = gather_and_concat(moving_sharded_array, self.rank, is_state_sharded=True, dim_to_shard=self.dim_to_shard)
+        # gather moving image and fixed image stats
+        moving_image_blur, moving_gather_stats = gather_and_concat(moving_sharded_array, self.rank, is_state_sharded=True, dim_to_shard=self.dim_to_shard, gather_stats_only=self.use_ring_sampler)
+        _, fixed_gather_stats = gather_and_concat(fixed_images(), self.rank, is_state_sharded=True, dim_to_shard=self.dim_to_shard, gather_stats_only=True)
         # Get stats for min and max coords
         min_coords_moving, max_coords_moving = calculate_bbox_from_gather_stats(moving_gather_stats, self.rank, self.dims)
+        min_coords_fixed, max_coords_fixed = calculate_bbox_from_gather_stats(fixed_gather_stats, self.rank, self.dims)
         # get coordinates to interpolate
         moved_coords = self.get_warp_parameters(fixed_images, moving_images, shape=shape)
         # note that we have to provide (min, max) coordinates too
-        moved_image = fireants_interpolator(moving_image_blur, **moved_coords, mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_moving, max_coords=max_coords_moving)
+        if self.use_ring_sampler:
+            moved_image = fireants_ringsampler_interpolator(moving_image_blur, **moved_coords, mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_fixed, max_coords=max_coords_fixed, min_img_coords=min_coords_moving, max_img_coords=max_coords_moving)
+        else:
+            moved_image = fireants_interpolator(moving_image_blur, **moved_coords, mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_moving, max_coords=max_coords_moving)
         # gather it up again
         del moving_image_blur
         moved_image, _ = gather_and_concat(moved_image, self.rank, is_state_sharded=True, dim_to_shard=self.dim_to_shard)
@@ -471,4 +471,4 @@ if __name__ == '__main__':
     #     moved_image = FakeBatchedImages(moved_image, fixed, ignore_size_match=True)
     #     moved_image.write_image("fmost_moved_image.nii.gz")
 
-    dist.destroy_process_group()
+    parallel_state.cleanup_parallel_state()

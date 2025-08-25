@@ -258,8 +258,6 @@ def isend(tensor: torch.Tensor, dst: int, tag: int = 0, group: Optional[torch.di
         cpu_tensor = tensor.cpu().detach().clone()
         return torch.distributed.isend(cpu_tensor, dst=dst, tag=tag, group=group)
     
-    print("sending tensor to ", dst)
-    
     return torch.distributed.isend(tensor, dst=dst, tag=tag, group=group)
 
 def irecv(tensor: torch.Tensor, src: int, tag: int = 0, group: Optional[torch.distributed.ProcessGroup] = None) -> torch.distributed.Work:
@@ -282,7 +280,6 @@ def irecv(tensor: torch.Tensor, src: int, tag: int = 0, group: Optional[torch.di
         tensor = tensor.cpu()
         
     req = torch.distributed.irecv(tensor, src=src, tag=tag, group=group)
-    print("received tensor from ", src)
     
     if _BACKEND == 'gloo':
         # Create a wrapper around the request that moves tensor back to original device after completion

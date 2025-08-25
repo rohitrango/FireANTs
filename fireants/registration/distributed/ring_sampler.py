@@ -83,7 +83,7 @@ def make_homogenous(affine: torch.Tensor) -> torch.Tensor:
 
 
 @torch.no_grad
-def distributed_grid_sampler_3d(
+def distributed_grid_sampler_3d_fwd(
     image: torch.Tensor,
     min_img_coords: torch.Tensor,
     max_img_coords: torch.Tensor,
@@ -130,6 +130,7 @@ def distributed_grid_sampler_3d(
     assert is_displacement, "is_displacement must be True"
     assert mode in ['bilinear'], "only bilinear mode is supported"
     assert min_coords is not None and max_coords is not None, "min_coords and max_coords must be provided"
+    assert min_img_coords is not None and max_img_coords is not None, "min_img_coords and max_img_coords must be provided"
 
     # Get base image
     image_size = image.shape[-3:]
@@ -217,7 +218,7 @@ def recalibrate_grid_grad(grad_grid_buf: torch.Tensor, scale_factor: torch.Tenso
     
 
 @torch.no_grad
-def distributed_grid_sampler_3d_backward(grad_output, grad_image, grad_affine, grad_grid, image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement):
+def distributed_grid_sampler_3d_bwd(grad_output, grad_image, grad_affine, grad_grid, image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement):
     '''
     Backward pass of the distributed grid sampler
 
@@ -340,7 +341,7 @@ class RingSampler3D(torch.autograd.Function):
         ctx.padding_mode = padding_mode
         ctx.align_corners = align_corners
         ctx.is_displacement = is_displacement
-        return distributed_grid_sampler_3d(image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement)
+        return distributed_grid_sampler_3d_fwd(image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement)
     
     @staticmethod
     def backward(ctx, grad_output):
@@ -363,15 +364,12 @@ class RingSampler3D(torch.autograd.Function):
         grad_flags = grad_flags.int().cpu().tolist()
         assert all([x == 0 or x == gp_size for x in grad_flags]), "all grad flags must be 0 or {}, but found {}".format(gp_size, grad_flags)
 
-        distributed_grid_sampler_3d_backward(grad_output, grad_image, grad_affine, grad_grid, image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement)
+        distributed_grid_sampler_3d_bwd(grad_output, grad_image, grad_affine, grad_grid, image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement)
         return grad_image, None, None, grad_affine, grad_grid, None, None, None, None, None, None
 
 
-# ring_sampler_3d_fn = RingSampler3D.apply
-def ring_sampler_3d_fn(image, 
-                       min_img_coords, max_img_coords, affine, grid, 
-                       mode: str = 'bilinear', padding_mode: str = 'zeros', 
-                       align_corners: bool = True, 
-                       min_coords: tuple = None, max_coords: tuple = None, 
-                       is_displacement: bool = True):
-    return RingSampler3D.apply(image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement)
+def fireants_ringsampler_interpolator(image, affine=None, grid=None, mode='bilinear', padding_mode='zeros', align_corners=True, is_displacement=True, min_coords=None, max_coords=None, min_img_coords=None, max_img_coords=None):
+    dims = len(image.shape) - 2
+    if dims == 3:
+        return RingSampler3D.apply(image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement)
+    raise ValueError(f"Unsupported dimension: {dims}")

@@ -11,7 +11,7 @@
 
 import torch
 import os
-from typing import Optional, Union
+from typing import Optional, Union, List
 import logging
 from logging import getLogger
 import numpy as np
@@ -52,6 +52,8 @@ class FireANTsDeviceMesh:
         # create new groups
         self.gp_pg_groups = {}
         self.dp_pg_groups = {}
+        print("data parallel size", self.data_parallel_size)
+        print("grid parallel size", self.grid_parallel_size)
         for row in range(self.data_parallel_size):
             ranks = list(self.mesh[row, :])
             group = torch.distributed.new_group(ranks=ranks)
@@ -104,7 +106,20 @@ class FireANTsDeviceMesh:
             return None
         return self.mesh[self.data_parallel_rank, self.grid_parallel_rank + 1]
 
-#####
+def ring_collect_op(send_tensors: List[torch.Tensor], recv_tensors: List[torch.Tensor], src: int, dst: int):
+    '''
+    perform a ring collect operation
+
+    ### Note that doing send-recv in a ring with isend/irecv hangs, so we use the batch isend/irecv ops instead
+    '''
+    assert len(send_tensors) == len(recv_tensors), "Number of send and recv tensors must be the same"
+    if len(send_tensors) == 0:
+        return
+    send_ops = [torch.distributed.P2POp(torch.distributed.isend, tensor, peer=dst) for tensor in send_tensors]
+    recv_ops = [torch.distributed.P2POp(torch.distributed.irecv, tensor, peer=src) for tensor in recv_tensors]
+    reqs = torch.distributed.batch_isend_irecv(send_ops + recv_ops)
+    [r.wait() for r in reqs]
+
 
 def all_reduce_across_ranks(tensor: torch.Tensor, op: torch.distributed.ReduceOp, group: Optional[torch.distributed.ProcessGroup] = None):
     '''
@@ -209,7 +224,6 @@ def initialize_parallel_state(
     # manually setting up the ranks instead of using device mesh (for windows support later in case device mesh doesn't support all gloo functions)
     _PARALLEL_STATE = FireANTsDeviceMesh(np.arange(world_size).reshape(data_parallel_size, grid_parallel_size), _BACKEND)
 
-
 def isend(tensor: torch.Tensor, dst: int, tag: int = 0, group: Optional[torch.distributed.ProcessGroup] = None) -> torch.distributed.Work:
     '''
     Asynchronously send a tensor to a destination rank.
@@ -224,16 +238,12 @@ def isend(tensor: torch.Tensor, dst: int, tag: int = 0, group: Optional[torch.di
         A distributed request object that can be used to query the status or wait for completion.
         For GLOO backend, a CPU copy of the tensor is used for sending while original tensor remains on GPU.
     '''
-    if not isinstance(group, torch.distributed.ProcessGroup):
-        if isinstance(group, (list, np.ndarray)):
-            group = _PARALLEL_STATE.get_process_group_obj(group)
-        else:
-            group = None
-    
     # For GLOO backend, create a CPU copy for sending while keeping original on GPU
     if _BACKEND == 'gloo':
         cpu_tensor = tensor.cpu().detach().clone()
         return torch.distributed.isend(cpu_tensor, dst=dst, tag=tag, group=group)
+    
+    print("sending tensor to ", dst)
     
     return torch.distributed.isend(tensor, dst=dst, tag=tag, group=group)
 
@@ -251,18 +261,13 @@ def irecv(tensor: torch.Tensor, src: int, tag: int = 0, group: Optional[torch.di
         A distributed request object that can be used to query the status or wait for completion.
         Note: For GLOO backend, the received tensor will be on CPU and needs to be moved back to CUDA after wait().
     '''
-    if not isinstance(group, torch.distributed.ProcessGroup):
-        if isinstance(group, (list, np.ndarray)):
-            group = _PARALLEL_STATE.get_process_group_obj(group)
-        else:
-            group = None
-    
     original_device = tensor.device
     # For GLOO backend, we need to receive on CPU
     if _BACKEND == 'gloo':
         tensor = tensor.cpu()
         
     req = torch.distributed.irecv(tensor, src=src, tag=tag, group=group)
+    print("received tensor from ", src)
     
     if _BACKEND == 'gloo':
         # Create a wrapper around the request that moves tensor back to original device after completion
@@ -273,6 +278,7 @@ def irecv(tensor: torch.Tensor, src: int, tag: int = 0, group: Optional[torch.di
         req.wait = wait_and_move
     
     return req
+
 
 def cleanup_parallel_state(wait: Optional[float] = None):
     '''

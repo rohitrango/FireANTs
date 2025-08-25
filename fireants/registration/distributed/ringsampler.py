@@ -5,6 +5,8 @@ from fireants.registration.distributed import parallel_state
 import logging
 logger = logging.getLogger(__name__)
 
+from fireants.interpolator.fused_grid_sample import fused_grid_sampler_3d_backward
+
 def get_affine_rescaling_ringsampler(min_img_coords: torch.Tensor, max_img_coords: torch.Tensor, image_size: Optional[torch.Tensor] = None, align_corners: bool = True) -> torch.Tensor:
     '''
     We need to compute ---- s @ (Ax + u)
@@ -125,10 +127,6 @@ def distributed_grid_sampler_3d(
     # sample image
     ret_image = fireants_interpolator(image, affine=scaled_affine, grid=scaled_disp, mode=mode, padding_mode='zeros', min_coords=min_coords, max_coords=max_coords, align_corners=align_corners, is_displacement=is_displacement)
 
-    # fetch from the previous rank
-    # prev_rank = gp_group[local_rank - 1]
-    # next_rank = gp_group[(local_rank + 1) % gp_size]
-
     # prepare variables to send 
     send_sharded_image = image
     send_sharded_size = torch.tensor(list(image.shape), device=image.device)
@@ -165,6 +163,155 @@ def distributed_grid_sampler_3d(
 
     return ret_image
         
+def zeros_like_or_none(tensor: torch.Tensor) -> torch.Tensor:
+    '''
+    Return a tensor of the same shape and type as the input tensor, but with all elements set to 0.
+    If the input tensor is None, return None.
+    '''
+    if tensor is None:
+        return None
+    return torch.zeros_like(tensor)
+
+def add_and_empty(tensor: Optional[torch.Tensor], buf: Optional[torch.Tensor]):
+    '''
+    Add the buffer to the tensor and empty the buffer.
+    If the tensor is None, do nothing.
+    If the buffer is None, do nothing.
+    '''
+    if tensor is None:
+        if buf is not None:
+            raise AssertionError("tensor is None but buf is not None")
+        return
+    tensor.add_(buf)
+    buf.zero_()
+
+def recalibrate_affine_grad(grad_affine_buf: torch.Tensor, scale_factor: torch.Tensor):
+    '''
+    Recalibrate the affine gradient.
+    '''
+    _, s1, s2 = grad_affine_buf.shape
+    grad_affine_buf.data.copy_((scale_factor @ make_homogenous(grad_affine_buf))[:, :s1, :s2])
+
+def recalibrate_grid_grad(grad_grid_buf: torch.Tensor, scale_factor: torch.Tensor):
+    '''
+    Recalibrate the grid gradient.
+    '''
+    dims = grad_grid_buf.shape[-1]
+    aff = scale_factor[:, :3, :3]
+    grad_grid_buf.data.copy_(torch.einsum('bij,b...j->b...i', aff.permute(0, 2, 1), grad_grid_buf).contiguous()).contiguous()
+    
+
+@torch.no_grad
+def distributed_grid_sampler_3d_backward(grad_output, grad_image, grad_affine, grad_grid, image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement):
+    '''
+    Backward pass of the distributed grid sampler
+
+    This function computes gradients for the distributed grid sampler by following a ring-like pattern similar to the forward pass.
+    Each GPU computes gradients for its portion of the image and accumulates gradients for shared parameters (affine, grid).
+    '''
+    # Get rank and world size
+    rank = parallel_state.get_parallel_state().get_rank()
+    gp_group = parallel_state.get_parallel_state().get_current_gp_group()
+    gp_size = len(gp_group)
+    local_rank = gp_group.index(rank)
+
+    # Verify inputs
+    assert is_displacement, "is_displacement must be True"
+    assert mode in ['bilinear'], "only bilinear mode is supported"
+    assert min_coords is not None and max_coords is not None, "min_coords and max_coords must be provided"
+
+    # Get base image and compute scale factor
+    image_size = image.shape[-3:]
+    scale_factor = get_affine_rescaling_ringsampler(min_img_coords, max_img_coords, image_size, align_corners)
+    
+    # Scale affine and grid for our rank's portion
+    scaled_affine = scale_factor @ make_homogenous(affine) if affine is not None else scale_factor
+    scaled_affine = scaled_affine[:, :3, :].contiguous()  # (B, 3, 4)
+    scaled_disp = torch.einsum('bij,b...j->b...i', scale_factor[:, :3, :3], grid).contiguous()
+
+    # Compute gradients for our rank's portion
+    grad_image_buf, grad_affine_buf, grad_grid_buf = zeros_like_or_none(grad_image), zeros_like_or_none(grad_affine), zeros_like_or_none(grad_grid)
+    # breakpoint()
+    fused_grid_sampler_3d_backward(
+        grad_output, 
+        grad_image_buf, grad_affine_buf, grad_grid_buf, 
+        image, scaled_affine, scaled_disp,
+        min_coords, max_coords,
+    )
+    recalibrate_affine_grad(grad_affine_buf, scale_factor)
+    recalibrate_grid_grad(grad_grid_buf, scale_factor)
+    add_and_empty(grad_image, grad_image_buf)
+    add_and_empty(grad_affine, grad_affine_buf)
+    add_and_empty(grad_grid, grad_grid_buf)
+
+    # Prepare variables for ring communication
+    send_sharded_image = image
+    send_sharded_size = torch.tensor(list(image.shape), device=image.device)
+    send_sharded_min_coords = min_img_coords
+    send_sharded_max_coords = max_img_coords
+    
+    # Variables to receive
+    recv_sharded_min_coords = torch.zeros_like(min_img_coords)
+    recv_sharded_max_coords = torch.zeros_like(max_img_coords)
+    recv_sharded_size = torch.zeros_like(send_sharded_size)
+
+    # Ring communication
+    for ring_id in range(1, gp_size):
+        # Get previous and next rank
+        prev_rank = gp_group[(local_rank - ring_id + gp_size) % gp_size]
+        next_rank = gp_group[(local_rank + ring_id) % gp_size]
+
+        # Exchange metadata
+        parallel_state.ring_collect_op(
+            send_tensors=[send_sharded_min_coords, send_sharded_max_coords, send_sharded_size],
+            recv_tensors=[recv_sharded_min_coords, recv_sharded_max_coords, recv_sharded_size],
+            src=prev_rank, dst=next_rank
+        )
+
+        # Create and exchange image tensor
+        recv_sharded_image = torch.zeros(recv_sharded_size.to(torch.long).tolist(), device=image.device, dtype=image.dtype)
+        parallel_state.ring_collect_op(
+            send_tensors=[send_sharded_image],
+            recv_tensors=[recv_sharded_image],
+            src=prev_rank, dst=next_rank
+        )
+
+        # Compute scale factor for received portion
+        scale_factor = get_affine_rescaling_ringsampler(recv_sharded_min_coords, recv_sharded_max_coords, recv_sharded_size, align_corners)
+        scaled_affine = scale_factor @ make_homogenous(affine) if affine is not None else scale_factor
+        scaled_affine = scaled_affine[:, :3, :].contiguous()
+        scaled_disp = torch.einsum('bij,b...j->b...i', scale_factor[:, :3, :3], grid).contiguous()
+
+        # init send buffer for image grad (since `recv_sharded_image` will always be a tensor)
+        if grad_image is not None:
+            grad_image_send_buf = zeros_like_or_none(recv_sharded_image)
+
+        # Compute gradients for received portion
+        fused_grid_sampler_3d_backward(
+            grad_output, 
+            grad_image_send_buf, grad_affine_buf, grad_grid_buf,
+            recv_sharded_image, scaled_affine, scaled_disp,
+            min_coords, max_coords
+        )
+        # recalibrate the grad_affine and grad_grid, and add them to the grad_affine and grad_grid tensors
+        recalibrate_affine_grad(grad_affine_buf, scale_factor)
+        recalibrate_grid_grad(grad_grid_buf, scale_factor)
+        add_and_empty(grad_affine, grad_affine_buf)
+        add_and_empty(grad_grid, grad_grid_buf)
+
+        # if grad_image is not None, send this using ring_collect_op and then add it to the grad_image
+        if grad_image is not None:
+            parallel_state.ring_collect_op(
+                send_tensors=[grad_image_send_buf],
+                recv_tensors=[grad_image_buf],
+                src=next_rank, dst=prev_rank
+            )
+            add_and_empty(grad_image, grad_image_buf)
+        
+    # synchronize affine gradients
+    parallel_state.all_reduce_across_gp_ranks(grad_affine, op=torch.distributed.ReduceOp.SUM)
+
+
 # ***********************************************************
 # *************  Distributed Grid Sampler  ******************
 # ***********************************************************
@@ -173,12 +320,43 @@ class RingSampler3D(torch.autograd.Function):
     @staticmethod
     def forward(ctx, image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement):
         # 
-        ctx.save_for_backward(image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement)
+        ctx.save_for_backward(image, min_img_coords, max_img_coords, affine, grid,  min_coords, max_coords)
+        ctx.mode = mode
+        ctx.padding_mode = padding_mode
+        ctx.align_corners = align_corners
+        ctx.is_displacement = is_displacement
         return distributed_grid_sampler_3d(image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement)
     
     @staticmethod
     def backward(ctx, grad_output):
-        return None, None, None, None, None, None, None, None, None, None, None, None
+        # get the saved tensors
+        image, min_img_coords, max_img_coords, affine, grid, min_coords, max_coords = ctx.saved_tensors
+        mode, padding_mode, align_corners, is_displacement = ctx.mode, ctx.padding_mode, ctx.align_corners, ctx.is_displacement
+        # init grad tensors
+        grad_image, grad_affine, grad_grid = None, None, None
+        if image.requires_grad:
+            grad_image = torch.zeros_like(image)
+        if affine is not None and affine.requires_grad:
+            grad_affine = torch.zeros_like(affine)
+        if grid is not None and grid.requires_grad:
+            grad_grid = torch.zeros_like(grid)
+        
+        # check if grad flags are consistent across grid parallel group
+        gp_size = parallel_state.get_grid_parallel_size()
+        grad_flags = torch.tensor([x is not None for x in [grad_image, grad_affine, grad_grid]], device=image.device) * 1.0
+        parallel_state.all_reduce_across_gp_ranks(grad_flags, op=torch.distributed.ReduceOp.SUM)
+        grad_flags = grad_flags.int().cpu().tolist()
+        assert all([x == 0 or x == gp_size for x in grad_flags]), "all grad flags must be 0 or {}, but found {}".format(gp_size, grad_flags)
+
+        distributed_grid_sampler_3d_backward(grad_output, grad_image, grad_affine, grad_grid, image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement)
+        return grad_image, None, None, grad_affine, grad_grid, None, None, None, None, None, None
 
 
-ring_sampler_3d_fn = RingSampler3D.apply
+# ring_sampler_3d_fn = RingSampler3D.apply
+def ring_sampler_3d_fn(image, 
+                       min_img_coords, max_img_coords, affine, grid, 
+                       mode: str = 'bilinear', padding_mode: str = 'zeros', 
+                       align_corners: bool = True, 
+                       min_coords: tuple = None, max_coords: tuple = None, 
+                       is_displacement: bool = True):
+    return RingSampler3D.apply(image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement)

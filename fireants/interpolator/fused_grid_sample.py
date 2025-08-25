@@ -44,6 +44,27 @@ GRID_SAMPLE_PADDING_MODES = {
     "reflection": 2,
 }
 
+def fused_grid_sampler_3d_backward(
+        grad_output, 
+        grad_image, 
+        grad_affine, 
+        grad_grid, 
+        input, 
+        affine, 
+        grid, 
+        min_coords, 
+        max_coords, 
+        interpolation_mode="bilinear", 
+        padding_mode="zeros", 
+        align_corners=True, 
+        is_displacement=True
+):
+    '''
+    wrapped backward pass of the fused grid sampler for distributed grid sampler
+    '''
+    out_shape = grad_output.shape[2:]
+    ffo.fused_grid_sampler_3d_backward(input, affine, grid, grad_output, grad_image, grad_affine, grad_grid, out_shape[0], out_shape[1], out_shape[2], min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], is_displacement, GRID_SAMPLE_INTERPOLATION_MODES[interpolation_mode], GRID_SAMPLE_PADDING_MODES[padding_mode], align_corners)
+
 
 class FusedGridSampler3d(torch.autograd.Function):
     @staticmethod

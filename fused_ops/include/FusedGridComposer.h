@@ -34,4 +34,5 @@ torch::Tensor fused_grid_composer_3d_forward_impl(
     // interpolation is always bilinear
     // padding is always zeros
     // displacement is always True
-    bool align_corners);
+    bool align_corners,
+    std::optional<torch::Tensor> output);

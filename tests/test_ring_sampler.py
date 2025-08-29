@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+from time import time
 from fireants.registration.distributed.ring_sampler import distributed_grid_sampler_3d_fwd, fireants_ringsampler_interpolator
 from fireants.interpolator.fused_grid_sample import fused_grid_sampler_3d
 from fireants.registration.distributed import parallel_state as ps
@@ -135,6 +136,10 @@ def test_ring_sampler_3d(ring_sampler_env: RingSamplerTestEnv):
     affine_tensor[:3, :] = torch.from_numpy(affine)
     affine_tensor = affine_tensor.unsqueeze(0).contiguous()  # (1, 4, 4)
     
+    # Reset memory stats and measure baseline implementation
+    torch.cuda.reset_peak_memory_stats()
+    start = time()
+    
     # Run baseline fused grid sample
     baseline_output = fused_grid_sampler_3d(
         random_img.contiguous(),
@@ -145,6 +150,9 @@ def test_ring_sampler_3d(ring_sampler_env: RingSamplerTestEnv):
         align_corners=True,
         is_displacement=True
     )
+    torch.cuda.synchronize()
+    baseline_time = time() - start
+    baseline_memory = torch.cuda.max_memory_allocated() / 1024**2  # MB
     
     # Shard the image along spatial dim 0 (Z)
     shard_size = (img_size + ring_sampler_env.grid_parallel_size - 1) // ring_sampler_env.grid_parallel_size
@@ -197,6 +205,10 @@ def test_ring_sampler_3d(ring_sampler_env: RingSamplerTestEnv):
         logger.info("--------------------------------")
 
     
+    # Reset memory stats and measure distributed implementation
+    torch.cuda.reset_peak_memory_stats()
+    start = time()
+    
     # Run distributed grid sampler
     distributed_output = distributed_grid_sampler_3d_fwd(
         img_shard.contiguous(),
@@ -211,6 +223,9 @@ def test_ring_sampler_3d(ring_sampler_env: RingSamplerTestEnv):
         max_coords=grid_max_coords,
         is_displacement=True
     )
+    torch.cuda.synchronize()
+    distributed_time = time() - start
+    distributed_memory = torch.cuda.max_memory_allocated() / 1024**2  # MB
 
     logger.info(f"distributed_output shape: {distributed_output.shape}")
     
@@ -234,10 +249,23 @@ def test_ring_sampler_3d(ring_sampler_env: RingSamplerTestEnv):
     ps.all_reduce_across_gp_ranks(max_error, op=dist.ReduceOp.AVG)
     ps.all_reduce_across_gp_ranks(max_rel_error, op=dist.ReduceOp.AVG)
 
+    # Gather performance metrics across ranks
+    max_memory = torch.tensor([distributed_memory], device=ring_sampler_env.device)
+    max_time = torch.tensor([distributed_time], device=ring_sampler_env.device)
+    ps.all_reduce_across_gp_ranks(max_memory, op=dist.ReduceOp.MAX)
+    ps.all_reduce_across_gp_ranks(max_time, op=dist.ReduceOp.MAX)
+
     if ring_sampler_env.rank == 0:
         logger.info(f"Maximum relative error across ranks: {max_error.item()}")
         assert max_error.item() < 1e-5, f"Relative error {max_error.item()} is too large"
         assert max_rel_error.item() < 1e-3, f"Relative error {max_rel_error.item()} is too large"
+        
+        # Print performance metrics
+        logger.info("\nPerformance Metrics:")
+        logger.info(f"Time: {distributed_time:.4f}s (distributed) vs {baseline_time:.4f}s (baseline)")
+        logger.info(f"Memory per GPU: {distributed_memory:.2f}MB (distributed) vs {baseline_memory:.2f}MB (baseline)")
+        logger.info(f"Speedup: {baseline_time/distributed_time:.2f}x")
+        logger.info(f"Memory reduction per GPU: {(baseline_memory - distributed_memory)/baseline_memory*100:.2f}%")
     
 def test_ring_sampler_backward_3d(ring_sampler_env: RingSamplerTestEnv):
     """Test backward pass of ring sampler"""

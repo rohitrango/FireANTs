@@ -451,14 +451,16 @@ if __name__ == '__main__':
     ## batchify
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2, ])
-    reg = DistributedGreedyRegistration(scales=[12, 8, 4, 2, 1], iterations=[200, 200, 200, 100, 20], 
+    iterations = [200, 200, 200, 100, 20]
+    print(f"Using ring sampler: {bool(int(os.environ.get('USE_RING_SAMPLER', '0').lower()))}")
+    reg = DistributedGreedyRegistration(scales=[12, 8, 4, 2, 1], iterations=[20 for _ in range(5)], 
                                 cc_kernel_size=15,
                                 # smooth_grad_sigma=2.0,
                                 # smooth_warp_sigma=1.0,
                                 smooth_grad_sigma=0,
                                 smooth_warp_sigma=0,
                                 # loss_params={'use_ants_gradient': True},
-                                use_ring_sampler=True,
+                                use_ring_sampler=bool(int(os.environ.get('USE_RING_SAMPLER', '0').lower())),
                                 fixed_images=fixed, moving_images=moving, 
                                 optimizer='Adam', optimizer_lr=0.5, 
                                 loss_type='fusedmi')
@@ -469,6 +471,7 @@ if __name__ == '__main__':
     if rank == 0:
         tp = "ring" if reg.use_ring_sampler else "standard"
         torch.cuda.memory._dump_snapshot(f"memory_{tp}_{rank}.pkl")
+        print(f"saved to memory_{tp}_{rank}.pkl")
     
     torch.distributed.barrier()
 

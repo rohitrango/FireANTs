@@ -36,13 +36,15 @@ kernel_type_dict = {
 class MI_histogram_kernel(torch.autograd.Function):
     ''' custom op to compute kernel without creating parzen window table '''
     @staticmethod
-    def forward(ctx, input_img, target_img, num_bins, kernel_type):
+    def forward(ctx, input_img, target_img, num_bins, kernel_type, minval, maxval):
         # compute histograms
-        pab, pa, pb = ffo.mutual_information_histogram_fwd(input_img, target_img, num_bins, kernel_type)
+        pab, pa, pb = ffo.mutual_information_histogram_fwd(input_img, target_img, num_bins, kernel_type, minval, maxval)
         ctx.num_bins = num_bins
         ctx.kernel_type = kernel_type
         # save
         ctx.save_for_backward(input_img, target_img) 
+        ctx.minval = minval
+        ctx.maxval = maxval
         return pab, pa, pb
     
     @staticmethod
@@ -52,17 +54,20 @@ class MI_histogram_kernel(torch.autograd.Function):
         kernel_type = ctx.kernel_type
         grad_input = None
         grad_target = None
+        minval = ctx.minval
+        maxval = ctx.maxval
+
         if input_img.requires_grad:
             grad_input = torch.zeros_like(input_img)
         if target_img.requires_grad:
             grad_target = torch.zeros_like(target_img)
-        ffo.mutual_information_histogram_bwd(input_img, target_img, grad_pab, grad_pa, grad_pb, num_bins, grad_input, grad_target, kernel_type)
+        ffo.mutual_information_histogram_bwd(input_img, target_img, grad_pab, grad_pa, grad_pb, num_bins, grad_input, grad_target, kernel_type, minval, maxval)
         sample_size = input_img.flatten(2).shape[2]
         if grad_input is not None:
             grad_input.mul_(sample_size)
         if grad_target is not None:
             grad_target.mul_(sample_size)
-        return grad_input, grad_target, None, None
+        return grad_input, grad_target, None, None, None, None
 
 
 class FusedGlobalMutualInformationLoss(nn.Module):
@@ -138,10 +143,13 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         # check if we should normalize
         if normalize: 
             if self.normalize_image_if_required:
-                pred = (pred - minval) / (maxval - minval)
-                target = (target - minval) / (maxval - minval)
+                # pred = (pred - minval) / (maxval - minval)
+                # target = (target - minval) / (maxval - minval)
+                pass  # we will pass these values in the kernel
             else:
                 raise ValueError("Image values are expected to be in the range [0, 1] - please set normalize_image_if_required to True or scale the images to [0, 1] before feeding them to the loss")
+        else:
+            minval, maxval = 0.0, 1.0 # no need to normalize
 
         # check if shapes are same
         if target.shape != pred.shape:
@@ -152,7 +160,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
             pred, target = target, pred
         
         # get histograms
-        pab, pa, pb = MI_histogram_kernel.apply(pred, target, self.num_bins, self.kernel_type)
+        pab, pa, pb = MI_histogram_kernel.apply(pred, target, self.num_bins, self.kernel_type, minval, maxval)
 
         if self.world_size is not None and self.world_size > 1:
             pab, pa, pb = allgather_mi.apply(pab, pa, pb, pred.flatten(2).shape[2])

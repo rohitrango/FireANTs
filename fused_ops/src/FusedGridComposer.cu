@@ -231,7 +231,7 @@ __global__ void fused_grid_composer_3d_forward_kernel(
             if (within_bounds_3d(iz_bse, iy_bse, ix_bse, Di, Hi, Wi)) {
                 out_acc += inp_ptr_NC[3 * (ix_bse + Wi * (iy_bse + Hi * iz_bse))] * bse;
             }
-            *out_ptr_NCDHW = out_acc;
+            *out_ptr_NCDHW += out_acc;
         }
     }
 }
@@ -537,7 +537,8 @@ torch::Tensor fused_grid_composer_3d_forward_impl(
     // interpolation is always bilinear
     // padding is always zeros
     // displacement is always True
-    bool align_corners) {
+    bool align_corners,
+    std::optional<torch::Tensor> output) {
 
     int64_t D, H, W;
     TORCH_CHECK(input.dim() == 5, "input must be 5D");
@@ -601,7 +602,16 @@ torch::Tensor fused_grid_composer_3d_forward_impl(
     // define output
     int64_t N = batch_size_max;
     // specify output
-    torch::Tensor output = torch::zeros({batch_size_max, D, H, W, 3}, input.options());
+    if (output.has_value()) {
+        TORCH_CHECK(output.value().is_contiguous(), "output must be contiguous");
+        TORCH_CHECK(output.value().size(4) == 3, "output must have 3 channels");
+        TORCH_CHECK(output.value().device().is_cuda(), "output must be on CUDA");
+        TORCH_CHECK(output.value().device() == input.device(), "output must be on the same device as input");
+    } else {
+        output.emplace(torch::zeros({batch_size_max, D, H, W, 3}, input.options()));
+    }
+
+    // torch::Tensor output = torch::zeros({batch_size_max, D, H, W, 3}, input.options());
     // input size parameters
     int64_t count = N * D * H * W;
     // input spatial size parameters
@@ -615,7 +625,7 @@ torch::Tensor fused_grid_composer_3d_forward_impl(
         input.scalar_type(), "fused_grid_composer_3d_forward_kernel", [&] {
             // check if grid is 32-bit
             if (canUse32BitIndexMath(input) && canUse32BitIndexMath(grid) &&
-                canUse32BitIndexMath(output)) {
+                canUse32BitIndexMath(output.value())) {
                 fused_grid_composer_3d_forward_kernel<scalar_t>
                 <<<GET_BLOCKS(count, 512), 512, 0, stream>>>(
                     static_cast<int>(count),
@@ -626,7 +636,7 @@ torch::Tensor fused_grid_composer_3d_forward_impl(
                     static_cast<int>(D), static_cast<int>(H), static_cast<int>(W),
                     grid_xmin, grid_ymin, grid_zmin, grid_xmax, grid_ymax, grid_zmax,
                     // output
-                    output.data_ptr<scalar_t>(),
+                    output.value().data_ptr<scalar_t>(),
                     align_corners,
                     broadcast_input,
                     broadcast_affine_3d,
@@ -643,7 +653,7 @@ torch::Tensor fused_grid_composer_3d_forward_impl(
                     N, Di, Hi, Wi,
                     D, H, W,
                     grid_xmin, grid_ymin, grid_zmin, grid_xmax, grid_ymax, grid_zmax,
-                    output.data_ptr<scalar_t>(),
+                    output.value().data_ptr<scalar_t>(),
                     align_corners,
                     broadcast_input,
                     broadcast_affine_3d,
@@ -653,7 +663,7 @@ torch::Tensor fused_grid_composer_3d_forward_impl(
             }
         });
     }
-    return output;
+    return output.value();
 }
 
 void fused_grid_composer_3d_backward_impl(

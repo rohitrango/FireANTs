@@ -159,7 +159,7 @@ class FusedGridSampler3d(torch.autograd.Function):
 
 class FusedWarpComposer3d(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input, affine, grid, align_corners, min_coords, max_coords):
+    def forward(ctx, input, affine, grid, align_corners, min_coords, max_coords, output):
         # check input sizes
         '''
         input: [B, Z, Y, X, 3]
@@ -178,7 +178,7 @@ class FusedWarpComposer3d(torch.autograd.Function):
         if max_coords is None:
             max_coords = get_max_coords3d(Z, Y, X, align_corners)
         # get output
-        output = ffo.fused_grid_composer_3d_forward(input, affine, grid, min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], align_corners)
+        output = ffo.fused_grid_composer_3d_forward(input, affine, grid, min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], align_corners, output)
         # save everything for backward
         ctx.save_for_backward(input, affine, grid)
         ctx.align_corners = align_corners
@@ -310,6 +310,7 @@ def fused_warp_composer_3d(
     min_coords: Optional[torch.Tensor] = None,
     max_coords: Optional[torch.Tensor] = None,
     grid: Optional[torch.Tensor] = None,
+    output: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Computes u \circ (Ax + v)
@@ -326,7 +327,9 @@ def fused_warp_composer_3d(
     assert u.is_contiguous(), "input must be contiguous"
     assert affine is None or affine.is_contiguous(), "affine must be contiguous"
     assert v.is_contiguous(), "grid must be contiguous"    
-    output = FusedWarpComposer3d.apply(u, affine, v, align_corners, min_coords, max_coords)
+    if output is not None:
+        assert output.is_contiguous(), "output must be contiguous"
+    output = FusedWarpComposer3d.apply(u, affine, v, align_corners, min_coords, max_coords, output)
     return output
 
 def fused_affine_warp_3d(

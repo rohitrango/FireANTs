@@ -84,9 +84,12 @@ __global__ void mutual_information_histogram_bwd_kernel_basic(
     scalar_t* __restrict__ input_img, scalar_t* __restrict__ target_img, 
     scalar_t* __restrict__ grad_pab, scalar_t* __restrict__ grad_pa, scalar_t* __restrict__ grad_pb,
     scalar_t* __restrict__ grad_input_img, scalar_t* __restrict__ grad_target_img,
-    index_t batch_size, index_t channels, index_t num_bins, index_t num_samples, KernelType kernel_type
+    index_t batch_size, index_t channels, index_t num_bins, index_t num_samples, KernelType kernel_type, float minval, float maxval
 ) {
     using opmath_t = at::opmath_type<scalar_t>;
+
+    opmath_t minval_op = static_cast<opmath_t>(minval);
+    opmath_t maxval_op = static_cast<opmath_t>(maxval);
     
     // Shared memory for grad_pa, grad_pb and kernel values
     __shared__ opmath_t shared_grad_pa[BLOCKSIZE_3D];
@@ -118,6 +121,9 @@ __global__ void mutual_information_histogram_bwd_kernel_basic(
         // load I_k and J_k
         opmath_t Ik = static_cast<opmath_t>(input_img[sample_idx + num_samples * (c_idx + channels * b_idx)]);
         opmath_t Jk = static_cast<opmath_t>(target_img[sample_idx + num_samples * (c_idx + channels * b_idx)]);
+        // normalize
+        Ik = (Ik - minval_op) / (maxval_op - minval_op);
+        Jk = (Jk - minval_op) / (maxval_op - minval_op);
 
         // compute grad and kernel values
         shared_prob_pa[threadIdx.x] = prob_func(Ik, bin_idx, num_bins, kernel_type);
@@ -206,7 +212,7 @@ __global__ void mutual_information_histogram_bwd_kernel_basic(
     }
 }
 
-void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &target_img, torch::Tensor &grad_pab, torch::Tensor &grad_pa, torch::Tensor &grad_pb, int num_bins, torch::Tensor &grad_input_img, std::optional<torch::Tensor> &grad_target_img, KernelType kernel_type) {
+void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &target_img, torch::Tensor &grad_pab, torch::Tensor &grad_pa, torch::Tensor &grad_pb, int num_bins, torch::Tensor &grad_input_img, std::optional<torch::Tensor> &grad_target_img, KernelType kernel_type, float minval, float maxval) {
     // input image: [batch_size, n_channels, *]
     // target_image: [batch_size, n_channels, *]
     // grad_pab: [batch_size, channels, num_bins, num_bins]
@@ -267,7 +273,8 @@ void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &t
                 static_cast<int>(channels),
                 static_cast<int>(num_bins),
                 static_cast<int>(num_samples),
-                kernel_type
+                kernel_type,
+                minval, maxval
             );
         } else {
             mutual_information_histogram_bwd_kernel_basic<<<gridSize, blockSize, 0, stream>>>(
@@ -282,7 +289,8 @@ void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &t
                 static_cast<int64_t>(channels),
                 static_cast<int64_t>(num_bins),
                 static_cast<int64_t>(num_samples),
-                kernel_type
+                kernel_type,
+                minval, maxval
             );
         }
         C10_CUDA_KERNEL_LAUNCH_CHECK();
@@ -300,7 +308,8 @@ void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &t
 template <typename scalar_t, typename index_t>
 __global__ void mutual_information_histogram_fwd_kernel_basic(
     scalar_t* __restrict__ input_img, scalar_t* __restrict__ target_img, int64_t* __restrict__ pab, int64_t* __restrict__ pa, int64_t* __restrict__ pb,
-    index_t batch_size, index_t channels, index_t num_aggregates, index_t num_bins, index_t num_samples
+    index_t batch_size, index_t channels, index_t num_aggregates, index_t num_bins, index_t num_samples, 
+    float minval, float maxval
 ) {
     using opmath_t = at::opmath_type<scalar_t>;
 
@@ -310,13 +319,19 @@ __global__ void mutual_information_histogram_fwd_kernel_basic(
     index_t ch_idx = (id / num_aggregates) % channels;
     index_t b_idx = (id / (num_aggregates * channels)) % batch_size;
 
+    opmath_t minval_op = static_cast<opmath_t>(minval);
+    opmath_t maxval_op = static_cast<opmath_t>(maxval);
+
     // index
     index_t pa_idx = num_bins * (agg_idx + num_aggregates * (ch_idx + channels * b_idx));  // [b, c, agg, ?]
     
     for (index_t n = agg_idx; n < num_samples; n += num_aggregates) {
         // load i and j
-        scalar_t iimg = input_img[b_idx * channels * num_samples + ch_idx * num_samples + n];
-        scalar_t jimg = target_img[b_idx * channels * num_samples + ch_idx * num_samples + n];
+        opmath_t iimg = static_cast<opmath_t>(input_img[b_idx * channels * num_samples + ch_idx * num_samples + n]);
+        opmath_t jimg = static_cast<opmath_t>(target_img[b_idx * channels * num_samples + ch_idx * num_samples + n]);
+        // normalize
+        iimg = (iimg - minval_op) / (maxval_op - minval_op);
+        jimg = (jimg - minval_op) / (maxval_op - minval_op);
 
         // compute bin indices
         index_t i_bin_idx = static_cast<index_t>(::floor(iimg * num_bins));
@@ -334,7 +349,7 @@ __global__ void mutual_information_histogram_fwd_kernel_basic(
 }
 
 
-std::vector<torch::Tensor> mutual_information_histogram_fwd(torch::Tensor &input_img, torch::Tensor &target_img, int num_bins, KernelType kernel_type) {
+std::vector<torch::Tensor> mutual_information_histogram_fwd(torch::Tensor &input_img, torch::Tensor &target_img, int num_bins, KernelType kernel_type, float minval, float maxval) {
     // input image: [batch_size, n_channels, *]
     // target image: [batch_size, n_channels, *]
     // num_bins: int
@@ -399,7 +414,8 @@ std::vector<torch::Tensor> mutual_information_histogram_fwd(torch::Tensor &input
                 static_cast<int>(channels),
                 static_cast<int>(num_aggregates),
                 static_cast<int>(num_bins),
-                static_cast<int>(num_samples)
+                static_cast<int>(num_samples),
+                minval, maxval
             );
             C10_CUDA_KERNEL_LAUNCH_CHECK();
         }
@@ -414,7 +430,8 @@ std::vector<torch::Tensor> mutual_information_histogram_fwd(torch::Tensor &input
                 static_cast<int64_t>(channels),
                 static_cast<int64_t>(num_aggregates),
                 static_cast<int64_t>(num_bins),
-                static_cast<int64_t>(num_samples)
+                static_cast<int64_t>(num_samples),
+                minval, maxval
             );
             C10_CUDA_KERNEL_LAUNCH_CHECK();
         }

@@ -150,6 +150,7 @@ def torch_warp_composer_2d(
     v: torch.Tensor = None,
     align_corners: bool = True,
     grid: Optional[torch.Tensor] = None,
+    output: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Baseline implementation of 3D grid sampler that handles:
@@ -176,7 +177,13 @@ def torch_warp_composer_2d(
         if affine is None:
             affine = torch.eye(2, 3, device=u.device)[None].expand(B, -1, -1)
         grid = F.affine_grid(affine, [B, 1] + list(v.shape[1:-1]), align_corners=align_corners)
-    return F.grid_sample(u.permute(0, 3, 1, 2), grid + v, mode=mode, padding_mode=padding_mode, align_corners=align_corners).permute(0, 2, 3, 1)
+    ret = F.grid_sample(u.permute(0, 3, 1, 2), grid + v, mode=mode, padding_mode=padding_mode, align_corners=align_corners).permute(0, 2, 3, 1)
+    # add inplace if specified (adam update step)
+    if output is not None:
+        output.add_(ret)
+    else:
+        output = ret
+    return output
 
 def torch_warp_composer_3d(
     u: torch.Tensor,
@@ -184,6 +191,7 @@ def torch_warp_composer_3d(
     v: torch.Tensor = None,
     align_corners: bool = True,
     grid: Optional[torch.Tensor] = None,
+    output: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     
@@ -207,7 +215,12 @@ def torch_warp_composer_3d(
         if affine is None:
             affine = torch.eye(3, 4, device=u.device)[None].expand(B, -1, -1)
         grid = F.affine_grid(affine, [B, 1] + list(v.shape[1:-1]), align_corners=align_corners)
-    return F.grid_sample(u.permute(0, 4, 1, 2, 3), grid + v, mode=mode, padding_mode=padding_mode, align_corners=align_corners).permute(0, 2, 3, 4, 1)
+    ret = F.grid_sample(u.permute(0, 4, 1, 2, 3), grid + v, mode=mode, padding_mode=padding_mode, align_corners=align_corners).permute(0, 2, 3, 4, 1)
+    if output is not None:  
+        output.add_(ret)
+    else:
+        output = ret
+    return output
 
 def torch_affine_warp_3d(
     affine: Optional[torch.Tensor],

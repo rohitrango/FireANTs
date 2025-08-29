@@ -48,7 +48,7 @@ PYBIND11_MODULE(fireants_fused_ops, m) {
     // grid composer utils
     m.def("fused_grid_composer_3d_forward", &fused_grid_composer_3d_forward_impl, "Forward pass for fused grid composer",
         py::arg("input"), py::arg("affine_3d"), py::arg("grid"), py::arg("grid_xmin"), py::arg("grid_ymin"), py::arg("grid_zmin"), py::arg("grid_xmax"), py::arg("grid_ymax"), py::arg("grid_zmax"),
-        py::arg("align_corners"));
+        py::arg("align_corners"), py::arg("output"));
 
     m.def("fused_grid_composer_3d_backward", &fused_grid_composer_3d_backward_impl, "Backward pass for fused grid composer",
         py::arg("input"), py::arg("affine_3d"), py::arg("grid"), py::arg("grad_output"), py::arg("grad_input"), py::arg("grad_affine"), py::arg("grad_grid"),
@@ -71,8 +71,8 @@ PYBIND11_MODULE(fireants_fused_ops, m) {
     m.def("gaussian_blur_fft3", &gaussian_blur_fft3, "Gaussian blur in fft space",
         py::arg("im_fft"), py::arg("zs"), py::arg("ys"), py::arg("xs"), py::arg("ze"), py::arg("ye"), py::arg("xe"), py::arg("multiplier"));
     
-    m.def("mutual_information_histogram_fwd", &mutual_information_histogram_fwd, "Mutual information histogram forward", py::arg("input_img"), py::arg("target_img"), py::arg("num_bins"), py::arg("kernel_type") = KernelType::GAUSSIAN);
+    m.def("mutual_information_histogram_fwd", &mutual_information_histogram_fwd, "Mutual information histogram forward", py::arg("input_img"), py::arg("target_img"), py::arg("num_bins"), py::arg("kernel_type") = KernelType::GAUSSIAN, py::arg("minval") = 0.0, py::arg("maxval") = 1.0);
 
-    m.def("mutual_information_histogram_bwd", &mutual_information_histogram_bwd, "Mutual information histogram backward", py::arg("input_img"), py::arg("target_img"), py::arg("grad_pab"), py::arg("grad_pa"), py::arg("grad_pb"), py::arg("num_bins"), py::arg("grad_input_img"), py::arg("grad_target_img"), py::arg("kernel_type") = KernelType::GAUSSIAN);
+    m.def("mutual_information_histogram_bwd", &mutual_information_histogram_bwd, "Mutual information histogram backward", py::arg("input_img"), py::arg("target_img"), py::arg("grad_pab"), py::arg("grad_pa"), py::arg("grad_pb"), py::arg("num_bins"), py::arg("grad_input_img"), py::arg("grad_target_img"), py::arg("kernel_type") = KernelType::GAUSSIAN, py::arg("minval") = 0.0, py::arg("maxval") = 1.0);
 
 }

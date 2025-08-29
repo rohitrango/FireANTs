@@ -30,7 +30,6 @@ from fireants.tests.cc_mem_test import fast_lncc
 import itertools
 import logging
 logger = logging.getLogger(__name__)
-torch.backends.cudnn.benchmark = True
 
 MAX_INT32_NUMEL = 2**31 - 1
 

@@ -21,7 +21,6 @@ import torch
 from torch.utils.checkpoint import checkpoint
 from torch import nn
 from torch.nn import functional as F
-torch.backends.cudnn.benchmark = True
 from typing import List
 from fireants.types import ItemOrList
 

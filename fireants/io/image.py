@@ -350,9 +350,9 @@ class BatchedImages:
         # check 
         start = sum(chunk_sizes[:local_rank])
         end = sum(chunk_sizes[:local_rank+1])
-        # store the full tensor into batch_tensor_full, and sharded version in 
-        self.batch_tensor_full = self.batch_tensor
-        self.batch_tensor = self.batch_tensor_full.narrow_copy(dim_to_shard+2, start, end-start)
+        # store the full tensor into batch_tensor_full, and sharded version in unshareded
+        self.batch_tensor_full = self.batch_tensor.clone()
+        self.batch_tensor = self.batch_tensor_full.narrow_copy(dim_to_shard+2, start, end-start).clone()
         print(f"Sharded batch tensor shape: {self.batch_tensor.shape} and rank: {local_rank}/{gp_size}, rank: {rank}")
         self._shard_start = start
         self._shard_end = end

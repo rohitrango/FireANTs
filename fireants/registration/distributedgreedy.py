@@ -23,8 +23,6 @@ from tqdm import tqdm
 import SimpleITK as sitk
 import fireants_fused_ops as ffo  # required
 
-torch.backends.cudnn.benchmark = True
-
 # distributed
 import torch.distributed as dist
 import os
@@ -453,17 +451,26 @@ if __name__ == '__main__':
     ## batchify
     fixed = BatchedImages([img1, ])
     moving = BatchedImages([img2, ])
-    reg = DistributedGreedyRegistration(scales=[12, 8, 4, 2, 1], iterations=[200, 200, 200, 100, 50], 
+    reg = DistributedGreedyRegistration(scales=[12, 8, 4, 2, 1], iterations=[200, 200, 200, 100, 20], 
                                 cc_kernel_size=15,
-                                smooth_grad_sigma=2.0,
-                                smooth_warp_sigma=1.0,
-                                loss_params={'use_ants_gradient': True},
+                                # smooth_grad_sigma=2.0,
+                                # smooth_warp_sigma=1.0,
+                                smooth_grad_sigma=0,
+                                smooth_warp_sigma=0,
+                                # loss_params={'use_ants_gradient': True},
+                                use_ring_sampler=True,
                                 fixed_images=fixed, moving_images=moving, 
-                                optimizer='Adam', optimizer_lr=0.5, loss_type='fusedcc')
+                                optimizer='Adam', optimizer_lr=0.5, 
+                                loss_type='fusedmi')
+                                # loss_type='fusedcc')
     reg.optimize()
     print(f"Optimized from rank {rank}")
 
-    torch.cuda.memory._dump_snapshot(f"memory_snapshot_{rank}.pkl")
+    if rank == 0:
+        tp = "ring" if reg.use_ring_sampler else "standard"
+        torch.cuda.memory._dump_snapshot(f"memory_{tp}_{rank}.pkl")
+    
+    torch.distributed.barrier()
 
     # get moved image
     # print("Gathering moved image")

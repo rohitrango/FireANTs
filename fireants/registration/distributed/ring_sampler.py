@@ -19,7 +19,7 @@ from fireants.interpolator import fireants_interpolator
 from fireants.registration.distributed import parallel_state
 import logging
 logger = logging.getLogger(__name__)
-
+from torch.autograd.function import once_differentiable
 from fireants.interpolator.fused_grid_sample import fused_grid_sampler_3d_backward
 
 def get_affine_rescaling_ringsampler(min_img_coords: torch.Tensor, max_img_coords: torch.Tensor, image_size: Optional[torch.Tensor] = None, align_corners: bool = True) -> torch.Tensor:
@@ -82,7 +82,7 @@ def make_homogenous(affine: torch.Tensor) -> torch.Tensor:
         raise ValueError('Invalid affine shape: {}'.format(affine.shape))
 
 
-@torch.no_grad
+@torch.no_grad()
 def distributed_grid_sampler_3d_fwd(
     image: torch.Tensor,
     min_img_coords: torch.Tensor,
@@ -153,8 +153,6 @@ def distributed_grid_sampler_3d_fwd(
     recv_sharded_max_coords = torch.zeros_like(max_img_coords)
     recv_sharded_size = torch.zeros_like(send_sharded_size)
 
-    print(f"affine = {scale_factor @ make_homogenous(affine)}, rank = {rank}")
-
     for ring_id in range(1, gp_size):
         # get the previous and next rank according to ring id size
         prev_rank = gp_group[(local_rank - ring_id + gp_size) % gp_size]
@@ -221,7 +219,7 @@ def recalibrate_grid_grad(grad_grid_buf: torch.Tensor, scale_factor: torch.Tenso
     grad_grid_buf.data.copy_(torch.einsum('bij,b...j->b...i', aff.permute(0, 2, 1), grad_grid_buf).contiguous()).contiguous()
     
 
-@torch.no_grad
+@torch.no_grad()
 def distributed_grid_sampler_3d_bwd(grad_output, grad_image, grad_affine, grad_grid, image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement):
     '''
     Backward pass of the distributed grid sampler
@@ -342,7 +340,7 @@ class RingSampler3D(torch.autograd.Function):
     @staticmethod
     def forward(ctx, image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement):
         # 
-        ctx.save_for_backward(image, min_img_coords, max_img_coords, affine, grid,  min_coords, max_coords)
+        ctx.save_for_backward(image, min_img_coords, max_img_coords, affine, grid, min_coords, max_coords)
         ctx.mode = mode
         ctx.padding_mode = padding_mode
         ctx.align_corners = align_corners
@@ -350,6 +348,7 @@ class RingSampler3D(torch.autograd.Function):
         return distributed_grid_sampler_3d_fwd(image, min_img_coords, max_img_coords, affine, grid, mode, padding_mode, align_corners, min_coords, max_coords, is_displacement)
     
     @staticmethod
+    @once_differentiable
     def backward(ctx, grad_output):
         # get the saved tensors
         image, min_img_coords, max_img_coords, affine, grid, min_coords, max_coords = ctx.saved_tensors
@@ -378,6 +377,7 @@ def list_to_tensor(x):
     if isinstance(x, (list, tuple)):
         return torch.tensor(x, device=torch.cuda.current_device())
     return x
+
 
 def fireants_ringsampler_interpolator(image, affine=None, grid=None, mode='bilinear', padding_mode='zeros', align_corners=True, is_displacement=True, min_coords=None, max_coords=None, min_img_coords=None, max_img_coords=None):
     dims = len(image.shape) - 2

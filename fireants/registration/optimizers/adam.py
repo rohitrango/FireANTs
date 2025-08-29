@@ -23,7 +23,6 @@ from fireants.interpolator import fireants_interpolator
 from fireants.registration.distributed.utils import add_distributed_padding, crop_distributed_padding
 import logging
 logger = logging.getLogger(__name__)
-torch.backends.cudnn.benchmark = True
 from fireants.registration.distributed import parallel_state
 
 def adam_update_fused(grad, exp_avg, exp_avg_sq, beta1, beta2, eps):

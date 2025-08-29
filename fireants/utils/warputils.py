@@ -27,7 +27,6 @@ from fireants.io.image import BatchedImages, Image
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.types import ItemOrList
 
-from fireants.registration.greedy import GreedyRegistration
 from fireants.interpolator import fireants_interpolator
 
 ## Will contain standard warp processing functions
@@ -122,6 +121,7 @@ def shape_averaging_invwarp(
     ''' 
     Optimize the warp using the template image and the reference warp
     '''
+    from fireants.registration.greedy import GreedyRegistration
     reg = GreedyRegistration( 
         scales=scales,
         iterations=iterations,
@@ -162,6 +162,7 @@ def compositive_warp_inverse(image: BatchedImages, ref_disp: torch.Tensor,
     '''
     Utility to compute the inverse of a compositive warp
     '''
+    from fireants.registration.greedy import GreedyRegistration
     reg = GreedyRegistration( 
         scales=scales,
         iterations=iterations,

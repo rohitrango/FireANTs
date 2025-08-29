@@ -14,7 +14,6 @@ import itertools
 import json
 import matplotlib.pyplot as plt
 import numpy as np
-torch.backends.cudnn.benchmark = True
 
 def test_affine_crosscorrelation(fused_ops, fused_cc, fixed_image_path, moving_image_path, fixed_seg_path=None, moving_seg_path=None,
                                  iterations=[250, 100, 50]):

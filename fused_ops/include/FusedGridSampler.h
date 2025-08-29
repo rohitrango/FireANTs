@@ -6,6 +6,8 @@ torch::Tensor fused_grid_sampler_3d_forward_impl(
     const torch::Tensor &input, 
     const std::optional<torch::Tensor> affine_3d,
     const std::optional<torch::Tensor> grid,
+    const std::optional<torch::Tensor> grid_affine,
+    std::optional<torch::Tensor> output,
     const int64_t out_D,
     const int64_t out_H,
     const int64_t out_W,
@@ -23,6 +25,7 @@ void fused_grid_sampler_3d_backward_impl(
     const torch::Tensor &input, 
     const std::optional<torch::Tensor> affine_3d,
     const std::optional<torch::Tensor> grid,
+    const std::optional<torch::Tensor> grid_affine,
     /* we need grad_output, grad_input, grad_affine, grad_grid, some may be empty or zeros */
     const torch::Tensor &grad_output,
     const std::optional<torch::Tensor> &grad_input,

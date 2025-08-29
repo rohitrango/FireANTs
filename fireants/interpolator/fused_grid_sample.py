@@ -67,6 +67,7 @@ def fused_grid_sampler_3d_backward(
         input, 
         affine, 
         grid, 
+        grid_affine,
         min_coords, 
         max_coords, 
         interpolation_mode="bilinear", 
@@ -78,12 +79,12 @@ def fused_grid_sampler_3d_backward(
     wrapped backward pass of the fused grid sampler for distributed grid sampler
     '''
     out_shape = grad_output.shape[2:]
-    ffo.fused_grid_sampler_3d_backward(input, affine, grid, grad_output, grad_image, grad_affine, grad_grid, out_shape[0], out_shape[1], out_shape[2], min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], is_displacement, GRID_SAMPLE_INTERPOLATION_MODES[interpolation_mode], GRID_SAMPLE_PADDING_MODES[padding_mode], align_corners)
+    ffo.fused_grid_sampler_3d_backward(input, affine, grid, grid_affine, grad_output, grad_image, grad_affine, grad_grid, out_shape[0], out_shape[1], out_shape[2], min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], is_displacement, GRID_SAMPLE_INTERPOLATION_MODES[interpolation_mode], GRID_SAMPLE_PADDING_MODES[padding_mode], align_corners)
 
 
 class FusedGridSampler3d(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input, affine, grid, interpolation_mode, padding_mode, align_corners, out_shape, min_coords, max_coords, is_displacement):
+    def forward(ctx, input, affine, grid, grid_affine, output, interpolation_mode, padding_mode, align_corners, out_shape, min_coords, max_coords, is_displacement):
         # check input sizes
         '''
         input: [B, C, Z, Y, X]
@@ -110,7 +111,7 @@ class FusedGridSampler3d(torch.autograd.Function):
             max_coords = get_max_coords3d(Z, Y, X, align_corners)
         # get output
         try:
-            output = ffo.fused_grid_sampler_3d_forward(input, affine, grid, Z, Y, X, min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], is_displacement, GRID_SAMPLE_INTERPOLATION_MODES[interpolation_mode], GRID_SAMPLE_PADDING_MODES[padding_mode], align_corners)
+            output = ffo.fused_grid_sampler_3d_forward(input, affine, grid, grid_affine, output, Z, Y, X, min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], is_displacement, GRID_SAMPLE_INTERPOLATION_MODES[interpolation_mode], GRID_SAMPLE_PADDING_MODES[padding_mode], align_corners)
         except Exception as e:
             print(f"Error in fused_grid_sampler_3d_forward: {e}")
             print(f"Input shape: {input.shape}, dtype: {input.dtype}, device: {input.device}")
@@ -118,7 +119,7 @@ class FusedGridSampler3d(torch.autograd.Function):
             print(f"Grid shape: {grid.shape}, dtype: {grid.dtype}, device: {grid.device}")
             raise e
         # save everything for backward
-        ctx.save_for_backward(input, affine, grid)
+        ctx.save_for_backward(input, affine, grid, grid_affine)
         ctx.interpolation_mode = interpolation_mode
         ctx.padding_mode = padding_mode
         ctx.align_corners = align_corners
@@ -130,7 +131,7 @@ class FusedGridSampler3d(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        input, affine, grid = ctx.saved_tensors
+        input, affine, grid, grid_affine = ctx.saved_tensors
         interpolation_mode = ctx.interpolation_mode
         padding_mode = ctx.padding_mode
         align_corners = ctx.align_corners
@@ -152,8 +153,8 @@ class FusedGridSampler3d(torch.autograd.Function):
         if grid_requires_grad:
             grid_grad = torch.zeros_like(grid)
         # call backward
-        ffo.fused_grid_sampler_3d_backward(input, affine, grid, grad_output, input_grad, affine_grad, grid_grad, out_shape[0], out_shape[1], out_shape[2], min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], is_displacement, GRID_SAMPLE_INTERPOLATION_MODES[interpolation_mode], GRID_SAMPLE_PADDING_MODES[padding_mode], align_corners)
-        return input_grad, affine_grad, grid_grad, None, None, None, None, None, None, None
+        ffo.fused_grid_sampler_3d_backward(input, affine, grid, grid_affine, grad_output, input_grad, affine_grad, grid_grad, out_shape[0], out_shape[1], out_shape[2], min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], is_displacement, GRID_SAMPLE_INTERPOLATION_MODES[interpolation_mode], GRID_SAMPLE_PADDING_MODES[padding_mode], align_corners)
+        return input_grad, affine_grad, grid_grad, None, None, None, None, None, None, None, None, None
 
 
 class FusedWarpComposer3d(torch.autograd.Function):
@@ -257,13 +258,15 @@ def fused_grid_sampler_3d(
     input: torch.Tensor,
     affine: Optional[torch.Tensor] = None,
     grid: Optional[torch.Tensor] = None,
+    grid_affine: Optional[torch.Tensor] = None,
     mode: str = "bilinear",
     padding_mode: str = "zeros",
     align_corners: bool = True,
     min_coords: Optional[tuple] = None,
     max_coords: Optional[tuple] = None,
     out_shape: tuple = None,
-    is_displacement: bool = True
+    is_displacement: bool = True,
+    output: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Baseline implementation of 3D grid sampler that handles:
@@ -296,7 +299,7 @@ def fused_grid_sampler_3d(
         out_shape = out_shape[-3:]
     else:
         out_shape = grid.shape[1:-1]
-    output = FusedGridSampler3d.apply(input, affine, grid, mode, padding_mode, align_corners, out_shape, min_coords, max_coords, is_displacement)
+    output = FusedGridSampler3d.apply(input, affine, grid, grid_affine, output, mode, padding_mode, align_corners, out_shape, min_coords, max_coords, is_displacement)
     return output
 
 def fused_warp_composer_3d(

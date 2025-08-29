@@ -76,11 +76,13 @@ def torch_grid_sampler_3d(
     input: torch.Tensor,
     affine: Optional[torch.Tensor] = None,
     grid: Optional[torch.Tensor] = None,
+    grid_affine: Optional[torch.Tensor] = None,
     mode: str = "bilinear",
     padding_mode: str = "zeros",
     align_corners: bool = True,
     out_shape: tuple = None,
-    is_displacement: bool = True
+    is_displacement: bool = True,
+    output: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Baseline implementation of 3D grid sampler that handles:
@@ -102,16 +104,30 @@ def torch_grid_sampler_3d(
         Sampled tensor of shape [B, C, Z, Y, X]
     """
     B, C, Z, Y, X = input.shape
-    
+
+
     # Case 1: Affine-only transformation
     if grid is None:
         if affine is None:
             raise ValueError("Either grid or affine must be provided")
         grid = F.affine_grid(affine, (B, C, *out_shape[-3:]), align_corners=align_corners)
-        return F.grid_sample(input, grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
+        ret = F.grid_sample(input, grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
+        if output is not None:
+            output.add_(ret)
+            return output
+        return ret
+    
+    # see if grid affine
+    if grid_affine is not None:
+        grid = torch.einsum('bij,b...j->b...i', grid_affine, grid)
+
     # Case 2: Full warp field
     if not is_displacement:
-        return F.grid_sample(input, grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
+        ret = F.grid_sample(input, grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
+        if output is not None:
+            output.add_(ret)
+            return output
+        return ret
     # Case 3: Displacement field
     out_shape = grid.shape[1:-1]
     # Create identity grid if no affine provided
@@ -121,7 +137,11 @@ def torch_grid_sampler_3d(
     base_grid = F.affine_grid(affine, (B, C, *out_shape[-3:]), align_corners=align_corners)
     # Add displacement
     base_grid = base_grid + grid
-    return F.grid_sample(input, base_grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
+    ret = F.grid_sample(input, base_grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
+    if output is not None:
+        output.add_(ret)
+        return output
+    return ret
 
 
 def torch_warp_composer_2d(

@@ -121,7 +121,7 @@ def test_ring_sampler_3d(ring_sampler_env: RingSamplerTestEnv):
     displacement = displacement.permute(0, 2, 3, 4, 1)  # [1, 196, 160, 224, 3]
     displacement = displacement.contiguous().to(ring_sampler_env.device)
     displacement = displacement * 0.1
-    print(f"displacement min: {displacement.min()}, max: {displacement.max()}, rank: {ring_sampler_env.rank}")
+    logger.info(f"displacement min: {displacement.min()}, max: {displacement.max()}, rank: {ring_sampler_env.rank}")
 
     # create PSD affine matrix
     rng = np.random.default_rng(411)
@@ -169,11 +169,11 @@ def test_ring_sampler_3d(ring_sampler_env: RingSamplerTestEnv):
     grid_start = ring_sampler_env.rank * grid_shard_size
     grid_end = min(grid_start + grid_shard_size, grid_shape[2])
 
-    print(f"img_start: {img_start}, img_end: {img_end}, rank: {ring_sampler_env.rank}, shard_size: {shard_size}, img_size: {img_size}")
-    print(f"grid_start: {grid_start}, grid_end: {grid_end}, rank: {ring_sampler_env.rank}, grid_shard_size: {grid_shard_size}, grid_shape: {grid_shape}")
+    logger.info(f"img_start: {img_start}, img_end: {img_end}, rank: {ring_sampler_env.rank}, shard_size: {shard_size}, img_size: {img_size}")
+    logger.info(f"grid_start: {grid_start}, grid_end: {grid_end}, rank: {ring_sampler_env.rank}, grid_shard_size: {grid_shard_size}, grid_shape: {grid_shape}")
     torch.distributed.barrier()
     if ring_sampler_env.rank == 0:
-        print()
+        logger.info("--------------------------------")
     
     grid_shard = displacement[:, :, grid_start:grid_end, :, :]
     y_min = -1.0 + 2.0 * (grid_start / (grid_shape[2] - 1.0))
@@ -194,7 +194,7 @@ def test_ring_sampler_3d(ring_sampler_env: RingSamplerTestEnv):
             logger.info(f"grid_min_coords shape: {grid_min_coords}, rank={ring_sampler_env.rank}")
             logger.info(f"grid_max_coords shape: {grid_max_coords}, rank={ring_sampler_env.rank}")
         torch.distributed.barrier()
-        print()
+        logger.info("--------------------------------")
 
     
     # Run distributed grid sampler
@@ -218,10 +218,10 @@ def test_ring_sampler_3d(ring_sampler_env: RingSamplerTestEnv):
     baseline_shard = baseline_output[:, :, :, grid_start:grid_end, :]
     assert baseline_shard.shape == distributed_output.shape, f"Baseline shard shape {baseline_shard.shape} does not match distributed output shape {distributed_output.shape}"
 
-    print(f"baseline_shard shape: {baseline_shard.shape}")
-    print(f"baseline min: {baseline_shard.min()}, max: {baseline_shard.max()}, rank: {ring_sampler_env.rank}")
-    print(f"distributed_output min: {distributed_output.min()}, max: {distributed_output.max()}, rank: {ring_sampler_env.rank}")
-    print()
+    logger.info(f"baseline_shard shape: {baseline_shard.shape}")
+    logger.info(f"baseline min: {baseline_shard.min()}, max: {baseline_shard.max()}, rank: {ring_sampler_env.rank}")
+    logger.info(f"distributed_output min: {distributed_output.min()}, max: {distributed_output.max()}, rank: {ring_sampler_env.rank}")
+    logger.info("--------------------------------")
     
     # Compute relative error
     # error = torch.norm(distributed_output - baseline_shard) 
@@ -230,12 +230,12 @@ def test_ring_sampler_3d(ring_sampler_env: RingSamplerTestEnv):
     # Use all_reduce to get max error across ranks
     max_error = torch.tensor([error], device=ring_sampler_env.device)
     max_rel_error = torch.tensor([rel_error], device=ring_sampler_env.device)
-    print(f"rank: {ring_sampler_env.rank}, max_error: {max_error}, max_rel_error: {max_rel_error}")
+    logger.info(f"rank: {ring_sampler_env.rank}, max_error: {max_error}, max_rel_error: {max_rel_error}")
     ps.all_reduce_across_gp_ranks(max_error, op=dist.ReduceOp.AVG)
     ps.all_reduce_across_gp_ranks(max_rel_error, op=dist.ReduceOp.AVG)
 
     if ring_sampler_env.rank == 0:
-        print(f"Maximum relative error across ranks: {max_error.item()}")
+        logger.info(f"Maximum relative error across ranks: {max_error.item()}")
         assert max_error.item() < 1e-5, f"Relative error {max_error.item()} is too large"
         assert max_rel_error.item() < 1e-3, f"Relative error {max_rel_error.item()} is too large"
     
@@ -347,10 +347,10 @@ def test_ring_sampler_backward_3d(ring_sampler_env: RingSamplerTestEnv):
     ps.all_reduce_across_gp_ranks(max_errors, op=dist.ReduceOp.MAX)
 
     if ring_sampler_env.rank == 0:
-        print(f"Maximum gradient errors across ranks:")
-        print(f"Image gradient error: {max_errors[0].item()}")
-        print(f"Grid gradient error: {max_errors[1].item()}")
-        print(f"Affine gradient error: {max_errors[2].item()}")
+        logger.info(f"Maximum gradient errors across ranks:")
+        logger.info(f"Image gradient error: {max_errors[0].item()}")
+        logger.info(f"Grid gradient error: {max_errors[1].item()}")
+        logger.info(f"Affine gradient error: {max_errors[2].item()}")
         
         # Assert that errors are within acceptable bounds
         assert max_errors[0].item() < 1e-3, f"Image gradient error {max_errors[0].item()} is too large"

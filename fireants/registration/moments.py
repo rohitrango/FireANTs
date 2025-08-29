@@ -138,6 +138,63 @@ class MomentsRegistration(AbstractRegistration):
         ori = oris[best_idx, 0]
         return ori
 
+    def find_best_detmat_2d(self, U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xy_f, xy_m):
+        '''
+        Find best determinant matrix for 2D
+        '''
+        # Define candidate orientation matrices (rotations / anti-rotations in 2D)
+        rot = [-np.eye(2) for _ in range(2)]
+        antirot = [np.eye(2) for _ in range(2)]
+        for i in range(2):
+            rot[i][i, i] = 1
+            antirot[i][i, i] = -1
+        rot[-1] *= -1
+        antirot[-1] *= -1
+
+        if self.orientation == 'rot':
+            oris = rot
+        elif self.orientation == 'antirot':
+            oris = antirot
+        else:
+            oris = rot + antirot
+
+        oris = np.array(oris)  # [confs, 2, 2]
+        oris = torch.tensor(oris, device=fixed_arrays.device).unsqueeze(1).expand(-1, self.opt_size, -1,
+                                                                                  -1)  # [confs, N, 2, 2]
+        oris = oris.to(U_f.dtype)
+
+        moving_p2t = self.moving_images.get_phy2torch()
+
+        # initialize best idx and metric
+        best_idx = torch.zeros(self.opt_size, dtype=torch.long, device=fixed_arrays.device)
+        best_metric = torch.zeros(self.opt_size, device=fixed_arrays.device) + np.inf
+
+        # loop over orientations
+        for ori_id, ori in enumerate(oris):
+            # Compute R
+            R = (U_f @ ori @ U_m).to(fixed_arrays.device)  # [N, 2, 2]
+            R = R.transpose(-1, -2)
+
+            # Move coords
+            moved_coords_m = torch.einsum('ntd, n...d->n...t', R, xy_f) + com_m[:, None]  # [N, S, 2]
+            moved_coords_m = torch.einsum('ntd, n...d->n...t', moving_p2t[:, :-1, :-1], moved_coords_m) + \
+                             moving_p2t[:, :-1, -1].unsqueeze(1)
+
+            # reshape to [N, H, W, 2]
+            moved_coords_m = moved_coords_m.view(-1, *fixed_arrays.shape[2:], self.dims)
+
+            # Sample moving image
+            moved_image = F.grid_sample(moving_arrays, moved_coords_m, mode='bilinear', align_corners=True)
+
+            # Compute loss
+            loss_val = self.loss_fn(moved_image, fixed_arrays).flatten(1).sum(1)
+            index = torch.where(loss_val < best_metric)[0]
+            best_metric[index] = loss_val[index]
+            best_idx[index] = ori_id
+
+        # Get best orientation
+        ori = oris[best_idx, 0]  # [N, 2, 2]
+        return ori
 
     def downsample_images(self, fixed_arrays, moving_arrays):
         ''' Downsample images if scale is more than 1 '''

@@ -167,7 +167,7 @@ def separable_filtering(x: torch.Tensor, kernels: ItemOrList[torch.Tensor], mode
     _kernels = [s.to(x) for s in kernels]
 
     # run one conv if kernel is small
-    if _kernels[0].numel() < 15 and not use_separable_override:
+    if _kernels[0].numel() < 7 and not use_separable_override:
         # create conv
         if spatial_dims == 2:
             kernel = _kernels[0].reshape(1, 1, -1, 1) * _kernels[1].reshape(1, 1, 1, -1)

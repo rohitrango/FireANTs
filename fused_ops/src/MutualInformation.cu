@@ -32,10 +32,10 @@ bool is_power_of_two(int num) {
 }
 
 template <typename scalar_t, typename index_t>
-__device__ scalar_t prob_func(scalar_t x, index_t bin_idx, index_t num_bins, KernelType kernel_type) {
+__device__ scalar_t prob_func(scalar_t x, index_t bin_idx, index_t num_bins, KernelType kernel_type, float sigma_ratio) {
     float bin_width = 1.0 / num_bins;
     float bin_center = (bin_idx + 0.5) * bin_width;
-    float sigma = bin_width / 2;
+    float sigma = bin_width / 2 * sigma_ratio;
     float abdiff = fabs((x - bin_center) / bin_width);
     switch (kernel_type) {
         case KernelType::GAUSSIAN:
@@ -55,14 +55,14 @@ __device__ scalar_t prob_func(scalar_t x, index_t bin_idx, index_t num_bins, Ker
 }
 
 template <typename scalar_t, typename index_t>
-__device__ scalar_t kernel_grad(scalar_t x, index_t bin_idx, index_t num_bins, KernelType kernel_type) {
+__device__ scalar_t kernel_grad(scalar_t x, index_t bin_idx, index_t num_bins, KernelType kernel_type, float sigma_ratio) {
     float bin_width = 1.0 / num_bins;
     float bin_center = (bin_idx + 0.5) * bin_width;
-    float sigma = bin_width / 2;
+    float sigma = bin_width / 2 * sigma_ratio;
     float abdiff = fabs((x - bin_center) / bin_width);
     switch (kernel_type) {
         case KernelType::GAUSSIAN:
-            return prob_func(x, bin_idx, num_bins, kernel_type) * (bin_center - x) / sigma / sigma;
+            return prob_func(x, bin_idx, num_bins, kernel_type, sigma_ratio) * (bin_center - x) / sigma / sigma;
 
         case KernelType::BSPLINE:
             if (abdiff < 1) 
@@ -84,7 +84,8 @@ __global__ void mutual_information_histogram_bwd_kernel_basic(
     scalar_t* __restrict__ input_img, scalar_t* __restrict__ target_img, 
     scalar_t* __restrict__ grad_pab, scalar_t* __restrict__ grad_pa, scalar_t* __restrict__ grad_pb,
     scalar_t* __restrict__ grad_input_img, scalar_t* __restrict__ grad_target_img,
-    index_t batch_size, index_t channels, index_t num_bins, index_t num_samples, KernelType kernel_type, float minval, float maxval
+    index_t batch_size, index_t channels, index_t num_bins, index_t num_samples, KernelType kernel_type, float minval, float maxval,
+    float sigma_ratio
 ) {
     using opmath_t = at::opmath_type<scalar_t>;
 
@@ -126,10 +127,10 @@ __global__ void mutual_information_histogram_bwd_kernel_basic(
         Jk = (Jk - minval_op) / (maxval_op - minval_op);
 
         // compute grad and kernel values
-        shared_prob_pa[threadIdx.x] = prob_func(Ik, bin_idx, num_bins, kernel_type);
-        shared_prob_pb[threadIdx.x] = prob_func(Jk, bin_idx, num_bins, kernel_type);
-        shared_grad_pa[threadIdx.x] = kernel_grad(Ik, bin_idx, num_bins, kernel_type);
-        shared_grad_pb[threadIdx.x] = kernel_grad(Jk, bin_idx, num_bins, kernel_type);
+        shared_prob_pa[threadIdx.x] = prob_func(Ik, bin_idx, num_bins, kernel_type, sigma_ratio);
+        shared_prob_pb[threadIdx.x] = prob_func(Jk, bin_idx, num_bins, kernel_type, sigma_ratio);
+        shared_grad_pa[threadIdx.x] = kernel_grad(Ik, bin_idx, num_bins, kernel_type, sigma_ratio);
+        shared_grad_pb[threadIdx.x] = kernel_grad(Jk, bin_idx, num_bins, kernel_type, sigma_ratio);
         __syncthreads();
 
         // compute sum for prob func
@@ -212,7 +213,7 @@ __global__ void mutual_information_histogram_bwd_kernel_basic(
     }
 }
 
-void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &target_img, torch::Tensor &grad_pab, torch::Tensor &grad_pa, torch::Tensor &grad_pb, int num_bins, torch::Tensor &grad_input_img, std::optional<torch::Tensor> &grad_target_img, KernelType kernel_type, float minval, float maxval) {
+void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &target_img, torch::Tensor &grad_pab, torch::Tensor &grad_pa, torch::Tensor &grad_pb, int num_bins, torch::Tensor &grad_input_img, std::optional<torch::Tensor> &grad_target_img, KernelType kernel_type, float minval, float maxval, float sigma_ratio) {
     // input image: [batch_size, n_channels, *]
     // target_image: [batch_size, n_channels, *]
     // grad_pab: [batch_size, channels, num_bins, num_bins]
@@ -274,7 +275,8 @@ void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &t
                 static_cast<int>(num_bins),
                 static_cast<int>(num_samples),
                 kernel_type,
-                minval, maxval
+                minval, maxval,
+                sigma_ratio
             );
         } else {
             mutual_information_histogram_bwd_kernel_basic<<<gridSize, blockSize, 0, stream>>>(
@@ -290,7 +292,8 @@ void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &t
                 static_cast<int64_t>(num_bins),
                 static_cast<int64_t>(num_samples),
                 kernel_type,
-                minval, maxval
+                minval, maxval,
+                sigma_ratio
             );
         }
         C10_CUDA_KERNEL_LAUNCH_CHECK();

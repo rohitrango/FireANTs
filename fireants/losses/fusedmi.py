@@ -36,7 +36,7 @@ kernel_type_dict = {
 class MI_histogram_kernel(torch.autograd.Function):
     ''' custom op to compute kernel without creating parzen window table '''
     @staticmethod
-    def forward(ctx, input_img, target_img, num_bins, kernel_type, minval, maxval):
+    def forward(ctx, input_img, target_img, num_bins, kernel_type, minval, maxval, sigma_ratio):
         # compute histograms
         pab, pa, pb = ffo.mutual_information_histogram_fwd(input_img, target_img, num_bins, kernel_type, minval, maxval)
         ctx.num_bins = num_bins
@@ -45,6 +45,7 @@ class MI_histogram_kernel(torch.autograd.Function):
         ctx.save_for_backward(input_img, target_img) 
         ctx.minval = minval
         ctx.maxval = maxval
+        ctx.sigma_ratio = sigma_ratio
         return pab, pa, pb
     
     @staticmethod
@@ -56,12 +57,13 @@ class MI_histogram_kernel(torch.autograd.Function):
         grad_target = None
         minval = ctx.minval
         maxval = ctx.maxval
+        sigma_ratio = ctx.sigma_ratio
 
         if input_img.requires_grad:
             grad_input = torch.zeros_like(input_img)
         if target_img.requires_grad:
             grad_target = torch.zeros_like(target_img)
-        ffo.mutual_information_histogram_bwd(input_img, target_img, grad_pab, grad_pa, grad_pb, num_bins, grad_input, grad_target, kernel_type, minval, maxval)
+        ffo.mutual_information_histogram_bwd(input_img, target_img, grad_pab, grad_pa, grad_pb, num_bins, grad_input, grad_target, kernel_type, minval, maxval, sigma_ratio)
         sample_size = input_img.flatten(2).shape[2]
         if grad_input is not None:
             grad_input.mul_(sample_size)
@@ -84,6 +86,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         normalize_image_if_required: bool = True,
         smooth_nr: float = 1e-7,
         smooth_dr: float = 1e-7,
+        sigma_ratio: float = 1.0,
     ) -> None:
         """
         Args:
@@ -110,6 +113,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         self.reduction = reduction 
         self.normalize_image_if_required = normalize_image_if_required
         self.warned = False
+        self.sigma_ratio = sigma_ratio
 
         # keep track of worldsize for allgather operation
         self.world_size = os.environ.get('WORLD_SIZE', None)
@@ -160,7 +164,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
             pred, target = target, pred
         
         # get histograms
-        pab, pa, pb = MI_histogram_kernel.apply(pred, target, self.num_bins, self.kernel_type, minval, maxval)
+        pab, pa, pb = MI_histogram_kernel.apply(pred, target, self.num_bins, self.kernel_type, minval, maxval, self.sigma_ratio)
 
         if self.world_size is not None and self.world_size > 1:
             pab, pa, pb = allgather_mi.apply(pab, pa, pb, pred.flatten(2).shape[2])

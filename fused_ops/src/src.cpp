@@ -73,6 +73,6 @@ PYBIND11_MODULE(fireants_fused_ops, m) {
     
     m.def("mutual_information_histogram_fwd", &mutual_information_histogram_fwd, "Mutual information histogram forward", py::arg("input_img"), py::arg("target_img"), py::arg("num_bins"), py::arg("kernel_type") = KernelType::GAUSSIAN, py::arg("minval") = 0.0, py::arg("maxval") = 1.0);
 
-    m.def("mutual_information_histogram_bwd", &mutual_information_histogram_bwd, "Mutual information histogram backward", py::arg("input_img"), py::arg("target_img"), py::arg("grad_pab"), py::arg("grad_pa"), py::arg("grad_pb"), py::arg("num_bins"), py::arg("grad_input_img"), py::arg("grad_target_img"), py::arg("kernel_type") = KernelType::GAUSSIAN, py::arg("minval") = 0.0, py::arg("maxval") = 1.0);
+    m.def("mutual_information_histogram_bwd", &mutual_information_histogram_bwd, "Mutual information histogram backward", py::arg("input_img"), py::arg("target_img"), py::arg("grad_pab"), py::arg("grad_pa"), py::arg("grad_pb"), py::arg("num_bins"), py::arg("grad_input_img"), py::arg("grad_target_img"), py::arg("kernel_type") = KernelType::GAUSSIAN, py::arg("minval") = 0.0, py::arg("maxval") = 1.0, py::arg("sigma_ratio") = 1.0);
 
 }

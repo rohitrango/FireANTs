@@ -91,8 +91,11 @@ class GlobalMutualInformationLoss(nn.Module):
         super().__init__()
         if num_bins <= 0:
             raise ValueError("num_bins must > 0, got {num_bins}")
-        bin_centers = torch.linspace(0.0, 1.0, num_bins)  # (num_bins,)
+        # bin_centers = torch.linspace(0.0, 1.0, num_bins) + 0.5 / num_bins  # (num_bins,)
+        bin_centers = torch.arange(num_bins, device=torch.cuda.current_device()) / num_bins + 0.5 / num_bins
         sigma = torch.mean(bin_centers[1:] - bin_centers[:-1]) * sigma_ratio
+        # print(f"sigma: {sigma}, 1/num_bins: {1/num_bins}")
+        self.sigma_ratio = sigma_ratio
         self.kernel_type = kernel_type
         self.num_bins = num_bins
         self.kernel_type = kernel_type
@@ -122,7 +125,7 @@ class GlobalMutualInformationLoss(nn.Module):
             # a third order BSpline kernel is used for the pred image intensity PDF.
             pred_weight, pred_probability = self.parzen_windowing_b_spline(pred, order=3)
             # a zero order (box car) BSpline kernel is used for the target image intensity PDF.
-            target_weight, target_probability = self.parzen_windowing_b_spline(target, order=0)
+            target_weight, target_probability = self.parzen_windowing_b_spline(target, order=3)
         else:
             raise ValueError
         return pred_weight, pred_probability, target_weight, target_probability
@@ -206,8 +209,9 @@ class GlobalMutualInformationLoss(nn.Module):
             ValueError: When ``self.reduction`` is not one of ["mean", "sum", "none"].
         """
         maxval = max(pred.max(), target.max())
-        pred = pred / maxval
-        target = target / maxval
+        if maxval > 1:
+            pred = pred / maxval
+            target = target / maxval
 
         if target.shape != pred.shape:
             raise ValueError(f"ground truth has differing shape ({target.shape}) from pred ({pred.shape})")
@@ -223,7 +227,7 @@ class GlobalMutualInformationLoss(nn.Module):
         else:
             pab = torch.bmm(wa.permute(0, 2, 1), wb.to(wa)).div(wa.shape[1])  # (batch, num_bins, num_bins)
             papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))  # (batch, num_bins, num_bins)
-
+        
         mi = torch.sum(
             pab * torch.log((pab + self.smooth_nr) / (papb + self.smooth_dr) + self.smooth_dr), dim=(1, 2)
         )  # (batch)

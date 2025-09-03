@@ -25,6 +25,7 @@ import fireants_fused_ops as ffo
 from fireants.losses.mi import allgather_mi
 import logging
 logger = logging.getLogger(__name__)
+from fireants.registration.distributed import parallel_state
 
 kernel_type_dict = {
     "gaussian": ffo.KernelType.GAUSSIAN,
@@ -64,12 +65,12 @@ class MI_histogram_kernel(torch.autograd.Function):
         if target_img.requires_grad:
             grad_target = torch.zeros_like(target_img)
         ffo.mutual_information_histogram_bwd(input_img, target_img, grad_pab, grad_pa, grad_pb, num_bins, grad_input, grad_target, kernel_type, minval, maxval, sigma_ratio)
-        sample_size = input_img.flatten(2).shape[2]
-        if grad_input is not None:
-            grad_input.mul_(sample_size)
-        if grad_target is not None:
-            grad_target.mul_(sample_size)
-        return grad_input, grad_target, None, None, None, None
+        # sample_size = input_img.flatten(2).shape[2]
+        # if grad_input is not None:
+        #     grad_input.mul_(sample_size)
+        # if grad_target is not None:
+        #     grad_target.mul_(sample_size)
+        return grad_input, grad_target, None, None, None, None, None
 
 
 class FusedGlobalMutualInformationLoss(nn.Module):
@@ -115,10 +116,6 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         self.warned = False
         self.sigma_ratio = sigma_ratio
 
-        # keep track of worldsize for allgather operation
-        self.world_size = os.environ.get('WORLD_SIZE', None)
-        if self.world_size is not None:
-            self.world_size = int(self.world_size)
 
     def get_image_padding(self) -> int:
         return 0
@@ -134,12 +131,12 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         minval = min(pred.min(), target.min()).detach().item()
         maxval = max(pred.max(), target.max()).detach().item()
         normalize = False
-        if (pred.max().item() > 1 or target.max().item() > 1):
+        if maxval > 1:
             if not self.warned:
                 logger.warn("Image values are expected to be in the range [0, 1] - normalizing the images")
                 self.warned = True
             normalize = True
-        if (pred.min().item() < 0 or target.min().item() < 0):
+        if minval < 0:
             if not self.warned:
                 logger.warn("Image values are expected to be in the range [0, 1] - normalizing the images")
                 self.warned = True
@@ -166,7 +163,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         # get histograms
         pab, pa, pb = MI_histogram_kernel.apply(pred, target, self.num_bins, self.kernel_type, minval, maxval, self.sigma_ratio)
 
-        if self.world_size is not None and self.world_size > 1:
+        if parallel_state.is_initialized() and parallel_state.get_grid_parallel_size() > 1:
             pab, pa, pb = allgather_mi.apply(pab, pa, pb, pred.flatten(2).shape[2])
             # divide by total number of samples (this is not exact but approximate)
             papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))
@@ -191,7 +188,8 @@ if __name__ == '__main__':
     N = 256
     img1 = torch.rand(1, 1, N, N, N).cuda()
     img2 = torch.rand(1, 1, N, N, N).cuda()
-    loss = FusedGlobalMutualInformationLoss('b-spline').cuda()
+    #loss = FusedGlobalMutualInformationLoss('b-spline').cuda()
+    loss = FusedGlobalMutualInformationLoss('gaussian', sigma_ratio=2.0).cuda()
     total = 0
     a = time()
     for i in range(10):

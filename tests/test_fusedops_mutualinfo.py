@@ -245,7 +245,89 @@ def test_fused_mi_approximate_reduction():
         # Check forward pass results - allow larger tolerance for approximate version
         assert out_approx.item() < out_exact.item() + 1e-2, \
             f"Approximate reduction results should be smaller than exact reduction results due to sharpening effect"
-        
+
+
+def test_fused_mi_num_bins_ablation():
+    """Test effect of different numbers of bins on MI computation"""
+    N = 128  # Use smaller size for bin ablation
+    img1 = torch.rand(1, 1, N, N, N).cuda()  # Values from 0 to 1
+    img2 = ((img1 + 3*img1**2 + img1**3) / 5).cuda().requires_grad_(True)  # Nonlinear transform of img1
+    
+    kernel_types = ['gaussian']
+    num_bins_list = [8, 16, 32, 64]
+    
+    for kernel_type in kernel_types:
+        logger.info(f"\nTesting {kernel_type} kernel with different numbers of bins:")
+        for num_bins in num_bins_list:
+            # Initialize both implementations
+            loss = FusedGlobalMutualInformationLoss(
+                kernel_type=kernel_type,
+                num_bins=num_bins,
+                reduction='mean',
+                approximate_reduction=False
+            ).cuda()
+            
+            loss_baseline = GlobalMutualInformationLoss(
+                kernel_type=kernel_type,
+                num_bins=num_bins,
+                reduction='mean'
+            ).cuda()
+            
+            # Reset memory stats
+            torch.cuda.reset_peak_memory_stats()
+            input_memory = torch.cuda.max_memory_allocated() / 1024**2
+            
+            # Measure fused implementation
+            t0 = time()
+            out = loss(img1, img2)
+            torch.cuda.synchronize()
+            t1 = time()
+            out.backward()
+            torch.cuda.synchronize()
+            t2 = time()
+            fwd_time_ours = t1 - t0
+            bwd_time_ours = t2 - t1
+            grad_ours = img2.grad.clone()
+            fused_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory
+            
+            # Reset memory stats
+            img2.grad = None
+            torch.cuda.reset_peak_memory_stats()
+            
+            # Measure baseline implementation
+            try:
+                t0 = time()
+                out_baseline = loss_baseline(img1, img2)
+                torch.cuda.synchronize()
+                t1 = time()
+                out_baseline.backward()
+                torch.cuda.synchronize()
+                t2 = time()
+                fwd_time_baseline = t1 - t0
+                bwd_time_baseline = t2 - t1
+                grad_baseline = img2.grad.clone()
+                baseline_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory
+                
+                # Verify results match
+                assert torch.allclose(out, out_baseline, rtol=1e-4), \
+                    f"Results don't match baseline for num_bins={num_bins}"
+                assert torch.allclose(grad_ours, grad_baseline, rtol=1e-3), \
+                    f"Gradients don't match baseline for num_bins={num_bins}"
+            except OutOfMemoryError:
+                baseline_memory = baseline_memory * 8
+                fwd_time_baseline = 100000
+                bwd_time_baseline = 100000
+            
+            # Log performance metrics
+            logger.info(f"\nNumber of bins: {num_bins}")
+            logger.info(f"MI value: {out.item():.4f}, baseline: {out_baseline.item():.4f}")
+            logger.info(f"Forward time: {fwd_time_ours:.4f}s (fused) vs {fwd_time_baseline:.4f}s (baseline)")
+            logger.info(f"Backward time: {bwd_time_ours:.4f}s (fused) vs {bwd_time_baseline:.4f}s (baseline)")
+            logger.info(f"Memory usage: {fused_memory:.2f}MB (fused) vs {baseline_memory:.2f}MB (baseline)")
+            logger.info(f"Memory reduction: {(baseline_memory - fused_memory)/baseline_memory*100:.2f}%")
+            
+            img2.grad = None
+
 
 if __name__ == '__main__':
     pytest.main([__file__])

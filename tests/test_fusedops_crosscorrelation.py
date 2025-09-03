@@ -9,6 +9,10 @@ seed = 4531
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)   
 
+from logging import getLogger
+logger = getLogger(__name__)
+print = logger.info
+
 def test_fused_cc_correctness():
     """Test correctness of fused cross correlation against baseline implementations"""
     # Test with small input size first

@@ -37,9 +37,9 @@ kernel_type_dict = {
 class MI_histogram_kernel(torch.autograd.Function):
     ''' custom op to compute kernel without creating parzen window table '''
     @staticmethod
-    def forward(ctx, input_img, target_img, num_bins, kernel_type, minval, maxval, sigma_ratio):
+    def forward(ctx, input_img, target_img, num_bins, kernel_type, minval, maxval, sigma_ratio, approximate_reduction):
         # compute histograms
-        pab, pa, pb = ffo.mutual_information_histogram_fwd(input_img, target_img, num_bins, kernel_type, minval, maxval)
+        pab, pa, pb = ffo.mutual_information_histogram_fwd(input_img, target_img, num_bins, kernel_type, minval, maxval, sigma_ratio, approximate_reduction)
         ctx.num_bins = num_bins
         ctx.kernel_type = kernel_type
         # save
@@ -70,7 +70,7 @@ class MI_histogram_kernel(torch.autograd.Function):
         #     grad_input.mul_(sample_size)
         # if grad_target is not None:
         #     grad_target.mul_(sample_size)
-        return grad_input, grad_target, None, None, None, None, None
+        return grad_input, grad_target, None, None, None, None, None, None
 
 
 class FusedGlobalMutualInformationLoss(nn.Module):
@@ -88,6 +88,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         smooth_nr: float = 1e-7,
         smooth_dr: float = 1e-7,
         sigma_ratio: float = 1.0,
+        approximate_reduction: bool = False,
     ) -> None:
         """
         Args:
@@ -115,6 +116,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         self.normalize_image_if_required = normalize_image_if_required
         self.warned = False
         self.sigma_ratio = sigma_ratio
+        self.approximate_reduction = approximate_reduction
 
 
     def get_image_padding(self) -> int:
@@ -161,7 +163,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
             pred, target = target, pred
         
         # get histograms
-        pab, pa, pb = MI_histogram_kernel.apply(pred, target, self.num_bins, self.kernel_type, minval, maxval, self.sigma_ratio)
+        pab, pa, pb = MI_histogram_kernel.apply(pred, target, self.num_bins, self.kernel_type, minval, maxval, self.sigma_ratio, self.approximate_reduction)
 
         if parallel_state.is_initialized() and parallel_state.get_grid_parallel_size() > 1:
             pab, pa, pb = allgather_mi.apply(pab, pa, pb, pred.flatten(2).shape[2])

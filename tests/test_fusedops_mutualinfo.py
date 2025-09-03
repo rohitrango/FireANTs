@@ -2,8 +2,8 @@ import torch
 import pytest
 from time import time
 from fireants.losses.mi import GlobalMutualInformationLoss
-from fireants.losses.fusedmi import FusedGlobalMutualInformationLoss, kernel_type_dict
-import fireants_fused_ops as ffo
+from fireants.losses.fusedmi import FusedGlobalMutualInformationLoss
+from torch.cuda import OutOfMemoryError
 
 seed = 4531
 torch.manual_seed(seed)
@@ -13,106 +13,87 @@ def test_fused_mi_correctness():
     """Test correctness of fused mutual information against baseline implementations"""
     # Test with small input size first
     N = 32
-    eps = 1e-1
-    img1 = (torch.rand(1, 1, N, N, N) + eps).cuda() / (1 + eps)
-    print(f"img1: {img1.min()}, {img1.max()}")
-    img2 = (img1 + img1 ** 2 * 0.1).cuda()
-    img2 = (img2 - img2.min()) / (img2.max() - img2.min())
+    img1 = torch.rand(1, 1, N, N, N).cuda()  # Values from 0 to 1
+    img2 = ((img1 + 3*img1**2 + img1**3) / 5).cuda().requires_grad_(True)  # Nonlinear transform of img1
     
     # Test both Gaussian and B-spline kernels
     kernel_types = ['gaussian']
+    sigma_ratios = [0.5, 1.0, 2.0]  # Test different sigma ratios
+    
     for kernel_type in kernel_types:
-        # Create baseline loss
-        loss_baseline = GlobalMutualInformationLoss(kernel_type=kernel_type, num_bins=32, reduction='mean', sigma_ratio=2.0).cuda()
-
-        img1 = img1.requires_grad_(True)
-        img2 = img2.requires_grad_(True)
-        img1.grad = None
-        img2.grad = None
-        
-        # Get baseline pa, pb, pab
-        wa, pa, wb, pb = loss_baseline.parzen_windowing(img1, img2)
-        pab = torch.bmm(wa.permute(0, 2, 1), wb.to(wa)).div(wa.shape[1])
-        papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))
-
-        pa.requires_grad_(True)
-        pb.requires_grad_(True)
-        pab.requires_grad_(True)
-        # Compute gradients for pab, pa, pb
-        # Create hooks to capture gradients
-        grad_pab = []
-        grad_pa = []
-        grad_pb = []
-        
-        def hook_pab(grad):
-            grad_pab.append(grad)
-        def hook_pa(grad):
-            grad_pa.append(grad)
-        def hook_pb(grad):
-            grad_pb.append(grad)
+        for sigma_ratio in sigma_ratios:
+            # Initialize both implementations with same parameters
+            loss = FusedGlobalMutualInformationLoss(
+                kernel_type=kernel_type,
+                num_bins=32,
+                reduction='mean',
+                sigma_ratio=sigma_ratio,
+                normalize_image_if_required=True,
+                approximate_reduction=False
+            ).cuda()
             
-        pab.register_hook(hook_pab)
-        pa.register_hook(hook_pa) 
-        pb.register_hook(hook_pb)
-         
-        # Compute MI loss
-        mi = torch.sum(
-            pab * torch.log((pab + loss_baseline.smooth_nr) / (papb + loss_baseline.smooth_dr) + loss_baseline.smooth_dr), 
-            dim=(1, 2)
-        )
-        loss_val = torch.mean(mi).neg()
-        # Backward through baseline
-        loss_val.backward()
-        grad_baseline = img2.grad.clone()
-
-        img2.grad = None
-        # Now use the same pa, pb, pab with fused ops backward
-        grad_input = torch.zeros_like(img1)
-        grad_target = torch.zeros_like(img2)
-        
-        # # Get gradients from hooks
-        grad_pab = grad_pab[0]
-        grad_pa = grad_pa[0]
-        grad_pb = grad_pb[0]
-        
-        # Call fused ops backward
-        minval, maxval = 0.0, 1.0  # Since we normalized the images
-        sigma_ratio = loss_baseline.sigma_ratio * 2  # Default value from mi.py
-        ffo.mutual_information_histogram_bwd(
-            img1, img2, 
-            grad_pab, grad_pa, grad_pb, 
-            loss_baseline.num_bins, grad_input, grad_target,
-            kernel_type_dict[kernel_type], minval, maxval, sigma_ratio
-        )
-
-        # Compare gradients
-        print(f"\nKernel type: {kernel_type}")
-        print(f"Max gradient difference: {(grad_target - grad_baseline).abs().max().item()}")
-        print(f"Mean gradient difference: {(grad_target - grad_baseline).abs().mean().item()}")
-        print(f"Relative gradient error: {(torch.abs(grad_target - grad_baseline) / (1e-7 + torch.abs(grad_baseline))).mean().item()}")
-        
-        # Check if gradients match within tolerance
-        assert torch.allclose(grad_target, grad_baseline, rtol=1e-3), f"Gradients don't match baseline for {kernel_type} kernel"
+            loss_baseline = GlobalMutualInformationLoss(
+                kernel_type=kernel_type,
+                num_bins=32,
+                reduction='mean',
+                sigma_ratio=sigma_ratio
+            ).cuda()
+            
+            # Forward pass
+            out = loss(img1, img2)
+            out_baseline = loss_baseline(img1, img2)
+            
+            # Check forward pass results
+            print(f"out: {out}, {out_baseline}")
+            assert torch.allclose(out, out_baseline, rtol=1e-4), \
+                f"Forward pass results don't match baseline for {kernel_type} kernel with sigma_ratio={sigma_ratio}"
+            
+            # Backward pass
+            out.backward()
+            grad_ours = img2.grad.clone()
+            
+            img2.grad = None
+            out_baseline.backward()
+            grad_baseline = img2.grad.clone()
+            
+            # Check backward pass results
+            assert torch.allclose(grad_ours, grad_baseline, rtol=1e-3), \
+                f"Gradients don't match baseline for {kernel_type} kernel with sigma_ratio={sigma_ratio}"
+            
+            img2.grad = None
 
 
 def test_fused_mi_memory_forward():
     """Test memory usage during forward pass"""
     kernel_types = ['gaussian']
+    sigma_ratio = 1.0  # Use default sigma ratio for memory tests
+    
     for kernel_type in kernel_types:
         print(f"\nTesting {kernel_type} kernel:")
         for i in range(6, 10):
             N = 2 ** i
-            eps = 1e-1
-            img1 = (torch.rand(1, 1, N, N, N) + eps).cuda() / (1 + eps)
-            img2 = (img1 + img1 ** 2 * 0.1).cuda()
-            img2 = (img2 - img2.min()) / (img2.max() - img2.min())
+            img1 = torch.rand(1, 1, N, N, N).cuda()  # Values from 0 to 1
+            img2 = ((img1 + 3*img1**2 + img1**3) / 5).cuda().requires_grad_(True)  # Nonlinear transform of img1
             
             # Calculate input tensor memory
             input_memory = (img1.element_size() * img1.nelement() + 
                           img2.element_size() * img2.nelement()) / 1024**2  # MB
             
-            loss = FusedGlobalMutualInformationLoss(kernel_type=kernel_type, num_bins=32, reduction='mean', sigma_ratio=4.0).cuda()
-            loss_baseline = GlobalMutualInformationLoss(kernel_type=kernel_type, num_bins=32, reduction='mean', sigma_ratio=2.0).cuda()
+            loss = FusedGlobalMutualInformationLoss(
+                kernel_type=kernel_type,
+                num_bins=32,
+                reduction='mean',
+                sigma_ratio=sigma_ratio,
+                normalize_image_if_required=True,
+                approximate_reduction=False
+            ).cuda()
+            
+            loss_baseline = GlobalMutualInformationLoss(
+                kernel_type=kernel_type,
+                num_bins=32,
+                reduction='mean',
+                sigma_ratio=sigma_ratio
+            ).cuda()
             
             # Reset memory stats
             torch.cuda.reset_peak_memory_stats()
@@ -134,9 +115,12 @@ def test_fused_mi_memory_forward():
                 torch.cuda.synchronize()
                 out_baseline_time = time() - start
                 baseline_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory
-            except:
+            except OutOfMemoryError:
                 baseline_memory = baseline_memory * 8
-
+                out_baseline_time = 100000
+            
+            # Verify results match
+            assert torch.allclose(out, out_baseline, rtol=1e-4), f"Results don't match baseline for N={N}"
             
             # Print performance metrics
             print(f"\nN: {N}")
@@ -145,6 +129,117 @@ def test_fused_mi_memory_forward():
             print(f"Memory reduction: {(baseline_memory - fused_memory)/baseline_memory*100:.2f}%")
 
 
+def test_fused_mi_memory_backward():
+    """Test memory usage during backward pass"""
+    kernel_types = ['gaussian']
+    sigma_ratio = 1.0  # Use default sigma ratio for memory tests
+    
+    for kernel_type in kernel_types:
+        print(f"\nTesting {kernel_type} kernel:")
+        for i in range(6, 10):
+            N = 2 ** i
+            img1 = torch.rand(1, 1, N, N, N).cuda()  # Values from 0 to 1
+            img2 = ((img1 + 3*img1**2 + img1**3) / 5).cuda().requires_grad_(True)  # Nonlinear transform of img1
+            
+            # Calculate input tensor memory
+            input_memory = (img1.element_size() * img1.nelement() + 
+                          img2.element_size() * img2.nelement()) / 1024**2  # MB
+            
+            loss = FusedGlobalMutualInformationLoss(
+                kernel_type=kernel_type,
+                num_bins=32,
+                reduction='mean',
+                sigma_ratio=sigma_ratio,
+                normalize_image_if_required=True,
+                approximate_reduction=False
+            ).cuda()
+            
+            loss_baseline = GlobalMutualInformationLoss(
+                kernel_type=kernel_type,
+                num_bins=32,
+                reduction='mean',
+                sigma_ratio=sigma_ratio
+            ).cuda()
+            
+            # Reset memory stats
+            torch.cuda.reset_peak_memory_stats()
+            
+            # Measure fused implementation
+            t0 = time()
+            out = loss(img1, img2)
+            torch.cuda.synchronize()
+            t1 = time()
+            out.backward()
+            torch.cuda.synchronize()
+            t2 = time()
+            fwd_time_ours = t1 - t0
+            bwd_time_ours = t2 - t1
+            grad_ours = img2.grad.clone()
+            fused_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory
+            
+            # Reset memory stats
+            img2.grad = None
+            torch.cuda.reset_peak_memory_stats()
+            
+            # Measure baseline implementation
+            try:
+                t0 = time()
+                out_baseline = loss_baseline(img1, img2)
+                torch.cuda.synchronize()
+                t1 = time()
+                out_baseline.backward()
+                torch.cuda.synchronize()
+                t2 = time()
+                fwd_time_baseline = t1 - t0
+                bwd_time_baseline = t2 - t1
+                grad_baseline = img2.grad.clone()
+                baseline_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory
+                # Verify results match
+                assert torch.allclose(grad_ours, grad_baseline, rtol=1e-3), f"Gradients don't match baseline for N={N}"
+            except OutOfMemoryError:
+                baseline_memory = baseline_memory * 8
+                fwd_time_baseline = 100000
+                bwd_time_baseline = 100000
+            
+            # Print performance metrics
+            print(f"\nN: {N}")
+            print(f"Forward time: {fwd_time_ours:.4f}s (fused) vs {fwd_time_baseline:.4f}s (baseline)")
+            print(f"Backward time: {bwd_time_ours:.4f}s (fused) vs {bwd_time_baseline:.4f}s (baseline)")
+            print(f"Memory usage: {fused_memory:.2f}MB (fused) vs {baseline_memory:.2f}MB (baseline)")
+            print(f"Memory reduction: {(baseline_memory - fused_memory)/baseline_memory*100:.2f}%")
+
+
+def test_fused_mi_approximate_reduction():
+    """Test that approximate reduction gives similar results"""
+    N = 32
+    img1 = torch.rand(1, 1, N, N, N).cuda()  # Values from 0 to 1
+    img2 = ((img1 + 3*img1**2 + img1**3) / 5).cuda().requires_grad_(True)  # Nonlinear transform of img1
+    
+    kernel_types = ['gaussian']
+    for kernel_type in kernel_types:
+        # Initialize exact and approximate implementations
+        loss_exact = FusedGlobalMutualInformationLoss(
+            kernel_type=kernel_type,
+            num_bins=32,
+            reduction='mean',
+            approximate_reduction=False
+        ).cuda()
+        
+        loss_approx = FusedGlobalMutualInformationLoss(
+            kernel_type=kernel_type,
+            num_bins=32,
+            reduction='mean',
+            approximate_reduction=True
+        ).cuda()
+        
+        # Forward pass
+        out_exact = loss_exact(img1, img2)
+        out_approx = loss_approx(img1, img2)
+        
+        # Check forward pass results - allow larger tolerance for approximate version
+        assert out_approx.item() < out_exact.item() + 1e-2, \
+            f"Approximate reduction results should be smaller than exact reduction results due to sharpening effect"
+        
 
 if __name__ == '__main__':
     pytest.main([__file__])

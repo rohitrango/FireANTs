@@ -59,7 +59,7 @@ class GlobalMutualInformationLoss(nn.Module):
         self,
         kernel_type: str = "gaussian",
         num_bins: int = 32,
-        sigma_ratio: float = 0.5,
+        sigma_ratio: float = 1.0,
         reduction: str = "mean", 
         smooth_nr: float = 1e-7,
         smooth_dr: float = 1e-7,
@@ -93,7 +93,7 @@ class GlobalMutualInformationLoss(nn.Module):
             raise ValueError("num_bins must > 0, got {num_bins}")
         # bin_centers = torch.linspace(0.0, 1.0, num_bins) + 0.5 / num_bins  # (num_bins,)
         bin_centers = torch.arange(num_bins, device=torch.cuda.current_device()) / num_bins + 0.5 / num_bins
-        sigma = torch.mean(bin_centers[1:] - bin_centers[:-1]) * sigma_ratio
+        sigma = torch.mean(bin_centers[1:] - bin_centers[:-1]) * sigma_ratio / 2
         # print(f"sigma: {sigma}, 1/num_bins: {1/num_bins}")
         self.sigma_ratio = sigma_ratio
         self.kernel_type = kernel_type

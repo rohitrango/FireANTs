@@ -4,6 +4,8 @@ from time import time
 from fireants.losses.mi import GlobalMutualInformationLoss
 from fireants.losses.fusedmi import FusedGlobalMutualInformationLoss
 from torch.cuda import OutOfMemoryError
+from logging import getLogger
+logger = getLogger(__name__)
 
 seed = 4531
 torch.manual_seed(seed)
@@ -44,7 +46,7 @@ def test_fused_mi_correctness():
             out_baseline = loss_baseline(img1, img2)
             
             # Check forward pass results
-            print(f"out: {out}, {out_baseline}")
+            logger.info(f"out: {out}, {out_baseline}")
             assert torch.allclose(out, out_baseline, rtol=1e-4), \
                 f"Forward pass results don't match baseline for {kernel_type} kernel with sigma_ratio={sigma_ratio}"
             
@@ -69,15 +71,17 @@ def test_fused_mi_memory_forward():
     sigma_ratio = 1.0  # Use default sigma ratio for memory tests
     
     for kernel_type in kernel_types:
-        print(f"\nTesting {kernel_type} kernel:")
+        logger.info(f"\nTesting {kernel_type} kernel:")
         for i in range(6, 10):
             N = 2 ** i
             img1 = torch.rand(1, 1, N, N, N).cuda()  # Values from 0 to 1
             img2 = ((img1 + 3*img1**2 + img1**3) / 5).cuda().requires_grad_(True)  # Nonlinear transform of img1
             
-            # Calculate input tensor memory
-            input_memory = (img1.element_size() * img1.nelement() + 
-                          img2.element_size() * img2.nelement()) / 1024**2  # MB
+            torch.cuda.reset_peak_memory_stats()
+            # # Calculate input tensor memory
+            # input_memory = (img1.element_size() * img1.nelement() + 
+            #               img2.element_size() * img2.nelement()) / 1024**2  # MB
+            input_memory = torch.cuda.max_memory_allocated() / 1024**2
             
             loss = FusedGlobalMutualInformationLoss(
                 kernel_type=kernel_type,
@@ -122,11 +126,11 @@ def test_fused_mi_memory_forward():
             # Verify results match
             assert torch.allclose(out, out_baseline, rtol=1e-4), f"Results don't match baseline for N={N}"
             
-            # Print performance metrics
-            print(f"\nN: {N}")
-            print(f"Forward time: {out_time:.4f}s (fused) vs {out_baseline_time:.4f}s (baseline)")
-            print(f"Memory usage: {fused_memory:.2f}MB (fused) vs {baseline_memory:.2f}MB (baseline)")
-            print(f"Memory reduction: {(baseline_memory - fused_memory)/baseline_memory*100:.2f}%")
+            # logger.info performance metrics
+            logger.info(f"\nN: {N}")
+            logger.info(f"Forward time: {out_time:.4f}s (fused) vs {out_baseline_time:.4f}s (baseline)")
+            logger.info(f"Memory usage: {fused_memory:.2f}MB (fused) vs {baseline_memory:.2f}MB (baseline)")
+            logger.info(f"Memory reduction: {(baseline_memory - fused_memory)/baseline_memory*100:.2f}%")
 
 
 def test_fused_mi_memory_backward():
@@ -135,15 +139,17 @@ def test_fused_mi_memory_backward():
     sigma_ratio = 1.0  # Use default sigma ratio for memory tests
     
     for kernel_type in kernel_types:
-        print(f"\nTesting {kernel_type} kernel:")
+        logger.info(f"\nTesting {kernel_type} kernel:")
         for i in range(6, 10):
             N = 2 ** i
             img1 = torch.rand(1, 1, N, N, N).cuda()  # Values from 0 to 1
             img2 = ((img1 + 3*img1**2 + img1**3) / 5).cuda().requires_grad_(True)  # Nonlinear transform of img1
             
+            torch.cuda.reset_peak_memory_stats()
             # Calculate input tensor memory
-            input_memory = (img1.element_size() * img1.nelement() + 
-                          img2.element_size() * img2.nelement()) / 1024**2  # MB
+            # input_memory = (img1.element_size() * img1.nelement() + 
+            #               img2.element_size() * img2.nelement()) / 1024**2  # MB
+            input_memory = torch.cuda.max_memory_allocated() / 1024**2
             
             loss = FusedGlobalMutualInformationLoss(
                 kernel_type=kernel_type,
@@ -202,11 +208,11 @@ def test_fused_mi_memory_backward():
                 bwd_time_baseline = 100000
             
             # Print performance metrics
-            print(f"\nN: {N}")
-            print(f"Forward time: {fwd_time_ours:.4f}s (fused) vs {fwd_time_baseline:.4f}s (baseline)")
-            print(f"Backward time: {bwd_time_ours:.4f}s (fused) vs {bwd_time_baseline:.4f}s (baseline)")
-            print(f"Memory usage: {fused_memory:.2f}MB (fused) vs {baseline_memory:.2f}MB (baseline)")
-            print(f"Memory reduction: {(baseline_memory - fused_memory)/baseline_memory*100:.2f}%")
+            logger.info(f"\nN: {N}")
+            logger.info(f"Forward time: {fwd_time_ours:.4f}s (fused) vs {fwd_time_baseline:.4f}s (baseline)")
+            logger.info(f"Backward time: {bwd_time_ours:.4f}s (fused) vs {bwd_time_baseline:.4f}s (baseline)")
+            logger.info(f"Memory usage: {fused_memory:.2f}MB (fused) vs {baseline_memory:.2f}MB (baseline)")
+            logger.info(f"Memory reduction: {(baseline_memory - fused_memory)/baseline_memory*100:.2f}%")
 
 
 def test_fused_mi_approximate_reduction():

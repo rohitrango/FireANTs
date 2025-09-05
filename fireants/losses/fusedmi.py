@@ -88,7 +88,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         smooth_nr: float = 1e-7,
         smooth_dr: float = 1e-7,
         sigma_ratio: float = 1.0,
-        approximate_reduction: bool = False,
+        approximate_reduction: bool = True,
     ) -> None:
         """
         Args:

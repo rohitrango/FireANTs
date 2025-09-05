@@ -260,8 +260,9 @@ class WarpAdam:
             # w = grad + F.grid_sample(self.warp.data.permute(*self.permute_vtoimg), self.grid + grad, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
             # w = grad + 
             ## grad = grad + warp * (x + grad)   # this is the compositional update
-            # grad.add_(fireants_interpolator.warp_composer(self.warp.data, affine=self.affine_init, v=grad, grid=self.grid, align_corners=True))
-            fireants_interpolator.warp_composer(self.warp.data, affine=self.affine_init, v=grad, grid=self.grid, align_corners=True, min_coords=None, max_coords=None, output=grad)
+            grad.add_(fireants_interpolator.warp_composer(self.warp.data, affine=self.affine_init, v=grad, grid=self.grid, align_corners=True))
+            ### WRONG Code below - do not uncomment (think why)
+            # fireants_interpolator.warp_composer(self.warp.data, affine=self.affine_init, v=grad, grid=self.grid, align_corners=True, min_coords=None, max_coords=None, output=grad)
             # w = grad
             # smooth result if asked for
             if self.smoothing_gaussians is not None:

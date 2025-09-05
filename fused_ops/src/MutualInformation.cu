@@ -410,8 +410,6 @@ std::vector<torch::Tensor> mutual_information_histogram_fwd(torch::Tensor &input
     CHECK_INPUT(input_img);
     CHECK_INPUT(target_img);
 
-    std::cout << "approximate_reduction: " << approximate_reduction << std::endl;
-
     // we have verified that num_bins is a power of 2 and less than or equal to 512
     if (!is_power_of_two(num_bins)) {
         throw std::runtime_error("num_bins must be a power of 2");

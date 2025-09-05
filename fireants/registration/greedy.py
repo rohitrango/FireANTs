@@ -150,19 +150,23 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
     def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], \
                                              moving_images: Union[BatchedImages, FakeBatchedImages], \
                                              smooth_warp_sigma: float = 0, smooth_grad_sigma: float = 0,
+                                             use_moving_shape=True,
                                              shape=None, displacement=False):
         ''' Get inverse warped coordinates for the moving image.
 
         This method is useful to analyse the effect of how the moving coordinates (fixed images) are transformed
+
+        the warp can either be of `fixed_shape` or `moving_shape` depending on what kind of coordinates we want (determined by `use_moving_shape`)
+
         '''
         moving_arrays = moving_images()
         if shape is None:
-            shape = moving_images.shape
+            shape = moving_images.shape if use_moving_shape else fixed_images.shape
         else:
-            shape = [moving_arrays.shape[0], 1] + list(shape) 
+            shape = [moving_arrays.shape[0], 1] + list(shape) if use_moving_shape else [fixed_arrays.shape[0], 1] + list(shape)
 
         warp = self.warp.get_warp().detach().clone()
-        warp_inv = compositive_warp_inverse(moving_images, warp, displacement=True) 
+        warp_inv = compositive_warp_inverse(moving_images if use_moving_shape else fixed_images, warp, displacement=True) 
         # resample if needed
         mode = "bilinear" if self.dims == 2 else "trilinear"
         if tuple(warp_inv.shape[1:-1]) != tuple(shape[2:]):

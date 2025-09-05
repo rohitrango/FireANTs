@@ -55,7 +55,7 @@ class DeformableMixin:
     """
 
     @torch.no_grad()
-    def save_as_ants_transforms(reg, filenames: Union[str, List[str]]):
+    def save_as_ants_transforms(reg, filenames: Union[str, List[str]], save_inverse=False):
         """Save deformation fields in ANTs-compatible format.
 
         Converts the learned deformation fields to displacement fields in physical space
@@ -79,7 +79,7 @@ class DeformableMixin:
         """
         if "distributed" in reg.__class__.__name__.lower():
             logger.info("Rerouting to distributed transform")
-            return reg.save_as_ants_transforms_distributed(filenames)
+            return reg.save_as_ants_transforms_distributed(filenames, save_inverse)
 
         if isinstance(filenames, str):
             filenames = [filenames]
@@ -88,32 +88,40 @@ class DeformableMixin:
         fixed_image: BatchedImages = reg.fixed_images
         moving_image: BatchedImages = reg.moving_images
 
-        # get the moved coordinates and initial grid in pytorch space
-        # moved_coords = reg.get_warped_coordinates(fixed_image, moving_image)   # [B, H, W, [D], dim]
-        # get affine and displacement parts
-        # init grid
-        # init_grid = F.affine_grid(torch.eye(reg.dims, reg.dims+1, device=moved_coords.device)[None], \
-        #                             fixed_image.shape, align_corners=True)
-        # this is now moved displacements
+        # get metadata to convert torch space to physical space
         moving_t2p = moving_image.get_torch2phy()
         fixed_t2p = fixed_image.get_torch2phy()
 
-        # get params
-        moved_params = reg.get_warp_parameters(fixed_image, moving_image)   # contains affine and grid
-        moved_coords = moved_params['grid']
+        # get params or inverse params
+        if save_inverse:
+            moved_params = reg.get_inverse_warp_parameters(fixed_image, moving_image)   # contains affine and grid
+        else:
+            moved_params = reg.get_warp_parameters(fixed_image, moving_image)   # contains affine and grid
+
+        moved_coords = moved_params['grid'].detach()
         affine = moved_params['affine']
 
-        # convert to ants format
-        moved_coords = torch.einsum('bij, b...j->b...i', moving_t2p[:, :reg.dims, :reg.dims], moved_coords).contiguous()  # convert to moving space
+        if save_inverse:
+            moved_coords = torch.einsum('bij, b...j->b...i', fixed_t2p[:, :reg.dims, :reg.dims], moved_coords).contiguous()  # convert to fixed space
+        else:
+            # convert to ants format
+            moved_coords = torch.einsum('bij, b...j->b...i', moving_t2p[:, :reg.dims, :reg.dims], moved_coords).contiguous()  # convert to moving space
 
         # create ants affine
         row = torch.zeros((affine.shape[0], 1, reg.dims+1), device=affine.device, dtype=affine.dtype)
         row[:, 0, -1] = 1
         affine = torch.cat([affine, row], dim=1)  # [b, dim+1, dim+1]
-        affine = ((moving_t2p @ affine - fixed_t2p)[:, :reg.dims]).contiguous()
+        # 
+        if save_inverse:
+            affine = ((fixed_t2p @ affine - moving_t2p)[:, :reg.dims]).contiguous()
+        else:
+            affine = ((moving_t2p @ affine - fixed_t2p)[:, :reg.dims]).contiguous()
 
         # create moved_disp
         moved_disp = fireants_interpolator.affine_warp(affine=affine, grid=moved_coords)
+
+        if save_inverse:
+            breakpoint()
 
         # save 
         for i in range(reg.opt_size):
@@ -121,16 +129,16 @@ class DeformableMixin:
             savefile = filenames[i]
             # get itk image
             if len(fixed_image.images) < i:     # this image is probably broadcasted then
-                itk_data = fixed_image.images[0].itk_image
+                itk_data = fixed_image.images[0].itk_image if not save_inverse else moving_image.images[0].itk_image
             else:
-                itk_data = fixed_image.images[i].itk_image
+                itk_data = fixed_image.images[i].itk_image if not save_inverse else moving_image.images[i].itk_image
             # copy itk data
             warp = sitk.GetImageFromArray(moved_disp)
             warp.CopyInformation(itk_data)
             sitk.WriteImage(warp, savefile)
 
     @torch.no_grad()
-    def save_as_ants_transforms_distributed(reg, filenames: Union[str, List[str]]):
+    def save_as_ants_transforms_distributed(reg, filenames: Union[str, List[str]], save_inverse=False):
         '''
         Save the warp field in ANTs compatible format for distributed registration.
         This function is called by `save_as_ants_transforms` if the registration is distributed.
@@ -146,6 +154,8 @@ class DeformableMixin:
         ''' 
         if "distributed" not in reg.__class__.__name__.lower():
             raise ValueError("This function should only be called by distributed registration")
+        
+        assert not save_inverse, "Inverse transforms are not supported in distributed mode"
 
         if isinstance(filenames, str):
             filenames = [filenames]

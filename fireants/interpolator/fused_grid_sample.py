@@ -210,7 +210,7 @@ class FusedWarpComposer3d(torch.autograd.Function):
         # call backward
         ffo.fused_grid_composer_3d_backward(input, affine, grid, grad_output.contiguous(), input_grad, affine_grad, grid_grad, min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], align_corners)
         # return gradients
-        return input_grad, affine_grad, grid_grad, None, None, None
+        return input_grad, affine_grad, grid_grad, None, None, None, None
 
 class FusedAffineWarp3d(torch.autograd.Function):
     @staticmethod

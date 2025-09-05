@@ -71,36 +71,46 @@ def lap_irn_logjacdet(warp):
     # channel second
     return lku_logjacdet(warp)
     
-def compute_metrics(fixedlab, movedlab, warp, method='transmorph', onlydice=False, labelmax=35):  
-    ''' compute 3 metrics: dice score, HD95 and logJacDetStd 
-    fixedlab, movedlab are supposed to be [B, C=35, H, W, D] tensors
-    warp is method dependent
-    '''
-    dice_scores = compute_dice_coefficient_onehot(fixedlab, movedlab, labelmax)   # list of dice scores
+def compute_metrics(
+        fixedlab, movedlab,
+        onlydice=False,
+        labelmax=35,
+        percentiles=(95,), 
+        method = 'exact_percentage'):          # e.g. (30,50,70,90,95)
+    
+    # removed the warp argument and the logjacdet loss implementation
+    dice_scores = compute_dice_coefficient_onehot(
+        fixedlab, movedlab, labelmax)          # list-or-array length = labelmax
+
     if onlydice:
         return {'dice': dice_scores}
-    hd95_scores = []
-    for i in range(1, 36):
-        surf_distances = compute_surface_distances(fixedlab[0, i-1].data.cpu().numpy().astype(bool), movedlab[0, i-1].data.cpu().numpy().astype(bool), [1, 1, 1])
-        hd95 = compute_robust_hausdorff(surf_distances, 95)
-        hd95_scores.append(hd95)
-    # compute logjac
-    logjacstd = 0
-    if method == 'transmorph':
-        # warp is of shape (B, 3, HWD), convert to (HWD, 3)
-        logjacstd = transmorph_logjacdet(warp)
-    elif method == 'symnet':
-        logjacstd = symnet_logjacdet(warp)
-    elif method == 'lku':
-        logjacstd = lku_logjacdet(warp)
-    elif method == 'lapirn':
-        logjacstd = lap_irn_logjacdet(warp)
-    elif method == 'fireants':
-        logjacstd = 0  # TODO: implement this
+    # --- HDxx for each requested percentile --------------------------------
+    # build a dict: {percentile -> list_of_hd}
+    hd_lists = {p: [] for p in percentiles}
+
+    MISSING_PENALTY = 100.0
+
+    for lb in range(1, labelmax+1):
+        gt = fixedlab[0, lb-1].cpu().numpy().astype(bool)
+        pr = movedlab[0, lb-1].cpu().numpy().astype(bool)
+        # if not (gt.any() and pr.any()):
+        if gt.sum() == 0 or pr.sum() == 0:
+            print(f"label {lb} completely missing ...")
+            # If either ground‐truth or predicted label is empty, append 100
+            for p in percentiles:
+                hd_lists[p].append(MISSING_PENALTY)
+            continue
+
+        sd = compute_surface_distances(gt, pr, [1, 1, 1])
+        for p in percentiles:
+            hd_lists[p].append(compute_robust_hausdorff(sd, p, method))
+
+    # collapse lists -> numpy arrays, then to dict {'hd30': …, 'hd95': …}
+    hd_results = {f'hd{p}': np.asarray(vals, dtype=float) for p, vals in hd_lists.items()}
+
     return {
         'dice': dice_scores,
-        'hd95': hd95_scores,
-        'logjacstd': logjacstd
+        **hd_results,         # hd30, hd50, … whatever you asked for
     }
 
 #### Actual utilities (copied from https://github.com/MDL-UzL/L2R/blob/main/evaluation/surface-distance/surface_distance/metrics.py)
@@ -398,7 +408,7 @@ def compute_average_surface_distance(surface_distances):
             np.sum(surfel_areas_pred))
     return (average_distance_gt_to_pred, average_distance_pred_to_gt)
 
-def compute_robust_hausdorff(surface_distances, percent):
+def compute_robust_hausdorff(surface_distances, percent, method):
     """Computes the robust Hausdorff distance.
 
     Computes the robust Hausdorff distance. "Robust", because it uses the
@@ -421,18 +431,36 @@ def compute_robust_hausdorff(surface_distances, percent):
     surfel_areas_pred = surface_distances["surfel_areas_pred"]
     if len(distances_gt_to_pred) > 0:    # pylint: disable=g-explicit-length-test
         surfel_areas_cum_gt = np.cumsum(surfel_areas_gt) / np.sum(surfel_areas_gt)
-        idx = np.searchsorted(surfel_areas_cum_gt, percent/100.0)
-        perc_distance_gt_to_pred = distances_gt_to_pred[
-                min(idx, len(distances_gt_to_pred)-1)]
+        # idx = np.searchsorted(surfel_areas_cum_gt, percent/100.0)
+        idx = len(surfel_areas_cum_gt) * (percent/100.0)
+        idx = int(np.floor(idx))
+        if method == "exact_percentage":
+            perc_distance_gt_to_pred = distances_gt_to_pred[min(idx, len(distances_gt_to_pred)-1)]
+        elif method == "cum_percentage":
+            perc_distance_gt_to_pred = np.mean(distances_gt_to_pred[:idx+1])
+        elif method == 'inv_cum_percentage':
+            distances_gt_to_pred = distances_gt_to_pred[::-1]
+            perc_distance_gt_to_pred = np.mean(distances_gt_to_pred[:idx+1])
+        else:
+            AssertionError("hd_[percent] method not implemented")
     else:
         perc_distance_gt_to_pred = np.Inf
 
     if len(distances_pred_to_gt) > 0:    # pylint: disable=g-explicit-length-test
         surfel_areas_cum_pred = (np.cumsum(surfel_areas_pred) /
                                                          np.sum(surfel_areas_pred))
-        idx = np.searchsorted(surfel_areas_cum_pred, percent/100.0)
-        perc_distance_pred_to_gt = distances_pred_to_gt[
-                min(idx, len(distances_pred_to_gt)-1)]
+        # idx = np.searchsorted(surfel_areas_cum_pred, percent/100.0)
+        idx = len(surfel_areas_cum_pred) * (percent/100.0)
+        idx = int(np.floor(idx))
+        if method == "exact_percentage":
+            perc_distance_pred_to_gt = distances_pred_to_gt[min(idx, len(distances_pred_to_gt)-1)]
+        elif method == "cum_percentage":
+            perc_distance_pred_to_gt = np.mean(distances_pred_to_gt[:idx+1])
+        elif method == 'inv_cum_percentage':
+            distances_pred_to_gt = distances_pred_to_gt[::-1]
+            perc_distance_pred_to_gt = np.mean(distances_pred_to_gt[:idx+1])
+        else:
+            AssertionError("hd_[method] not implemented")
     else:
         perc_distance_pred_to_gt = np.Inf
 

@@ -92,6 +92,23 @@ class MomentsRegistration(AbstractRegistration):
                     M[:, j, i] = Mij
         return M
     
+    def find_best_detmat_2d(self, U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m):
+        '''
+        Find best determinant matrix for 2D
+        '''
+        rot = [np.eye(2) for _ in range(2)]
+        antirot = [np.eye(2) for _ in range(2)]
+        for i in range(2):
+            antirot[i][i, i] = -1
+        # rot has det 1 and antirot has det -1
+        if self.orientation == 'rot':
+            oris = rot
+        elif self.orientation == 'antirot':
+            oris = antirot
+        else:
+            oris = rot + antirot
+        return self._get_best_orientation(U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m, oris)
+    
     def find_best_detmat_3d(self, U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m):
         ''' 
         Find best determinant matrix for 3D 
@@ -109,8 +126,15 @@ class MomentsRegistration(AbstractRegistration):
             oris = antirot
         else:
             oris = rot + antirot
-        oris = np.array(oris)   # [confs, 3, 3]
-        oris = torch.tensor(oris, device=fixed_arrays.device).unsqueeze(1).expand(-1, self.opt_size, -1, -1)       # [confs, N, 3, 3]
+        return self._get_best_orientation(U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m, oris)
+    
+    def _get_best_orientation(self, U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m, oris):
+        '''
+        Get best orientation for 2D/3D 
+        this is a helper function for find_best_detmat_2d and find_best_detmat_3d which return the best orientation matrix 
+        '''
+        oris = np.array(oris)   # [confs, d, d]
+        oris = torch.tensor(oris, device=fixed_arrays.device).unsqueeze(1).expand(-1, self.opt_size, -1, -1)       # [confs, N, d, d]
         oris = oris.to(U_f.dtype)
         moving_p2t = self.moving_images.get_phy2torch()
 
@@ -121,9 +145,9 @@ class MomentsRegistration(AbstractRegistration):
         # for each orientation, compute R, t and find best metric
         for ori_id, ori in enumerate(oris):
             # compute R, t
-            R = (U_f @ ori @ U_m).to(fixed_arrays.device)   # [N, 3, 3]
+            R = (U_f @ ori @ U_m).to(fixed_arrays.device)   # [N, d, d]
             R = R.transpose(-1, -2)
-            moved_coords_m = torch.einsum('ntd, n...d->n...t', R, xyz_f) + com_m[:, None]  # [N, S, 3]
+            moved_coords_m = torch.einsum('ntd, n...d->n...t', R, xyz_f) + com_m[:, None]  # [N, S, d]
             moved_coords_m = torch.einsum('ntd, n...d->n...t', moving_p2t[:, :-1, :-1], moved_coords_m) + moving_p2t[:, :-1, -1].unsqueeze(1)
             # moved_coords_m is now of size [N, S, dims] -> revert it back to [N, H, W, D, dims]
             moved_coords_m = moved_coords_m.view(-1, *fixed_arrays.shape[2:], self.dims)
@@ -292,13 +316,11 @@ class MomentsRegistration(AbstractRegistration):
             Rf = Rf.transpose(-1, -2)
             self.Rf = Rf
             self.tf = com_m.to(com_f.device) - (com_f[:, None] @ (Rf.transpose(-1, -2))).squeeze(1)
-            # self.Rf = (U_f @ detmat @ U_m).to(self.fixed_images.device)
-            # self.tf = com_f - com_m.to(com_f.device) @ (self.Rf.transpose(-1, -2))
         else:
             raise NotImplementedError("Only 1st and 2nd order moments supported.")
 
     def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
-        pass
+        raise NotImplementedError("A clean implementation of this function is coming soon.")
 
     def get_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         fixed_t2p = fixed_images.get_torch2phy()
@@ -319,7 +341,6 @@ class MomentsRegistration(AbstractRegistration):
         coords = torch.einsum('ntd, n...d->n...t', aff, fixed_image_coords_homo)  # [N, H, W, [D], dims+1]
         coords = torch.einsum('ntd, n...d->n...t', moving_p2t, coords)  # [N, H, W, [D], dims+1]
         return coords[..., :-1]
-
     
     def optimize(self, save_transformed=False):
         ''' Given fixed and moving images, optimize rigid registration '''

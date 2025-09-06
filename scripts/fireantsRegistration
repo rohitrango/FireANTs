@@ -70,7 +70,6 @@ def parse_args():
     parser.add_argument('--interpolation', type=str, default='Linear',
                       choices=['Linear', 'NearestNeighbor'],
                       help='Interpolation type for warped image')
-    parser.add_argument('--help', action='store_true', help='Show help')
     # extra args
     parser.add_argument('--smooth_warp_sigma', type=float, default=0.25, help='Smoothing sigma for the warp field')
     parser.add_argument('--smooth_grad_sigma', type=float, default=0.5, help='Smoothing sigma for the gradient field')

@@ -246,6 +246,7 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         # _kernel = look_up_option(kernel_type, kernel_dict)
         _kernel = kernel_dict[kernel_type]
         self.kernel = _kernel(self.kernel_size)
+        self.kernel = self.kernel / self.kernel.sum()
         self.kernel.requires_grad = False
         self.kernel_nd, self.kernel_vol = self.get_kernel_vol()   # get nD kernel and its volume
         self.smooth_nr = float(smooth_nr)

@@ -309,24 +309,93 @@ void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &t
 /* ************************************************************************************************************ */
 
 template <typename scalar_t, typename index_t>
-__global__ void mutual_information_histogram_fwd_kernel_basic(
+__global__ void mutual_information_histogram_fwd_kernel_basic_exact(
     scalar_t* __restrict__ input_img, scalar_t* __restrict__ target_img, scalar_t* __restrict__ pab, scalar_t* __restrict__ pa, scalar_t* __restrict__ pb,
     index_t batch_size, index_t channels, index_t num_aggregates, index_t num_bins, index_t num_samples,
-    float minval, float maxval, float sigma_ratio, bool approximate_reduction, KernelType kernel_type
+    float minval, float maxval, float sigma_ratio, KernelType kernel_type
 ) {
     using opmath_t = at::opmath_type<scalar_t>;
-
     __shared__ opmath_t shared_prob_pa[BLOCKSIZE_3D];
     __shared__ opmath_t shared_prob_pb[BLOCKSIZE_3D];
 
     // get (b, c, n, bin_idx)
     index_t id = blockIdx.x * blockDim.x + threadIdx.x;
-    index_t bin_idx = 0;
-    // if approximate_reduction is false, then we need to compute the bin index
-    if (!approximate_reduction) {
-        bin_idx = id % num_bins;
-        id = id / num_bins;
+    index_t bins_per_block = min(blockDim.x / num_bins, num_bins);
+
+    index_t bin_bin_idx = id % (bins_per_block * num_bins);
+    id = id / (bins_per_block * num_bins);
+    // only the blockIdx is left 
+    index_t agg_idx = id % num_aggregates;
+    index_t ch_idx = (id / num_aggregates) % channels;
+    index_t b_idx = (id / (num_aggregates * channels)) % batch_size;
+
+    opmath_t minval_op = static_cast<opmath_t>(minval);
+    opmath_t maxval_op = static_cast<opmath_t>(maxval);
+
+    // convert bin_bin_idx to bin_idx_j and bin_idx_i
+    index_t bin_idx = bin_bin_idx % num_bins;
+    index_t bin_idx_outer = bin_bin_idx / num_bins;
+
+    // index
+    index_t pa_idx = num_bins * (agg_idx + num_aggregates * (ch_idx + channels * b_idx));  // [b, c, agg, ?]
+    
+    for (index_t n = agg_idx; n < num_samples; n += num_aggregates) {
+        // load i and j
+        opmath_t iimg = static_cast<opmath_t>(input_img[b_idx * channels * num_samples + ch_idx * num_samples + n]);
+        opmath_t jimg = static_cast<opmath_t>(target_img[b_idx * channels * num_samples + ch_idx * num_samples + n]);
+        // normalize
+        iimg = (iimg - minval_op) / (maxval_op - minval_op);
+        jimg = (jimg - minval_op) / (maxval_op - minval_op);
+
+        // compute unnormalized probability of beting in `bin_idx`
+        shared_prob_pa[threadIdx.x] = prob_func(iimg, bin_idx, num_bins, kernel_type, sigma_ratio);
+        shared_prob_pb[threadIdx.x] = prob_func(jimg, bin_idx, num_bins, kernel_type, sigma_ratio);
+
+        scalar_t prob_Ik = shared_prob_pa[threadIdx.x];
+        scalar_t prob_Jk = shared_prob_pb[threadIdx.x];
+
+        __syncthreads();
+        // compute O(log(n)) sum of unnormalized probabilities
+        for (index_t i = num_bins / 2; i > 0; i >>= 1) {
+            if (bin_idx < i) {
+                shared_prob_pa[threadIdx.x] += shared_prob_pa[threadIdx.x + i];
+                shared_prob_pb[threadIdx.x] += shared_prob_pb[threadIdx.x + i];
+            }
+            __syncthreads();
+        }
+        // normalize (bin 0 contains the sum of all w(j) for this image intensity)
+        prob_Ik = prob_Ik / shared_prob_pa[threadIdx.x - bin_idx];
+        prob_Jk = prob_Jk / shared_prob_pb[threadIdx.x - bin_idx];
+        __syncthreads();
+        shared_prob_pa[threadIdx.x] = prob_Ik;  // compute this for pab computation
+        __syncthreads();
+
+        // add these to aggregate only for first outer bin
+        if(bin_idx_outer == 0) {
+            pa[bin_idx + pa_idx] += prob_Ik;
+            pb[bin_idx + pa_idx] += prob_Jk;
+        }
+
+        for (index_t i = bin_idx_outer; i < num_bins; i += bins_per_block) {
+            pab[bin_idx + num_bins * (i + pa_idx)] += shared_prob_pa[threadIdx.x - bin_idx + i] * prob_Jk;
+        }
+        __syncthreads();
     }
+
+}
+
+template <typename scalar_t, typename index_t>
+__global__ void mutual_information_histogram_fwd_kernel_basic_approximate(
+    scalar_t* __restrict__ input_img, scalar_t* __restrict__ target_img, scalar_t* __restrict__ pab, scalar_t* __restrict__ pa, scalar_t* __restrict__ pb,
+    index_t batch_size, index_t channels, index_t num_aggregates, index_t num_bins, index_t num_samples,
+    float minval, float maxval, float sigma_ratio, KernelType kernel_type
+) {
+    using opmath_t = at::opmath_type<scalar_t>;
+    __shared__ opmath_t shared_prob_pa[BLOCKSIZE_3D];
+    __shared__ opmath_t shared_prob_pb[BLOCKSIZE_3D];
+
+    // get (b, c, n, bin_idx)
+    index_t id = blockIdx.x * blockDim.x + threadIdx.x;
     index_t agg_idx = id % num_aggregates;
     index_t ch_idx = (id / num_aggregates) % channels;
     index_t b_idx = (id / (num_aggregates * channels)) % batch_size;
@@ -345,53 +414,18 @@ __global__ void mutual_information_histogram_fwd_kernel_basic(
         iimg = (iimg - minval_op) / (maxval_op - minval_op);
         jimg = (jimg - minval_op) / (maxval_op - minval_op);
 
-        if (!approximate_reduction) {
-            // compute unnormalized probability of beting in `bin_idx`
-            shared_prob_pa[threadIdx.x] = prob_func(iimg, bin_idx, num_bins, kernel_type, sigma_ratio);
-            shared_prob_pb[threadIdx.x] = prob_func(jimg, bin_idx, num_bins, kernel_type, sigma_ratio);
+        // compute bin indices (approximate reduction)
+        index_t i_bin_idx = static_cast<index_t>(::floor(iimg * num_bins));
+        index_t j_bin_idx = static_cast<index_t>(::floor(jimg * num_bins));
+        if (i_bin_idx < 0) i_bin_idx = 0;
+        if (j_bin_idx < 0) j_bin_idx = 0;
+        if (i_bin_idx >= num_bins) i_bin_idx = num_bins - 1;
+        if (j_bin_idx >= num_bins) j_bin_idx = num_bins - 1;
 
-            scalar_t prob_Ik = shared_prob_pa[threadIdx.x];
-            scalar_t prob_Jk = shared_prob_pb[threadIdx.x];
-
-            __syncthreads();
-            // compute O(log(n)) sum of unnormalized probabilities
-            for (index_t i = num_bins / 2; i > 0; i /= 2) {
-                if (bin_idx < i) {
-                    shared_prob_pa[threadIdx.x] += shared_prob_pa[threadIdx.x + i];
-                    shared_prob_pb[threadIdx.x] += shared_prob_pb[threadIdx.x + i];
-                }
-                __syncthreads();
-            }
-            // normalize (bin 0 contains the sum of all w(j) for this image intensity)
-            prob_Ik = prob_Ik / shared_prob_pa[threadIdx.x - bin_idx];
-            prob_Jk = prob_Jk / shared_prob_pb[threadIdx.x - bin_idx];
-            __syncthreads();
-            shared_prob_pa[threadIdx.x] = prob_Ik;  // compute this for pab computation
-            __syncthreads();
-
-            // add these to aggregate
-            pa[bin_idx + pa_idx] += prob_Ik;
-            pb[bin_idx + pa_idx] += prob_Jk;
-            // for this 'j', compute pab for all 'i' --> this will lead to coalescing of writes for consecutive threads 
-            for (index_t i = 0; i < num_bins; i++) {
-                pab[bin_idx + num_bins * (i + pa_idx)] += (shared_prob_pa[threadIdx.x - bin_idx + i] * prob_Jk);
-            }
-            __syncthreads();
-        }
-        else {
-            // compute bin indices (approximate reduction)
-            index_t i_bin_idx = static_cast<index_t>(::floor(iimg * num_bins));
-            index_t j_bin_idx = static_cast<index_t>(::floor(jimg * num_bins));
-            if (i_bin_idx < 0) i_bin_idx = 0;
-            if (j_bin_idx < 0) j_bin_idx = 0;
-            if (i_bin_idx >= num_bins) i_bin_idx = num_bins - 1;
-            if (j_bin_idx >= num_bins) j_bin_idx = num_bins - 1;
-
-            // add to histogram
-            pab[j_bin_idx + num_bins * (i_bin_idx + pa_idx)] += 1;
-            pa[i_bin_idx + pa_idx] += 1;
-            pb[j_bin_idx + pa_idx] += 1;
-        }
+        // add to histogram
+        pab[j_bin_idx + num_bins * (i_bin_idx + pa_idx)] += 1;
+        pa[i_bin_idx + pa_idx] += 1;
+        pb[j_bin_idx + pa_idx] += 1;
     }
 }
 
@@ -418,59 +452,82 @@ std::vector<torch::Tensor> mutual_information_histogram_fwd(torch::Tensor &input
         throw std::runtime_error("num_bins must be less than or equal to 512");
     }
 
-    // define number of aggregates
-    int64_t num_aggregates = 65536; 
-    if (num_bins > 32) {
-        num_aggregates = num_aggregates / 64;
-    }
-
     // get batch_size, channel, and number of samples
     int64_t numel = input_img.numel();
     int64_t batch_size = input_img.size(0);
     int64_t channels = input_img.size(1);
     int64_t num_samples = numel / (batch_size * channels);
 
-    /* TODO: Different implementations for small and large bins */
-    // if num_bins * num_bins <= 4096, use small bins implementation using shared memory
-    // otherwise, use large bins implementation
+    // define number of aggregates
+    int64_t num_aggregates = min(num_samples / num_bins / num_bins , static_cast<int64_t>(65536)); 
+    if (num_bins > 32 && num_aggregates == 65536) {
+        int64_t factor = num_bins / 32;
+        num_aggregates = num_aggregates / factor / factor;
+    }
+    num_aggregates = ((num_aggregates + BLOCKSIZE_3D - 1) / BLOCKSIZE_3D) * BLOCKSIZE_3D;
+    // std::cout << "num_aggregates: " << num_aggregates << std::endl;
 
-    // in "smallBinsImpl", we store the entire joint histogram in shared memory (because there will be contention)
-    // thats why we need 4096 blocks of shared memory
-    // each "block" is responsible for one (b, c, n) pair
+    int bins_per_block = min(BLOCKSIZE_3D / num_bins, num_bins);
 
-    // in "largeBinsImpl", we will use simple atomicAdd operations because it is unlikely that
-    // bool useSmallBinsImpl = num_bins * num_bins <= 4096;
+    std::cout << " bin per block " << bins_per_block << std::endl;
 
     // determine grid size and blocksize
-    dim3 blockSize(BLOCKSIZE_3D);
-    dim3 gridSize(batch_size * channels * num_aggregates * (approximate_reduction ? 1 : num_bins) / BLOCKSIZE_3D);
+    int64_t grid_size_blocks;
+    if (approximate_reduction) {
+        grid_size_blocks = batch_size * channels * num_aggregates / BLOCKSIZE_3D;
+    }
+    else {
+        grid_size_blocks = batch_size * channels * num_aggregates;
+    }
+    dim3 blockSize(approximate_reduction ? BLOCKSIZE_3D : min(BLOCKSIZE_3D, num_bins * num_bins));
+    dim3 gridSize(grid_size_blocks);
+    // dim3 gridSize(batch_size * channels * num_aggregates * (approximate_reduction ? 1 : num_bins) / BLOCKSIZE_3D);
 
     torch::Tensor pab = torch::zeros({batch_size, channels, num_aggregates, num_bins, num_bins}, torch::TensorOptions().device(input_img.device()).dtype(torch::kFloat));
     torch::Tensor pa = torch::zeros({batch_size, channels, num_aggregates, num_bins}, torch::TensorOptions().device(input_img.device()).dtype(torch::kFloat));
     torch::Tensor pb = torch::zeros({batch_size, channels, num_aggregates, num_bins}, torch::TensorOptions().device(input_img.device()).dtype(torch::kFloat));
 
+
     AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16, input_img.scalar_type(), "mutual_information_histogram_fwd", [&] {
         if (canUse32BitIndexMath(input_img) && canUse32BitIndexMath(pab)) {
-            mutual_information_histogram_fwd_kernel_basic<<<gridSize, blockSize, 0, stream>>>(
-                input_img.data_ptr<scalar_t>(),
-                target_img.data_ptr<scalar_t>(),
-                pab.data_ptr<scalar_t>(),
-                pa.data_ptr<scalar_t>(),
-                pb.data_ptr<scalar_t>(),
-                static_cast<int>(batch_size),
-                static_cast<int>(channels),
-                static_cast<int>(num_aggregates),
-                static_cast<int>(num_bins),
-                static_cast<int>(num_samples),
-                minval, maxval,
-                sigma_ratio,
-                approximate_reduction,
-                kernel_type
-            );
+            if (approximate_reduction) {
+                mutual_information_histogram_fwd_kernel_basic_approximate<<<gridSize, blockSize, 0, stream>>>(
+                    input_img.data_ptr<scalar_t>(),
+                    target_img.data_ptr<scalar_t>(),
+                    pab.data_ptr<scalar_t>(),
+                    pa.data_ptr<scalar_t>(),
+                    pb.data_ptr<scalar_t>(),
+                    static_cast<int>(batch_size),
+                    static_cast<int>(channels),
+                    static_cast<int>(num_aggregates),
+                    static_cast<int>(num_bins),
+                    static_cast<int>(num_samples),
+                    minval, maxval,
+                    sigma_ratio,
+                    kernel_type
+                );
+            } else {
+                mutual_information_histogram_fwd_kernel_basic_exact<<<gridSize, blockSize, 0, stream>>>(
+                    input_img.data_ptr<scalar_t>(),
+                    target_img.data_ptr<scalar_t>(),
+                    pab.data_ptr<scalar_t>(),
+                    pa.data_ptr<scalar_t>(),
+                    pb.data_ptr<scalar_t>(),
+                    static_cast<int>(batch_size),
+                    static_cast<int>(channels),
+                    static_cast<int>(num_aggregates),
+                    static_cast<int>(num_bins),
+                    static_cast<int>(num_samples),
+                    minval, maxval,
+                    sigma_ratio,
+                    kernel_type
+                );
+            }
             C10_CUDA_KERNEL_LAUNCH_CHECK();
         }
         else {
-            mutual_information_histogram_fwd_kernel_basic<<<gridSize, blockSize, 0, stream>>>(
+            if (approximate_reduction) {
+                mutual_information_histogram_fwd_kernel_basic_approximate<<<gridSize, blockSize, 0, stream>>>(
                 input_img.data_ptr<scalar_t>(),
                 target_img.data_ptr<scalar_t>(),
                 pab.data_ptr<scalar_t>(),
@@ -483,9 +540,24 @@ std::vector<torch::Tensor> mutual_information_histogram_fwd(torch::Tensor &input
                 static_cast<int64_t>(num_samples),
                 minval, maxval,
                 sigma_ratio,
-                approximate_reduction,
+                kernel_type);
+            } else {
+            mutual_information_histogram_fwd_kernel_basic_exact<<<gridSize, blockSize, 0, stream>>>(
+                input_img.data_ptr<scalar_t>(),
+                target_img.data_ptr<scalar_t>(),
+                pab.data_ptr<scalar_t>(),
+                pa.data_ptr<scalar_t>(),
+                pb.data_ptr<scalar_t>(),
+                static_cast<int64_t>(batch_size),
+                static_cast<int64_t>(channels),
+                static_cast<int64_t>(num_aggregates),
+                static_cast<int64_t>(num_bins),
+                static_cast<int64_t>(num_samples),
+                minval, maxval,
+                sigma_ratio,
                 kernel_type
             );
+            }
             C10_CUDA_KERNEL_LAUNCH_CHECK();
         }
     });

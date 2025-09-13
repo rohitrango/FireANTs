@@ -45,7 +45,7 @@ def _get_smoothing_wrapper(optimizer):
     if gp_size <= 1:
         def smoothing_wrapper_nodist(tensor, kernels, padding=0):
             # tensor is a warp field
-            tensor = separable_filtering(tensor.permute(*optimizer.permute_vtoimg), kernels).permute(*optimizer.permute_imgtov)
+            tensor = separable_filtering(tensor.permute(*optimizer.permute_vtoimg).contiguous(), kernels).permute(*optimizer.permute_imgtov).contiguous()
             return tensor
         return smoothing_wrapper_nodist
     else:
@@ -53,7 +53,7 @@ def _get_smoothing_wrapper(optimizer):
         def smoothing_wrapper_dist(tensor, kernels, padding=0):
             if padding > 0:
                 tensor = add_distributed_padding(tensor, padding, optimizer.dim_to_shard-1) # 2 will be added to dim_to_shard anyway
-            tensor = separable_filtering(tensor.permute(*optimizer.permute_vtoimg), kernels).permute(*optimizer.permute_imgtov).contiguous()
+            tensor = separable_filtering(tensor.permute(*optimizer.permute_vtoimg).contiguous(), kernels).permute(*optimizer.permute_imgtov).contiguous()
             if padding > 0:
                 tensor = crop_distributed_padding(tensor, padding, optimizer.dim_to_shard-1)
             return tensor

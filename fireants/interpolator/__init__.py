@@ -44,8 +44,11 @@ class GridSampleDispatcher:
     """Dispatcher for grid sample operations that handles both fused and non-fused implementations."""
     
     def __init__(self):
-        self._use_ffo = USE_FFO and FFO_AVAILABLE
+        self._use_ffo = (USE_FFO and FFO_AVAILABLE)
+        print(f"USE_FFO: {USE_FFO}")
+        print(f"FFO_AVAILABLE: {FFO_AVAILABLE}")
         logger.info(f"Using FFO: {self._use_ffo}")
+        print(f"Using FFO: {self._use_ffo}")
         self._registry: Dict[bool, Dict[str, Callable]] = {
             True: {},  # FFO backend
             False: {}  # PyTorch backend
@@ -78,6 +81,7 @@ class GridSampleDispatcher:
     @use_ffo.setter
     def use_ffo(self, value: bool) -> None:
         """Set the backend state. Raises ValueError if trying to use FFO when not available."""
+        print(f"Setting use_ffo to {value}")
         if value and not FFO_AVAILABLE:
             raise ValueError("Cannot set use_ffo to True when fused operations are not available")
         self._use_ffo = value
@@ -94,7 +98,9 @@ class GridSampleDispatcher:
     
     def __call__(self, *args, **kwargs) -> Any:
         """Dispatch to appropriate grid sample implementation."""
+        # print(f"Using FFO: {self._use_ffo}")
         dim = self._get_image_dim(*args, **kwargs)
+        # print(f"Dispatching to {f'grid_sample_{dim}d'}")
         return self._registry[self._use_ffo][f'grid_sample_{dim}d'](*args, **kwargs)
     
     def warp_composer(self, *args, **kwargs) -> Any:

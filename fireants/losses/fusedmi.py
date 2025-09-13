@@ -26,6 +26,7 @@ from fireants.losses.mi import allgather_mi
 import logging
 logger = logging.getLogger(__name__)
 from fireants.registration.distributed import parallel_state
+from fireants.losses.cc import separable_filtering, gaussian_1d
 
 kernel_type_dict = {
     "gaussian": ffo.KernelType.GAUSSIAN,
@@ -34,12 +35,38 @@ kernel_type_dict = {
     "delta": ffo.KernelType.DELTA,
 }
 
+def smooth_kernel(pab: torch.Tensor, pa: torch.Tensor, pb: torch.Tensor, gaussian: torch.Tensor) -> torch.Tensor:
+    '''
+    helper function to smooth kernel
+    '''
+    pab = separable_filtering(pab, gaussian)
+    pab /= pab.sum(dim=(-1, -2), keepdim=True)
+    pa = separable_filtering(pa, gaussian)
+    pa /= pa.sum(dim=(-1, -2), keepdim=True)
+    pb = separable_filtering(pb, gaussian)
+    pb /= pb.sum(dim=(-1, -2), keepdim=True)
+    return pab, pa, pb
+
+smooth_kernel_compile = torch.compile(smooth_kernel)
+
 class MI_histogram_kernel(torch.autograd.Function):
     ''' custom op to compute kernel without creating parzen window table '''
     @staticmethod
-    def forward(ctx, input_img, target_img, num_bins, kernel_type, minval, maxval, sigma_ratio, approximate_reduction):
+    def forward(ctx, input_img, target_img, num_bins, kernel_type, minval, maxval, sigma_ratio, approximate_reduction, torch_compile):
         # compute histograms
         pab, pa, pb = ffo.mutual_information_histogram_fwd(input_img, target_img, num_bins, kernel_type, minval, maxval, sigma_ratio, approximate_reduction)
+        # smooth kernel 
+        if approximate_reduction:
+            sigma_ratio_tensor = torch.tensor(sigma_ratio/2.0, device=input_img.device, dtype=input_img.dtype) 
+            gaussian = gaussian_1d(sigma_ratio_tensor)
+            pab, pa, pb = smooth_kernel_compile(pab, pa, pb, gaussian) if torch_compile else smooth_kernel(pab, pa, pb, gaussian)
+            # pab = separable_filtering(pab, gaussian_1d(sigma_ratio_tensor))
+            # pab /= pab.sum(dim=(-1, -2), keepdim=True)
+            # pa = separable_filtering(pa, gaussian_1d(sigma_ratio_tensor))
+            # pa /= pa.sum(dim=(-1, -2), keepdim=True)
+            # pb = separable_filtering(pb, gaussian_1d(sigma_ratio_tensor))
+            # pb /= pb.sum(dim=(-1, -2), keepdim=True)
+
         ctx.num_bins = num_bins
         ctx.kernel_type = kernel_type
         # save
@@ -70,7 +97,7 @@ class MI_histogram_kernel(torch.autograd.Function):
         #     grad_input.mul_(sample_size)
         # if grad_target is not None:
         #     grad_target.mul_(sample_size)
-        return grad_input, grad_target, None, None, None, None, None, None
+        return grad_input, grad_target, None, None, None, None, None, None, None
 
 
 class FusedGlobalMutualInformationLoss(nn.Module):
@@ -89,6 +116,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         smooth_dr: float = 1e-7,
         sigma_ratio: float = 1.0,
         approximate_reduction: bool = True,
+        torch_compile: bool = False,
     ) -> None:
         """
         Args:
@@ -117,6 +145,9 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         self.warned = False
         self.sigma_ratio = sigma_ratio
         self.approximate_reduction = approximate_reduction
+        self.torch_compile = torch_compile
+        if self.torch_compile:
+            self.get_mi_from_dist = torch.compile(self.get_mi_from_dist)
 
 
     def get_image_padding(self) -> int:
@@ -163,8 +194,13 @@ class FusedGlobalMutualInformationLoss(nn.Module):
             pred, target = target, pred
         
         # get histograms
-        pab, pa, pb = MI_histogram_kernel.apply(pred, target, self.num_bins, self.kernel_type, minval, maxval, self.sigma_ratio, self.approximate_reduction)
+        pab, pa, pb = MI_histogram_kernel.apply(pred, target, self.num_bins, self.kernel_type, minval, maxval, self.sigma_ratio, self.approximate_reduction, self.torch_compile)
+        return self.get_mi_from_dist(pab, pa, pb)
 
+    def get_mi_from_dist(self, pab: torch.Tensor, pa: torch.Tensor, pb: torch.Tensor) -> torch.Tensor:
+        '''
+        helper function to get mi from distributed histograms (this is the op we want to compile)
+        '''
         if parallel_state.is_initialized() and parallel_state.get_grid_parallel_size() > 1:
             pab, pa, pb = allgather_mi.apply(pab, pa, pb, pred.flatten(2).shape[2])
             # divide by total number of samples (this is not exact but approximate)

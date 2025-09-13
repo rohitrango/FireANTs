@@ -31,6 +31,10 @@ bool is_power_of_two(int num) {
     return (num > 0) && ((num & (num - 1)) == 0);
 }
 
+int div_ceil(int num, int div) {
+    return ((num + div - 1) / div);
+}
+
 template <typename scalar_t, typename index_t>
 __device__ scalar_t prob_func(scalar_t x, index_t bin_idx, index_t num_bins, KernelType kernel_type, float sigma_ratio) {
     float bin_width = 1.0 / num_bins;
@@ -319,67 +323,74 @@ __global__ void mutual_information_histogram_fwd_kernel_basic_exact(
     __shared__ opmath_t shared_prob_pb[BLOCKSIZE_3D];
 
     // get (b, c, n, bin_idx)
-    index_t id = blockIdx.x * blockDim.x + threadIdx.x;
+    // index_t id = blockIdx.x * blockDim.x + threadIdx.x;
     index_t bins_per_block = min(blockDim.x / num_bins, num_bins);
-
-    index_t bin_bin_idx = id % (bins_per_block * num_bins);
-    id = id / (bins_per_block * num_bins);
     // only the blockIdx is left 
-    index_t agg_idx = id % num_aggregates;
-    index_t ch_idx = (id / num_aggregates) % channels;
-    index_t b_idx = (id / (num_aggregates * channels)) % batch_size;
+    // index_t agg_idx = id % num_aggregates;
+    // index_t ch_idx = (id / num_aggregates) % channels;
+    // index_t b_idx = (id / (num_aggregates * channels)) % batch_size;
+    index_t id = blockIdx.x;
+    index_t sample_idx = id % num_samples;
+    index_t ch_idx = (id / num_samples) % channels;
+    index_t b_idx = (id / (num_samples * channels)) % batch_size;
+    index_t agg_idx = sample_idx % num_aggregates;
+
+    if (b_idx >= batch_size) {
+        return;
+    }
 
     opmath_t minval_op = static_cast<opmath_t>(minval);
     opmath_t maxval_op = static_cast<opmath_t>(maxval);
 
     // convert bin_bin_idx to bin_idx_j and bin_idx_i
+    index_t bin_bin_idx = threadIdx.x;
     index_t bin_idx = bin_bin_idx % num_bins;
     index_t bin_idx_outer = bin_bin_idx / num_bins;
 
     // index
     index_t pa_idx = num_bins * (agg_idx + num_aggregates * (ch_idx + channels * b_idx));  // [b, c, agg, ?]
     
-    for (index_t n = agg_idx; n < num_samples; n += num_aggregates) {
-        // load i and j
-        opmath_t iimg = static_cast<opmath_t>(input_img[b_idx * channels * num_samples + ch_idx * num_samples + n]);
-        opmath_t jimg = static_cast<opmath_t>(target_img[b_idx * channels * num_samples + ch_idx * num_samples + n]);
-        // normalize
-        iimg = (iimg - minval_op) / (maxval_op - minval_op);
-        jimg = (jimg - minval_op) / (maxval_op - minval_op);
+    // load i and j
+    opmath_t iimg = static_cast<opmath_t>(input_img[b_idx * channels * num_samples + ch_idx * num_samples + sample_idx]);
+    opmath_t jimg = static_cast<opmath_t>(target_img[b_idx * channels * num_samples + ch_idx * num_samples + sample_idx]);
+    // normalize
+    iimg = (iimg - minval_op) / (maxval_op - minval_op);
+    jimg = (jimg - minval_op) / (maxval_op - minval_op);
 
-        // compute unnormalized probability of beting in `bin_idx`
-        shared_prob_pa[threadIdx.x] = prob_func(iimg, bin_idx, num_bins, kernel_type, sigma_ratio);
-        shared_prob_pb[threadIdx.x] = prob_func(jimg, bin_idx, num_bins, kernel_type, sigma_ratio);
+    // compute unnormalized probability of beting in `bin_idx`
+    shared_prob_pa[threadIdx.x] = prob_func(iimg, bin_idx, num_bins, kernel_type, sigma_ratio);
+    shared_prob_pb[threadIdx.x] = prob_func(jimg, bin_idx, num_bins, kernel_type, sigma_ratio);
 
-        scalar_t prob_Ik = shared_prob_pa[threadIdx.x];
-        scalar_t prob_Jk = shared_prob_pb[threadIdx.x];
+    scalar_t prob_Ik = shared_prob_pa[threadIdx.x];
+    scalar_t prob_Jk = shared_prob_pb[threadIdx.x];
 
-        __syncthreads();
-        // compute O(log(n)) sum of unnormalized probabilities
-        for (index_t i = num_bins / 2; i > 0; i >>= 1) {
-            if (bin_idx < i) {
-                shared_prob_pa[threadIdx.x] += shared_prob_pa[threadIdx.x + i];
-                shared_prob_pb[threadIdx.x] += shared_prob_pb[threadIdx.x + i];
-            }
-            __syncthreads();
-        }
-        // normalize (bin 0 contains the sum of all w(j) for this image intensity)
-        prob_Ik = prob_Ik / shared_prob_pa[threadIdx.x - bin_idx];
-        prob_Jk = prob_Jk / shared_prob_pb[threadIdx.x - bin_idx];
-        __syncthreads();
-        shared_prob_pa[threadIdx.x] = prob_Ik;  // compute this for pab computation
-        __syncthreads();
-
-        // add these to aggregate only for first outer bin
-        if(bin_idx_outer == 0) {
-            pa[bin_idx + pa_idx] += prob_Ik;
-            pb[bin_idx + pa_idx] += prob_Jk;
-        }
-
-        for (index_t i = bin_idx_outer; i < num_bins; i += bins_per_block) {
-            pab[bin_idx + num_bins * (i + pa_idx)] += shared_prob_pa[threadIdx.x - bin_idx + i] * prob_Jk;
+    __syncthreads();
+    // compute O(log(n)) sum of unnormalized probabilities
+    for (index_t i = num_bins / 2; i > 0; i >>= 1) {
+        if (bin_idx < i) {
+            shared_prob_pa[threadIdx.x] += shared_prob_pa[threadIdx.x + i];
+            shared_prob_pb[threadIdx.x] += shared_prob_pb[threadIdx.x + i];
         }
         __syncthreads();
+    }
+    // normalize (bin 0 contains the sum of all w(j) for this image intensity)
+    prob_Ik = prob_Ik / shared_prob_pa[threadIdx.x - bin_idx];
+    prob_Jk = prob_Jk / shared_prob_pb[threadIdx.x - bin_idx];
+    __syncthreads();
+    shared_prob_pa[threadIdx.x] = prob_Ik;  // compute this for pab computation
+    __syncthreads();
+
+    // add these to aggregate only for first outer bin
+    if(bin_idx_outer == 0) {
+        // pa[bin_idx + pa_idx] += prob_Ik;
+        // pb[bin_idx + pa_idx] += prob_Jk;
+        gpuAtomicAdd(pa + bin_idx + pa_idx, prob_Ik);
+        gpuAtomicAdd(pb + bin_idx + pa_idx, prob_Jk);
+    }
+
+    for (index_t i = bin_idx_outer; i < num_bins; i += bins_per_block) {
+        // pab[bin_idx + num_bins * (i + pa_idx)] += shared_prob_pa[threadIdx.x - bin_idx + i] * prob_Jk;
+        gpuAtomicAdd(pab + bin_idx + num_bins * (i + pa_idx), shared_prob_pa[threadIdx.x - bin_idx + i] * prob_Jk);
     }
 
 }
@@ -396,9 +407,18 @@ __global__ void mutual_information_histogram_fwd_kernel_basic_approximate(
 
     // get (b, c, n, bin_idx)
     index_t id = blockIdx.x * blockDim.x + threadIdx.x;
-    index_t agg_idx = id % num_aggregates;
-    index_t ch_idx = (id / num_aggregates) % channels;
-    index_t b_idx = (id / (num_aggregates * channels)) % batch_size;
+    // index_t agg_idx = id % num_aggregates;
+    // index_t ch_idx = (id / num_aggregates) % channels;
+    // index_t b_idx = (id / (num_aggregates * channels)) % batch_size;
+    index_t sample_idx = id % num_samples;
+    index_t ch_idx = (id / num_samples) % channels;
+    index_t b_idx = (id / (num_samples * channels)) % batch_size;
+    index_t agg_idx = sample_idx % num_aggregates;
+
+    // some threads have overflown
+    if (b_idx >= batch_size) {
+        return;
+    }
 
     opmath_t minval_op = static_cast<opmath_t>(minval);
     opmath_t maxval_op = static_cast<opmath_t>(maxval);
@@ -406,27 +426,28 @@ __global__ void mutual_information_histogram_fwd_kernel_basic_approximate(
     // index
     index_t pa_idx = num_bins * (agg_idx + num_aggregates * (ch_idx + channels * b_idx));  // [b, c, agg, ?]
     
-    for (index_t n = agg_idx; n < num_samples; n += num_aggregates) {
-        // load i and j
-        opmath_t iimg = static_cast<opmath_t>(input_img[b_idx * channels * num_samples + ch_idx * num_samples + n]);
-        opmath_t jimg = static_cast<opmath_t>(target_img[b_idx * channels * num_samples + ch_idx * num_samples + n]);
-        // normalize
-        iimg = (iimg - minval_op) / (maxval_op - minval_op);
-        jimg = (jimg - minval_op) / (maxval_op - minval_op);
+    // load i and j
+    opmath_t iimg = static_cast<opmath_t>(input_img[b_idx * channels * num_samples + ch_idx * num_samples + sample_idx]);
+    opmath_t jimg = static_cast<opmath_t>(target_img[b_idx * channels * num_samples + ch_idx * num_samples + sample_idx]);
+    // normalize
+    iimg = (iimg - minval_op) / (maxval_op - minval_op);
+    jimg = (jimg - minval_op) / (maxval_op - minval_op);
 
-        // compute bin indices (approximate reduction)
-        index_t i_bin_idx = static_cast<index_t>(::floor(iimg * num_bins));
-        index_t j_bin_idx = static_cast<index_t>(::floor(jimg * num_bins));
-        if (i_bin_idx < 0) i_bin_idx = 0;
-        if (j_bin_idx < 0) j_bin_idx = 0;
-        if (i_bin_idx >= num_bins) i_bin_idx = num_bins - 1;
-        if (j_bin_idx >= num_bins) j_bin_idx = num_bins - 1;
+    // compute bin indices (approximate reduction)
+    index_t i_bin_idx = static_cast<index_t>(::floor(iimg * num_bins));
+    index_t j_bin_idx = static_cast<index_t>(::floor(jimg * num_bins));
+    if (i_bin_idx < 0) i_bin_idx = 0;
+    if (j_bin_idx < 0) j_bin_idx = 0;
+    if (i_bin_idx >= num_bins) i_bin_idx = num_bins - 1;
+    if (j_bin_idx >= num_bins) j_bin_idx = num_bins - 1;
 
-        // add to histogram
-        pab[j_bin_idx + num_bins * (i_bin_idx + pa_idx)] += 1;
-        pa[i_bin_idx + pa_idx] += 1;
-        pb[j_bin_idx + pa_idx] += 1;
-    }
+    // add to histogram
+    gpuAtomicAdd(pab + j_bin_idx + num_bins * (i_bin_idx + pa_idx), 1);
+    gpuAtomicAdd(pa + i_bin_idx + pa_idx, 1);
+    gpuAtomicAdd(pb + j_bin_idx + pa_idx, 1);
+    // pab[j_bin_idx + num_bins * (i_bin_idx + pa_idx)] += 1;
+    // pa[i_bin_idx + pa_idx] += 1;
+    // pb[j_bin_idx + pa_idx] += 1;
 }
 
 
@@ -465,19 +486,16 @@ std::vector<torch::Tensor> mutual_information_histogram_fwd(torch::Tensor &input
         num_aggregates = num_aggregates / factor / factor;
     }
     num_aggregates = ((num_aggregates + BLOCKSIZE_3D - 1) / BLOCKSIZE_3D) * BLOCKSIZE_3D;
-    // std::cout << "num_aggregates: " << num_aggregates << std::endl;
 
     int bins_per_block = min(BLOCKSIZE_3D / num_bins, num_bins);
-
-    std::cout << " bin per block " << bins_per_block << std::endl;
 
     // determine grid size and blocksize
     int64_t grid_size_blocks;
     if (approximate_reduction) {
-        grid_size_blocks = batch_size * channels * num_aggregates / BLOCKSIZE_3D;
+        grid_size_blocks = div_ceil(batch_size * channels * num_samples, BLOCKSIZE_3D);
     }
     else {
-        grid_size_blocks = batch_size * channels * num_aggregates;
+        grid_size_blocks = batch_size * channels * num_samples;
     }
     dim3 blockSize(approximate_reduction ? BLOCKSIZE_3D : min(BLOCKSIZE_3D, num_bins * num_bins));
     dim3 gridSize(grid_size_blocks);

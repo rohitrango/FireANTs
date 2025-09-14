@@ -84,7 +84,7 @@ class RigidRegistration(AbstractRegistration):
                 optimizer: str = 'Adam', optimizer_params: dict = {},
                 optimizer_lr: float = 3e-2,
                 loss_params: dict = {},
-                mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
+                mi_kernel_type: str = 'gaussian', cc_kernel_type: str = 'rectangular',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
                 cc_kernel_size: int = 3,
                 init_translation: Optional[torch.Tensor] = None,

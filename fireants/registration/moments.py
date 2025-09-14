@@ -49,7 +49,7 @@ class MomentsRegistration(AbstractRegistration):
                 # loss params
                 loss_type: str = "cc",
                 loss_params: dict = {},
-                mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
+                mi_kernel_type: str = 'gaussian', cc_kernel_type: str = 'rectangular',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
                 cc_kernel_size: int = 3,
                 custom_loss: nn.Module = None, 

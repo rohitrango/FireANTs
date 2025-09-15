@@ -133,12 +133,9 @@ def downsample(image: torch.Tensor, size: List[int], mode: str, sigma: Optional[
     if use_fft and ffo is None:
         logger.warn("fireants_fused_ops is not found, will default to standard downsampling")
         use_fft = False
-    if image.dtype != torch.float32:
-        logger.warn(f"Downsampling not supported for dtype {image.dtype}, will default to standard downsampling")
-        use_fft = False
 
     if use_fft:
-        return downsample_fft(image, size)
+        return downsample_fft(image.to(torch.float32), size).to(image.dtype)
 
     if gaussians is None:
         if sigma is None:

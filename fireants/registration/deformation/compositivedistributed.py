@@ -35,6 +35,12 @@ from fireants.registration.distributed import parallel_state
 from logging import getLogger
 from copy import deepcopy
 
+# environment variables to override GP
+import os
+import logging
+logger = logging.getLogger(__name__)
+USE_NO_GP = bool(int(os.environ.get('USE_NO_GP', '0').lower()))
+
 class CompositiveDistributedWarp(nn.Module, AbstractDeformation):
     '''
     Class for compositive warp function (collects gradients of dL/dp)
@@ -78,6 +84,10 @@ class CompositiveDistributedWarp(nn.Module, AbstractDeformation):
         if smoothing_grad_sigma > 0:
             self.smoothing_grad_gaussians = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.n_dims, device=fixed_images.device, dtype=dtype) + smoothing_grad_sigma)]
             self.image_padding = [(len(x)-1)//2 for x in self.smoothing_grad_gaussians][self.dim_to_shard]
+        if USE_NO_GP:
+            logger.warning(f"⚠️ Overriding GP with no GP (use this setting with extreme caution)")
+            self.image_padding = 0
+
         self.smoothing_wrapper = _get_smoothing_wrapper(self)
         self.attach_grad_hook()
 

@@ -111,6 +111,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                 warp_reg: Optional[Union[Callable, nn.Module]] = None,
                 displacement_reg: Optional[Union[Callable, nn.Module]] = None,
                 freeform: bool = False,
+                blur: bool = True,
                 custom_loss: nn.Module = None, **kwargs) -> None:
         # first move the images to cpu
         fixed_images.set_device('cpu')
@@ -176,6 +177,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
             self.affine = torch.cat([init_affine.detach(), row], dim=1).to(self.dtype)
         else:
             raise ValueError('Invalid initial affine shape: {}'.format(init_affine.shape))
+        self.blur = blur
 
     def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], \
                                              moving_images: Union[BatchedImages, FakeBatchedImages], \
@@ -455,10 +457,10 @@ if __name__ == '__main__':
     print(f"Using ring sampler: {bool(int(os.environ.get('USE_RING_SAMPLER', '0').lower()))}")
     reg = DistributedGreedyRegistration(scales=[12, 8, 4, 2, 1], iterations=[20 for _ in range(5)], 
                                 cc_kernel_size=15,
-                                # smooth_grad_sigma=2.0,
-                                # smooth_warp_sigma=1.0,
-                                smooth_grad_sigma=0,
-                                smooth_warp_sigma=0,
+                                smooth_grad_sigma=2.0,
+                                smooth_warp_sigma=1.0,
+                                # smooth_grad_sigma=0,
+                                # smooth_warp_sigma=0,
                                 # loss_params={'use_ants_gradient': True},
                                 use_ring_sampler=bool(int(os.environ.get('USE_RING_SAMPLER', '0').lower())),
                                 fixed_images=fixed, moving_images=moving, 

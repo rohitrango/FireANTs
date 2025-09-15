@@ -193,16 +193,17 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         if not pred.requires_grad and target.requires_grad:
             pred, target = target, pred
         
+        num_samples = pred.flatten(2).shape[2]
         # get histograms
         pab, pa, pb = MI_histogram_kernel.apply(pred, target, self.num_bins, self.kernel_type, minval, maxval, self.sigma_ratio, self.approximate_reduction, self.torch_compile)
-        return self.get_mi_from_dist(pab, pa, pb)
+        return self.get_mi_from_dist(pab, pa, pb, num_samples)
 
-    def get_mi_from_dist(self, pab: torch.Tensor, pa: torch.Tensor, pb: torch.Tensor) -> torch.Tensor:
+    def get_mi_from_dist(self, pab: torch.Tensor, pa: torch.Tensor, pb: torch.Tensor, num_samples: int) -> torch.Tensor:
         '''
         helper function to get mi from distributed histograms (this is the op we want to compile)
         '''
         if parallel_state.is_initialized() and parallel_state.get_grid_parallel_size() > 1:
-            pab, pa, pb = allgather_mi.apply(pab, pa, pb, pred.flatten(2).shape[2])
+            pab, pa, pb = allgather_mi.apply(pab, pa, pb, num_samples)
             # divide by total number of samples (this is not exact but approximate)
             papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))
         else:

@@ -159,6 +159,9 @@ def crop_distributed_padding(tensor, image_padding, dim_to_shard):
     undo the effects of add_distributed_padding 
     Note: This function operates within grid parallel group only
     '''
+    if image_padding <= 0:
+        return tensor
+
     shape = list(tensor.shape)
     ps = parallel_state.get_parallel_state()
     

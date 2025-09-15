@@ -25,6 +25,11 @@ import logging
 logger = logging.getLogger(__name__)
 from fireants.registration.distributed import parallel_state
 
+import os
+import logging
+logger = logging.getLogger(__name__)
+USE_NO_GP = bool(int(os.environ.get('USE_NO_GP', '0').lower()))
+
 def adam_update_fused(grad, exp_avg, exp_avg_sq, beta1, beta2, eps):
     grad.copy_(exp_avg / (beta1) / (exp_avg_sq / (beta2)).sqrt().add_(eps))
 
@@ -124,6 +129,10 @@ class WarpAdam:
             self.padding_smoothing = [len(x) for x in self.smoothing_gaussians] if isinstance(self.smoothing_gaussians, (list, tuple)) else [len(self.smoothing_gaussians) for _ in range(self.n_dims)]
             self.padding_smoothing = (self.padding_smoothing[self.dim_to_shard] - 1) // 2
         else:
+            self.padding_smoothing = 0
+
+        if USE_NO_GP:
+            logger.warning(f"⚠️ Overriding GP with no GP (use this setting with extreme caution)")
             self.padding_smoothing = 0
         # get wrapper around smoothing for distributed / not distributed
         self.smoothing_wrapper = _get_smoothing_wrapper(self)

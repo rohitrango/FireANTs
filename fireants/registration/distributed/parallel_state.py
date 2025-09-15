@@ -230,7 +230,8 @@ def initialize_parallel_state(
     global _BACKEND, _PARALLEL_STATE
     # set backend and launch
     _BACKEND = get_default_backend() if backend is None else backend
-    torch.distributed.init_process_group(backend=_BACKEND)
+    device = torch.device(f'cuda:{local_rank}')
+    torch.distributed.init_process_group(backend=_BACKEND, device_id=device, world_size=world_size, rank=current_rank)
     if wait is not None:
         sleep(wait)
 

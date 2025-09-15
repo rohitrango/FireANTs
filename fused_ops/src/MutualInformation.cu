@@ -301,6 +301,8 @@ void mutual_information_histogram_bwd(torch::Tensor &input_img, torch::Tensor &t
             );
         }
         C10_CUDA_KERNEL_LAUNCH_CHECK();
+        // C10_CUDA_CHECK(cudaGetLastError());
+        // C10_CUDA_CHECK(cudaDeviceSynchronize(stream));
     });
 }
 
@@ -436,6 +438,8 @@ __global__ void mutual_information_histogram_fwd_kernel_basic_approximate(
     // compute bin indices (approximate reduction)
     index_t i_bin_idx = static_cast<index_t>(::floor(iimg * num_bins));
     index_t j_bin_idx = static_cast<index_t>(::floor(jimg * num_bins));
+
+    // clamp the bin index
     if (i_bin_idx < 0) i_bin_idx = 0;
     if (j_bin_idx < 0) j_bin_idx = 0;
     if (i_bin_idx >= num_bins) i_bin_idx = num_bins - 1;
@@ -458,8 +462,10 @@ std::vector<torch::Tensor> mutual_information_histogram_fwd(torch::Tensor &input
     // kernel_type: KernelType
 
     // device and stream guards
-    c10::DeviceGuard guard(input_img.device());
-    at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream(input_img.device().index());
+    // c10::DeviceGuard guard(input_img.device());
+    // at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream(input_img.device().index());
+    at::cuda::CUDAGuard guard(input_img.device().index());
+    at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
     at::cuda::CUDAStreamGuard stream_guard(stream);
 
     CHECK_INPUT(input_img);
@@ -485,10 +491,10 @@ std::vector<torch::Tensor> mutual_information_histogram_fwd(torch::Tensor &input
         int64_t factor = num_bins / 32;
         num_aggregates = num_aggregates / factor / factor;
     }
-    num_aggregates = ((num_aggregates + BLOCKSIZE_3D - 1) / BLOCKSIZE_3D) * BLOCKSIZE_3D;
+    // make multiple of BLOCKSIZE_3D
+    num_aggregates = div_ceil(num_aggregates, BLOCKSIZE_3D) * BLOCKSIZE_3D;
 
     int bins_per_block = min(BLOCKSIZE_3D / num_bins, num_bins);
-
     // determine grid size and blocksize
     int64_t grid_size_blocks;
     if (approximate_reduction) {
@@ -501,9 +507,9 @@ std::vector<torch::Tensor> mutual_information_histogram_fwd(torch::Tensor &input
     dim3 gridSize(grid_size_blocks);
     // dim3 gridSize(batch_size * channels * num_aggregates * (approximate_reduction ? 1 : num_bins) / BLOCKSIZE_3D);
 
-    torch::Tensor pab = torch::zeros({batch_size, channels, num_aggregates, num_bins, num_bins}, torch::TensorOptions().device(input_img.device()).dtype(torch::kFloat));
-    torch::Tensor pa = torch::zeros({batch_size, channels, num_aggregates, num_bins}, torch::TensorOptions().device(input_img.device()).dtype(torch::kFloat));
-    torch::Tensor pb = torch::zeros({batch_size, channels, num_aggregates, num_bins}, torch::TensorOptions().device(input_img.device()).dtype(torch::kFloat));
+    torch::Tensor pab = torch::zeros({batch_size, channels, num_aggregates, num_bins, num_bins}, torch::TensorOptions().device(input_img.device()).dtype(input_img.dtype()));
+    torch::Tensor pa = torch::zeros({batch_size, channels, num_aggregates, num_bins}, torch::TensorOptions().device(input_img.device()).dtype(input_img.dtype()));
+    torch::Tensor pb = torch::zeros({batch_size, channels, num_aggregates, num_bins}, torch::TensorOptions().device(input_img.device()).dtype(input_img.dtype()));
 
 
     AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16, input_img.scalar_type(), "mutual_information_histogram_fwd", [&] {
@@ -542,6 +548,9 @@ std::vector<torch::Tensor> mutual_information_histogram_fwd(torch::Tensor &input
                 );
             }
             C10_CUDA_KERNEL_LAUNCH_CHECK();
+            C10_CUDA_CHECK(cudaDeviceSynchronize());
+            // C10_CUDA_CHECK(cudaGetLastError());
+            // C10_CUDA_CHECK(cudaDeviceSynchronize(stream));
         }
         else {
             if (approximate_reduction) {
@@ -577,13 +586,16 @@ std::vector<torch::Tensor> mutual_information_histogram_fwd(torch::Tensor &input
             );
             }
             C10_CUDA_KERNEL_LAUNCH_CHECK();
+            C10_CUDA_CHECK(cudaDeviceSynchronize());
+            // C10_CUDA_CHECK(cudaGetLastError());
+            // C10_CUDA_CHECK(cudaDeviceSynchronize(stream));
         }
     });
 
     float num_samples_float = static_cast<float>(num_samples);
-    pa = pa.sum({2}).to(torch::kFloat) / num_samples_float;
-    pb = pb.sum({2}).to(torch::kFloat) / num_samples_float;
-    pab = pab.sum({2}).to(torch::kFloat) / num_samples_float;
+    pa = ((pa.to(torch::kFloat)).sum({2})/ num_samples_float).to(input_img.dtype()) ;
+    pb = ((pb.to(torch::kFloat)).sum({2})/ num_samples_float).to(input_img.dtype()) ;
+    pab = ((pab.to(torch::kFloat)).sum({2})/ num_samples_float).to(input_img.dtype()) ;
 
     return {pab, pa, pb};
 }

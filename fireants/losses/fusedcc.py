@@ -335,7 +335,7 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         reduction: str = "mean",
         smooth_nr: float = 0,
         smooth_dr: float = 1e-5,
-        use_ants_gradient: bool = False,
+        use_ants_gradient: bool = True,
         use_separable: bool = True,
         kernel_type: str = "rectangular",
         sigma: float = 1.5,

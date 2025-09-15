@@ -26,6 +26,7 @@ import SimpleITK as sitk
 import logging 
 logger = logging.getLogger(__name__)
 import os
+from pathlib import Path
 
 from fireants.interpolator import fireants_interpolator
 from fireants.utils.globals import MIN_IMG_SIZE

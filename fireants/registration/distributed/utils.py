@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Rohit Jena. All rights reserved.
+# Copyright (c) 2025 Rohit Jena. All rightmss reserved.
 # 
 # This file is part of FireANTs, distributed under the terms of
 # the FireANTs License version 1.0. A copy of the license can be found
@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 from fireants.interpolator.fused_grid_sample import get_min_coords3d, get_min_coords2d, get_max_coords3d, get_max_coords2d
 from fireants.registration.distributed import parallel_state
+import os
 
 __all__ = ['get_dim_to_shard', 'gather_and_concat', 'add_distributed_padding', 'calculate_bbox_from_gather_stats']
 
@@ -159,7 +160,7 @@ def crop_distributed_padding(tensor, image_padding, dim_to_shard):
     undo the effects of add_distributed_padding 
     Note: This function operates within grid parallel group only
     '''
-    if image_padding <= 0:
+    if image_padding <= 0 or int(os.environ.get("USE_NO_GP", "0")) == 1:
         return tensor
 
     shape = list(tensor.shape)
@@ -182,7 +183,7 @@ def add_distributed_padding(tensor, image_padding, dim_to_shard):
         - receive from previous slice, send to next slice
         - receive from next slice, send to previous slice
     '''
-    if image_padding <= 0:
+    if image_padding <= 0 or int(os.environ.get("USE_NO_GP", "0")) == 1:
         return tensor
     # get target shape to pad
     tgt_shape = list(tensor.shape)

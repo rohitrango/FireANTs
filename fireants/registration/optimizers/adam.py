@@ -132,7 +132,7 @@ class WarpAdam:
             self.padding_smoothing = 0
 
         if USE_NO_GP:
-            logger.warning(f"⚠️ Overriding GP with no GP (use this setting with extreme caution)")
+            logger.warning(f"⚠️ Overriding GP with no GP (use this setting with caution)")
             self.padding_smoothing = 0
         # get wrapper around smoothing for distributed / not distributed
         self.smoothing_wrapper = _get_smoothing_wrapper(self)

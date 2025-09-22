@@ -112,6 +112,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                 displacement_reg: Optional[Union[Callable, nn.Module]] = None,
                 freeform: bool = False,
                 blur: bool = True,
+                dim_to_shard: Optional[int] = None,
                 custom_loss: nn.Module = None, **kwargs) -> None:
         # first move the images to cpu
         fixed_images.set_device('cpu')
@@ -131,11 +132,16 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
         self.dims = fixed_images.dims
         self.reduction = reduction
         # find sharding strategy (spatial dim to shard)
-        self.dim_to_shard = get_dim_to_shard(self.dims, fixed_images.shape, moving_images.shape)
+        self.dim_to_shard = get_dim_to_shard(self.dims, fixed_images.shape, moving_images.shape) if dim_to_shard is None else dim_to_shard
         logger.info(f"Sharding along dim: {self.dim_to_shard}")
         # shard the image now
         self.fixed_images._shard_dim(self.dim_to_shard, rank)
         self.moving_images._shard_dim(self.dim_to_shard, rank)
+        if self.fixed_images._dim_to_shard != self.dim_to_shard:
+            raise ValueError('Fixed images are not sharded along the same dimension as registration object')
+        if self.moving_images._dim_to_shard != self.dim_to_shard:
+            raise ValueError('Moving images are not sharded along the same dimension as registration object')
+
         self.fixed_images.set_device(self.device)
         self.moving_images.set_device(self.device)
         # ring sampler enables a ring-attention like sampling of the moving image
@@ -275,6 +281,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
         # multi-scale optimization
         for scale, iters in zip(self.scales, self.iterations):
             self.convergence_monitor.reset()
+            image_padding = self.image_padding if scale == 1 else 0
             # resized image sizes
             # size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
             # moving_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_size]
@@ -290,7 +297,6 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                 self.loss_fn.set_current_scale_and_iterations(scale, iters)
 
             # get sharded state
-            # is_state_sharded = self.warp.is_state_sharded
             is_state_sharded = True
 
             if scale > 1:
@@ -304,13 +310,20 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                 fixed_image_down = fixed_sharded_array
                 moving_image_blur = moving_sharded_array
             
+            # print(f"rank={self.rank}, fixed_image_down.device={fixed_image_down.device}, moving_image_blur.device={moving_image_blur.device}")
+            
             # allconcat the moving images
             # if ring_sampler is True, we only need to gather the stats, not the tensor
             moving_image_blur, moving_gather_stats = gather_and_concat(moving_image_blur, self.rank, is_state_sharded, self.dim_to_shard, gather_stats_only=self.use_ring_sampler)
             # gather fixed image stats (this forms the min/max coords for the sampler)
             _, fixed_gather_stats = gather_and_concat(fixed_image_down, self.rank, is_state_sharded, self.dim_to_shard, gather_stats_only=True)
 
-            fixed_image_down = add_distributed_padding(fixed_image_down, self.image_padding, self.dim_to_shard)
+            # print(f"rank={self.rank}, fixed_gather_stats={fixed_gather_stats}, moving_gather_stats={moving_gather_stats}")
+
+            fixed_image_down = add_distributed_padding(fixed_image_down, image_padding, self.dim_to_shard)
+
+            # print(f"rank={self.rank}, fixed_image_down.device={fixed_image_down.device}")
+
             # Get coordinates to transform
             pbar = tqdm(range(iters)) if self.progress_bar else range(iters)
             # reduce 
@@ -323,6 +336,8 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
             min_coords_moving, max_coords_moving = calculate_bbox_from_gather_stats(moving_gather_stats, self.rank, self.dims)
             min_coords_fixed, max_coords_fixed = calculate_bbox_from_gather_stats(fixed_gather_stats, self.rank, self.dims)
 
+            # print(f"rank={self.rank}, min_coords_moving={min_coords_moving}, max_coords_moving={max_coords_moving}, min_coords_fixed={min_coords_fixed}, max_coords_fixed={max_coords_fixed}")
+
             # run different subroutines depending on whether state is sharded or not
             gp_group = parallel_state.get_parallel_state().get_current_gp_group()
             master_rank = gp_group[0]
@@ -334,11 +349,14 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                     # get coordinates to interpolate
                     if self.use_ring_sampler:
                         moved_image = fireants_ringsampler_interpolator(moving_image_blur, affine=affine_map_init, grid=warp_field, mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_fixed, max_coords=max_coords_fixed,
-                                                                        min_img_coords=min_coords_moving, max_img_coords=max_coords_moving)
+                        min_img_coords=min_coords_moving, max_img_coords=max_coords_moving)
                     else:
                         moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=warp_field, mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_fixed, max_coords=max_coords_fixed)
                     # pad it 
-                    moved_image = add_distributed_padding(moved_image, self.image_padding, self.dim_to_shard)
+                    # print(f"rank={self.rank}, moved_image.shape={moved_image.shape}")
+                    moved_image = add_distributed_padding(moved_image, image_padding, self.dim_to_shard)
+                    # print(f"rank={self.rank}, moved_image.shape={moved_image.shape}")
+
                     loss = self.loss_fn(moved_image, fixed_image_down)
                     # apply regularization on the warp field
                     if self.displacement_reg is not None:
@@ -347,6 +365,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                         # internally should use the fireants interpolator to avoid additional memory allocation
                         moved_coords = self.get_warped_coordinates(self.fixed_images, self.moving_images)  
                         loss = loss + self.warp_reg(moved_coords)
+                    # print(f"rank={self.rank}, loss={loss}")
                     # allreduce the loss
                     parallel_state.all_reduce_across_gp_ranks(loss, torch.distributed.ReduceOp.AVG)
                     loss.backward()
@@ -354,8 +373,6 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                         pbar.set_description("rank:{} in gp group: {}, scale: {}, iter: {}/{}, loss: {:4f}".format(self.rank, gp_group, scale, i, iters, loss.item()/scale_factor))
                     # optimize the velocity field
                     self.warp.step()
-                    # allgather loss to synchronously break
-                    parallel_state.all_reduce_across_gp_ranks(loss, torch.distributed.ReduceOp.AVG)
                     # check for convergence
                     if self.convergence_monitor.converged(loss.item()):
                         break

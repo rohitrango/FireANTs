@@ -368,8 +368,9 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
             raise ValueError(f"kernel_size must be odd, got {self.kernel_size}")
 
         # _kernel = look_up_option(kernel_type, kernel_dict)
-        self.smooth_nr = float(smooth_nr)
-        self.smooth_dr = float(smooth_dr)
+        kernel_vol = self.kernel_size ** self.ndim 
+        self.smooth_nr = float(smooth_nr) * kernel_vol
+        self.smooth_dr = float(smooth_dr) * kernel_vol
         self.use_ants_gradient = use_ants_gradient
         self.use_separable = use_separable
     

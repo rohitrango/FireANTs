@@ -29,6 +29,9 @@ from logging import getLogger
 import numpy as np
 import torch.distributed
 from time import sleep
+from datetime import timedelta
+
+one_hour = timedelta(hours=1)
 
 logger = getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -231,7 +234,7 @@ def initialize_parallel_state(
     # set backend and launch
     _BACKEND = get_default_backend() if backend is None else backend
     device = torch.device(f'cuda:{local_rank}')
-    torch.distributed.init_process_group(backend=_BACKEND, device_id=device, world_size=world_size, rank=current_rank)
+    torch.distributed.init_process_group(backend=_BACKEND, device_id=device, world_size=world_size, rank=current_rank, timeout=one_hour)
     if wait is not None:
         sleep(wait)
 

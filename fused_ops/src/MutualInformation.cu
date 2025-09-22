@@ -31,9 +31,11 @@ bool is_power_of_two(int num) {
     return (num > 0) && ((num & (num - 1)) == 0);
 }
 
-int div_ceil(int num, int div) {
-    return ((num + div - 1) / div);
-}
+// template <typename T>
+// T div_ceil(T num, T div) {
+//     return ((num + div - 1) / div);
+// }
+#define div_ceil(num, div) (((num) + (div) - 1) / (div))
 
 template <typename scalar_t, typename index_t>
 __device__ scalar_t prob_func(scalar_t x, index_t bin_idx, index_t num_bins, KernelType kernel_type, float sigma_ratio) {
@@ -486,7 +488,9 @@ std::vector<torch::Tensor> mutual_information_histogram_fwd(torch::Tensor &input
     int64_t num_samples = numel / (batch_size * channels);
 
     // define number of aggregates
-    int64_t num_aggregates = min(num_samples / num_bins / num_bins , static_cast<int64_t>(65536)); 
+    int64_t num_aggregates = min(div_ceil(num_samples, (num_bins * num_bins)), static_cast<int64_t>(65536));
+    num_aggregates = max(num_aggregates, static_cast<int64_t>(32));
+
     if (num_bins > 32 && num_aggregates == 65536) {
         int64_t factor = num_bins / 32;
         num_aggregates = num_aggregates / factor / factor;

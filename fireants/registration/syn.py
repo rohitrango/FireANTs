@@ -216,7 +216,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
     def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         raise NotImplementedError('Inverse warp not implemented for SyN registration')
 
-    def optimize(self, save_transformed=False):
+    def optimize(self):
         """Optimize the symmetric deformation parameters.
 
         Performs multi-resolution optimization of both forward and reverse deformation fields
@@ -225,12 +225,10 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         iteration.
 
         Args:
-            save_transformed (bool, optional): Whether to save transformed images
-                at each scale. Defaults to False.
+            None
 
         Returns:
-            Optional[List[torch.Tensor]]: If save_transformed=True, returns list of
-                transformed images at each scale. Otherwise returns None.
+            None
 
         Note:
             The optimization alternates between updating the forward and reverse warps.
@@ -314,28 +312,6 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                 if self.convergence_monitor.converged(loss.item()):
                     break
 
-            # save transformed image
-            if save_transformed:
-                fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
-                # if scale > 1, then we want to optimize a downsampled fixed image instead
-                if scale > 1:
-                    fake_fixed_image = FakeBatchedImages(fixed_image_down, self.fixed_images, ignore_size_match=True)
-                else:
-                    fake_fixed_image = self.fixed_images
-                rev_inv_warp_field = compositive_warp_inverse(fake_fixed_image, self.rev_warp.get_warp(), displacement=True, progress_bar=False)
-                # # smooth them out
-                if self.smooth_warp_sigma > 0:
-                    fwd_warp_field = separable_filtering(fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg), warp_gaussian).permute(*self.fwd_warp.permute_imgtov)
-                    rev_inv_warp_field = separable_filtering(rev_inv_warp_field.permute(*self.rev_warp.permute_vtoimg), warp_gaussian).permute(*self.rev_warp.permute_imgtov)
-
-                # # compose the two warp fields
-                composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field)
-                moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=composed_warp, mode='bilinear', align_corners=True, is_displacement=True)
-                transformed_images.append(moved_image.detach())
-                
-        if save_transformed:
-            return transformed_images
-
 
 
 if __name__ == '__main__':
@@ -364,7 +340,7 @@ if __name__ == '__main__':
         transform = AffineRegistration([8, 4, 2, 1], [200, 100, 50, 20], fixed, moving, \
             dtype=img_dtype,
             loss_type='cc', optimizer='Adam', optimizer_lr=3e-4) #, optimizer_params={'momentum': 0.9})
-        transform.optimize(save_transformed=False)
+        transform.optimize()
         # get memory after affine registration
         aff_mem = get_gpu_memory(clear=True)
 

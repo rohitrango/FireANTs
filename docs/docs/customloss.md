@@ -59,7 +59,7 @@ affine = AffineRegistration([6, 4, 2, 1], [200, 100, 50, 20], fixed_mask, moving
            loss_type='custom', custom_loss=DiceLossModule(), optimizer='Adam', \
             optimizer_lr=3e-3, optimizer_params={}, cc_kernel_size=5)
 aff_start = time()
-moved_mask = affine.optimize(save_transformed=True)[-1]
+affine.optimize()
 aff_end = time()
 ```
 
@@ -102,7 +102,7 @@ deformable = GreedyRegistration(scales=[6, 4, 2, 1], iterations=[200, 150, 75, 2
                         optimizer_lr=0.25, init_affine=affine_matrix)
 
 start = time()
-deformable.optimize(save_transformed=False)
+deformable.optimize()
 end = time()
 ```
 

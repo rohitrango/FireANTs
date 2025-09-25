@@ -243,7 +243,7 @@ def main(args):
                 moments = MomentsRegistration(fixed_images=init_template_batch, \
                                               moving_images=moving_images_batch, \
                                                 **dict(args.moments))
-                moments.optimize(save_transformed=False)
+                moments.optimize()
                 init_moment_rigid = moments.get_rigid_moment_init()
                 init_moment_transl = moments.get_rigid_transl_init()
                 init_rigid = moments.get_affine_init()      # for initializing affine if rigid is skipped
@@ -255,7 +255,7 @@ def main(args):
                                             init_translation=init_moment_transl, \
                                             init_moment=init_moment_rigid, \
                                           **dict(args.rigid))
-                rigid.optimize(save_transformed=False)
+                rigid.optimize()
                 init_rigid = rigid.get_rigid_matrix()
                 if args.last_reg == 'rigid':
                     moved_images = rigid.evaluate(init_template_batch, moving_images_batch)
@@ -275,7 +275,7 @@ def main(args):
                                             moving_images=moving_images_batch, \
                                                 init_rigid=init_rigid, \
                                                 **dict(args.affine))
-                affine.optimize(save_transformed=False)
+                affine.optimize()
                 init_affine = affine.get_affine_matrix()
                 if args.last_reg == 'affine':
                     moved_images = affine.evaluate(init_template_batch, moving_images_batch)
@@ -298,7 +298,8 @@ def main(args):
                     **dict(args.deform)
                 )
                 # no need to check for last reg here, there is nothing beyond deformable
-                moved_images = deform.optimize(save_transformed=True)[-1]   # this is relatively expensive step, get moved images here
+                deform.optimize()
+                moved_images = deform.evaluate(init_template_batch, moving_images_batch)
                 if is_last_epoch:
                     if args.save_moved_images:
                         save_moved(moved_images, imgidbatches[batchid], args.save_dir, init_template)

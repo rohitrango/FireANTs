@@ -6,19 +6,24 @@ The FireANTs library is a lightweight registration package for Riemannian diffeo
 To use the FireANTs package, you can either clone the repository and install the package locally or install the package directly from PyPI.
 We recommend using a fresh Anaconda/Miniconda environment to install the package.
 ```
-conda create -n fireants python=3.7
+conda create -n fireants python=3.9
 ```
 
 To install FireANTs locally:
 ```
 git clone https://github.com/rohitrango/fireants
 cd fireants
-pip install -e .
+pip install .
+pip install ./fused_ops
 ```
+
+By default, doing `pip install .` will **NOT** include the fused CUDA operations. 
+I highly recommend installing the fused CUDA operations using `pip install ./fused_ops`.
 
 Or install from PyPI:
 ```
 pip install fireants
+pip install fireants_fused_ops
 ```
 
 ## Tutorial

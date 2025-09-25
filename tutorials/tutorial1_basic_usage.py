@@ -46,12 +46,10 @@ def main():
     
     # Run registration
     start = time()
-    transformed_images = affine.optimize(save_transformed=True)
+    affine.optimize()
+    moved = affine.evaluate(batch1, batch2)
     end = time()
     print(f"Affine registration runtime: {end - start:.2f} seconds")
-    
-    # Get the final transformed image
-    moved = transformed_images[-1]
     
     # Perform deformable registration
     print("\nPerforming deformable registration...")
@@ -64,7 +62,7 @@ def main():
     
     # Run deformable registration
     start = time()
-    reg.optimize(save_transformed=False)
+    reg.optimize()
     end = time()
     print(f"Deformable registration runtime: {end - start:.2f} seconds")
     

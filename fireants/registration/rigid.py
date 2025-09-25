@@ -266,19 +266,17 @@ class RigidRegistration(AbstractRegistration):
             'out_shape': shape
         }
     
-    def optimize(self, save_transformed=False):
+    def optimize(self):
         """Optimize the rigid registration parameters.
 
         Performs multi-resolution optimization of the rigid transformation parameters
         using the configured similarity metric and optimizer.
 
         Args:
-            save_transformed (bool, optional): Whether to save transformed images at each scale.
-                                             Default: False
+            None
 
         Returns:
-            Optional[List[torch.Tensor]]: If save_transformed=True, returns list of transformed
-                                        images at each scale. Otherwise returns None.
+            None
         """
         ''' Given fixed and moving images, optimize rigid registration '''
         fixed_arrays = self.fixed_images()
@@ -287,8 +285,6 @@ class RigidRegistration(AbstractRegistration):
         moving_p2t = self.moving_images.get_phy2torch().to(self.dtype)
         fixed_size = fixed_arrays.shape[2:]
         # save initial affine transform to initialize grid 
-        if save_transformed:
-            transformed_images = []
 
         for scale, iters in zip(self.scales, self.iterations):
             # reset
@@ -331,11 +327,6 @@ class RigidRegistration(AbstractRegistration):
                 prev_loss = cur_loss
                 if self.progress_bar:
                     pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, prev_loss))
-            # save transformed images
-            if save_transformed:
-                transformed_images.append(moved_image)
-        if save_transformed:
-            return transformed_images
 
 
 if __name__ == '__main__':

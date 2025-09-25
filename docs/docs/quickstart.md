@@ -69,7 +69,7 @@ affine = AffineRegistration(scales, iterations, batch1, batch2, optimizer=optim,
                             cc_kernel_size=5)
 # run registration
 start = time()
-transformed_images = affine.optimize(save_transformed=True)
+affine.optimize(); torch.cuda.synchronize()
 end = time()
 ```
 
@@ -103,7 +103,7 @@ reg = GreedyRegistration(scales=[4, 2, 1], iterations=[200, 100, 25],
             smooth_grad_sigma=1, 
             optimizer='adam', optimizer_lr=0.5, init_affine=affine.get_affine_matrix().detach())
 start = time()
-reg.optimize(save_transformed=False)
+reg.optimize()
 end = time()
 ```
 

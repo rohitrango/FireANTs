@@ -83,7 +83,7 @@ def register_val_dataset(config, test=False):
         else:
             raise NotImplementedError
         # deformation
-        deformable.optimize(save_transformed=False)
+        deformable.optimize()
         warp = deformable.get_warped_coordinates(fixed_image, moving_image)
         # del deformable
         # evaluate

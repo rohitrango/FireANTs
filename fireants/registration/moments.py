@@ -356,15 +356,14 @@ class MomentsRegistration(AbstractRegistration):
             'out_shape': shape
         }
 
-    def optimize(self, save_transformed=False):
+    def optimize(self):
         ''' Given fixed and moving images, optimize rigid registration '''
         if self.optimized:
             print("Already optimized parameters. Use other functions to get transformed values.")
             return
         # optimize
-        ret = self.optimize_helper()
+        self.optimize_helper()
         self.optimized = True
-        return ret
 
 
 if __name__ == '__main__':

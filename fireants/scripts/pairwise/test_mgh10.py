@@ -90,7 +90,7 @@ if __name__ == '__main__':
             print("Registering {} to {}".format(fixed_image_path, moving_image_path))
             affine = AffineRegistration([8, 4, 2, 1], [100, 50, 25, 20], fixed_image, moving_image, \
                 loss_type='cc', optimizer='Adam', optimizer_lr=3e-4, optimizer_params={}, cc_kernel_size=5)
-            affine.optimize(save_transformed=False)
+            affine.optimize()
 
             # define deformable registration
             if algo == 'greedy':
@@ -104,7 +104,7 @@ if __name__ == '__main__':
                                         smooth_grad_sigma=0.25, smooth_warp_sigma=0.5, init_affine=affine.get_affine_matrix().detach(),
                                 )
             a = time.time()
-            deformable.optimize(save_transformed=False)
+            deformable.optimize()
             b = time.time() - a
             # evaluate
             moved_seg_array = deformable.evaluate(fixed_seg, moving_seg)

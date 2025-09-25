@@ -244,7 +244,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
             'grid': warp_field,
         }
 
-    def optimize(self, save_transformed=False):
+    def optimize(self):
         """Optimize the deformation parameters.
 
         Performs multi-resolution optimization of the deformation field
@@ -252,12 +252,10 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         field is optionally smoothed at each iteration.
 
         Args:
-            save_transformed (bool, optional): Whether to save transformed images
-                at each scale. Defaults to False.
+            None
 
         Returns:
-            Optional[List[torch.Tensor]]: If save_transformed=True, returns list of
-                transformed images at each scale. Otherwise returns None.
+            None
         """
         fixed_arrays = self.fixed_images()
         moving_arrays = self.moving_images()
@@ -327,13 +325,6 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                 if self.convergence_monitor.converged(loss.item()):
                     break
 
-            # save transformed image
-            if save_transformed:
-                transformed_images.append(moved_image.detach())
-
-        if save_transformed:
-            return transformed_images
-
 
 if __name__ == '__main__':
     from fireants.io.image import Image
@@ -360,7 +351,7 @@ if __name__ == '__main__':
         transform = AffineRegistration([8, 4, 2, 1], [200, 100, 50, 20], fixed, moving, \
             dtype=img_dtype,
             loss_type='cc', optimizer='Adam', optimizer_lr=3e-4) #, optimizer_params={'momentum': 0.9})
-        transform.optimize(save_transformed=False)
+        transform.optimize()
         # get memory after affine registration
         aff_mem = get_gpu_memory(clear=True)
 

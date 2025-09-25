@@ -550,7 +550,7 @@ def main():
 
         # Run registration
         logger.info(f"Starting Step {i+1}/{len_transform}: {transform_type} registration...")
-        reg.optimize(save_transformed=False)
+        reg.optimize()
         logger.info(f"Step {i+1}/{len_transform}: {transform_type} registration completed successfully")
 
         # free memory of previous transform

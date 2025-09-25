@@ -250,7 +250,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
         '''
         super().save_moved_images(moved_images, filenames, moving_to_fixed, ignore_size_match=True)
 
-    def optimize(self, save_transformed=False):
+    def optimize(self):
         """Optimize the deformation parameters.
 
         Performs multi-resolution optimization of the deformation field
@@ -258,12 +258,10 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
         field is optionally smoothed at each iteration.
 
         Args:
-            save_transformed (bool, optional): Whether to save transformed images
-                at each scale. Defaults to False.
+            None
 
         Returns:
-            Optional[List[torch.Tensor]]: If save_transformed=True, returns list of
-                transformed images at each scale. Otherwise returns None.
+            None
         """
         fixed_t2p = self.fixed_images.get_torch2phy().to(self.dtype)
         moving_p2t = self.moving_images.get_phy2torch().to(self.dtype)
@@ -380,16 +378,10 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
                 # sharding is not done, problem size is small enough to do on a single gpu
                 raise NotImplementedError("Non sharded version not supported for Distributed Greedy Registration")
 
-            # save transformed image
-            if save_transformed:
-                transformed_images.append(moved_image.detach() if isinstance(moved_image, torch.Tensor) else moved_image)
-            
             # cleanup memory
             if scale > 1:
                 del moving_image_blur, fixed_image_down 
-                if not save_transformed:
-                    del moved_image
-            
+                del moved_image
             # sync and clean
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
@@ -399,8 +391,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
         # cleanup optimization state
         self.warp.optimizer.cleanup()
         torch.distributed.barrier()
-        if save_transformed:
-            return transformed_images
+
 
     def evaluate(self, fixed_images: Union[BatchedImages, torch.Tensor], moving_images: Union[BatchedImages, torch.Tensor], shape=None):
         '''

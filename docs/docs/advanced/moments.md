@@ -55,7 +55,7 @@ from fireants.registration.moments import MomentsRegistration
 moments = MomentsRegistration(fixed_images=fixed_images_batch, \
                                 moving_images=moving_images_batch, \
                                 **dict(args))
-moments.optimize(save_transformed=False)
+moments.optimize()
 ```
 
 ![after-moment-matching](../assets/moment/after-moment-matching.png)

@@ -119,14 +119,11 @@ class DeformableMixin:
             affine = ((moving_t2p @ affine - fixed_t2p)[:, :reg.dims]).contiguous()
 
         # create moved_disp
-        moved_disp = fireants_interpolator.affine_warp(affine=affine, grid=moved_coords)
-
-        if save_inverse:
-            breakpoint()
+        moved_disp_final = fireants_interpolator.affine_warp(affine=affine, grid=moved_coords)
 
         # save 
         for i in range(reg.opt_size):
-            moved_disp = moved_coords[i].detach().cpu().numpy()  # [H, W, D, 3]
+            moved_disp = moved_disp_final[i].detach().cpu().numpy()  # [H, W, D, 3]
             savefile = filenames[i]
             # get itk image
             if len(fixed_image.images) < i:     # this image is probably broadcasted then

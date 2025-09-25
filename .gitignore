@@ -29,6 +29,6 @@ fused_ops/fireants_fused_ops*.so
 **/saved_results
 notepad
 **/*pkl
-benchmarks_/
+benchmarks/
 tests/test_results/
 **/*.zip

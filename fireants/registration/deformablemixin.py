@@ -246,26 +246,9 @@ class DeformableMixin:
                 print(f"Saved grid {i} to {savefile}")
 
 
-        # for i in range(reg.opt_size):
-        #     # get grid
-        #     # TODO: this is bad but i dont know how to do it better for now
-        #     # nccl backend only allows gpu to gpu comm and i want to avoid it to not trigger OOM
-        #     grid_i = grid[i].detach().cpu().numpy()  # [H, W, D, dim]
-        #     tmp_savefile = filenames[i] + f"_sharded_{reg.rank}_of_{reg.world_size}.npz"
-        #     np.savez(tmp_savefile, grid=grid_i)
-        #     print(f"Saved sharded grid {i}:{reg.rank}/{reg.world_size} to {tmp_savefile}")
-        #     torch.distributed.barrier()
-
-        #     if reg.rank == reg.master_rank:
-        #         print("Concatenating grid... ")
-        #         # gather all files
-        #         grid = []
-        #         for j in tqdm(range(reg.world_size), total=reg.world_size):
-        #             tmp_file = filenames[i] + f"_sharded_{j}_of_{reg.world_size}.npz"
-        #             grid.append(np.load(tmp_file)["grid"])
-        #             os.remove(tmp_file)
-        #         # grid = torch.concat(grid, dim=reg.dim_to_shard) 
-        #         grid = np.concatenate(grid, axis=reg.dim_to_shard)
-        #         # save this
-        #         savefile = filenames[i]
-        #         # get itk image
+    @torch.no_grad()
+    def save_as_scipy_transforms(reg, filenames: Union[str, List[str]], downsample_scale=1, dtype=np.float32):
+        '''
+        Save the warp field in scipy format - typically used for submission to learn2reg challenge or similar
+        '''
+        pass

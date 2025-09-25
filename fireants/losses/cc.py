@@ -211,7 +211,7 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         kernel_size: int = 3,
         kernel_type: str = "rectangular",
         reduction: str = "mean",
-        smooth_nr: float = 0,
+        smooth_nr: float = 1e-5,   # careful: perform degrades when this parameter is set to 0
         smooth_dr: float = 1e-5,
         unsigned: bool = True,
         use_separable_override: bool = True,

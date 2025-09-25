@@ -30,5 +30,6 @@ fused_ops/fireants_fused_ops*.so
 notepad
 **/*pkl
 benchmarks/
+tests/notebooks
 tests/test_results/
 **/*.zip

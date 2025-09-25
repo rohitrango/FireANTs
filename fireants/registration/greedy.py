@@ -91,7 +91,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                 optimizer_lr: float = 0.5, 
                 integrator_n: Union[str, int] = 7,
                 mi_kernel_type: str = 'gaussian', cc_kernel_type: str = 'rectangular',
-                cc_kernel_size: int = 3,
+                cc_kernel_size: int = 7,
                 smooth_warp_sigma: float = 0.5,
                 smooth_grad_sigma: float = 1.0,
                 loss_params: dict = {},

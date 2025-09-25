@@ -96,6 +96,21 @@ class GridSampleDispatcher:
         else:
             raise ValueError(f"Unsupported image type: {type(image)}")
     
+    @staticmethod
+    def augment_registry_backend(func: Callable):
+        ''' For each function, we want to fallback to torch if the tensor is not on cuda '''
+        def wrapper(self, *args, **kwargs):
+            prev_ffo = self._use_ffo
+            # get any tensor arg
+            tensor_arg = [arg for arg in args if isinstance(arg, torch.Tensor)] + [arg for arg in kwargs.values() if isinstance(arg, torch.Tensor)]
+            if len(tensor_arg) > 0 and any([x.device.type != 'cuda' for x in tensor_arg]):
+                self._use_ffo = False
+            ret = func(self, *args, **kwargs)
+            self._use_ffo = prev_ffo
+            return ret
+        return wrapper
+    
+    @augment_registry_backend.__func__
     def __call__(self, *args, **kwargs) -> Any:
         """Dispatch to appropriate grid sample implementation."""
         # print(f"Using FFO: {self._use_ffo}")
@@ -103,18 +118,21 @@ class GridSampleDispatcher:
         # print(f"Dispatching to {f'grid_sample_{dim}d'}")
         return self._registry[self._use_ffo][f'grid_sample_{dim}d'](*args, **kwargs)
     
+    @augment_registry_backend.__func__
     def warp_composer(self, *args, **kwargs) -> Any:
         ''' Dispatch to appropriate warp composer implementation '''
         dim = self._get_image_dim(*args, **kwargs)
         return self._registry[self._use_ffo][f'warp_composer_{dim}d'](*args, **kwargs)
     
+    @augment_registry_backend.__func__
     def affine_warp(self, *args, **kwargs) -> Any:
         ''' Dispatch to appropriate affine warp implementation '''
         dim = self._get_image_dim(*args, image_idx=1, **kwargs, arg_name="grid")
         return self._registry[self._use_ffo][f'affine_warp_{dim}d'](*args, **kwargs)
 
-    ### individual functions
-    
+    # individual functions are called by the user at their discretion, we do not need to check
+    # for the backend
+
     def warp_composer_2d(self, *args, **kwargs) -> Any:
         """Dispatch to appropriate 2D warp composer implementation."""
         return self._registry[self._use_ffo]['warp_composer_2d'](*args, **kwargs)

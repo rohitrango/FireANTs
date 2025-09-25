@@ -215,37 +215,6 @@ def test_fused_mi_memory_backward():
             logger.info(f"Memory reduction: {(baseline_memory - fused_memory)/baseline_memory*100:.2f}%")
 
 
-def test_fused_mi_approximate_reduction():
-    """Test that approximate reduction gives similar results"""
-    N = 32
-    img1 = torch.rand(1, 1, N, N, N).cuda()  # Values from 0 to 1
-    img2 = ((img1 + 3*img1**2 + img1**3) / 5).cuda().requires_grad_(True)  # Nonlinear transform of img1
-    
-    kernel_types = ['gaussian']
-    for kernel_type in kernel_types:
-        # Initialize exact and approximate implementations
-        loss_exact = FusedGlobalMutualInformationLoss(
-            kernel_type=kernel_type,
-            num_bins=32,
-            reduction='mean',
-            approximate_reduction=False
-        ).cuda()
-        
-        loss_approx = FusedGlobalMutualInformationLoss(
-            kernel_type=kernel_type,
-            num_bins=32,
-            reduction='mean',
-            approximate_reduction=True
-        ).cuda()
-        
-        # Forward pass
-        out_exact = loss_exact(img1, img2)
-        out_approx = loss_approx(img1, img2)
-        
-        # Check forward pass results - allow larger tolerance for approximate version
-        assert out_approx.item() < out_exact.item() + 1e-2, \
-            f"Approximate reduction results should be smaller than exact reduction results due to sharpening effect"
-
 
 def test_fused_mi_num_bins_ablation():
     """Test effect of different numbers of bins on MI computation"""

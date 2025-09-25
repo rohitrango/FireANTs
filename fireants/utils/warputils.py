@@ -138,7 +138,7 @@ def shape_averaging_invwarp(
         smooth_grad_sigma=1.0,
         smooth_warp_sigma=0.25,
     )
-    reg.optimize(False)
+    reg.optimize()
     inverse_warp = reg.warp.get_inverse_warp(n_iters=20)  # [B, H, W, [D], dims]
     dims = len(inverse_warp.shape) - 2
     if dims == 2:
@@ -190,7 +190,7 @@ def compositive_warp_inverse(image: BatchedImages, ref_disp: torch.Tensor,
         del ref_disp_resized
     # could be called from within a nograd context
     with torch.set_grad_enabled(True):
-        reg.optimize(False)
+        reg.optimize()
 
     if displacement:
         coords = reg.warp.get_warp()

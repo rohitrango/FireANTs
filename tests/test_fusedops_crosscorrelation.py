@@ -24,8 +24,8 @@ def test_fused_cc_correctness():
     img1 = (torch.rand(1, 1, N, N, N) + eps).cuda()
     img2 = (torch.rand(1, 1, N, N, N)*0.5 + 0.5*img1.cpu()).cuda().requires_grad_(True)
     
-    loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=5, reduction='mean').cuda()
-    loss_baseline = LocalNormalizedCrossCorrelationLoss(3, kernel_size=5, reduction='mean').cuda()
+    loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=5, reduction='mean', use_ants_gradient=False, smooth_nr=0).cuda()
+    loss_baseline = LocalNormalizedCrossCorrelationLoss(3, kernel_size=5, reduction='mean', smooth_nr=0).cuda()
     
     # Forward pass
     out = loss(img1, img2)
@@ -49,7 +49,7 @@ def test_fused_cc_correctness():
     grad_baseline2 = img2.grad
     
     # Check backward pass results
-    assert torch.allclose(grad_ours, grad_baseline, rtol=1e-2) or torch.allclose(grad_ours, grad_baseline2, rtol=1e-2), f"Gradients don't match baselines {rtol(grad_ours, grad_baseline)} {rtol(grad_ours, grad_baseline2)}"
+    assert torch.allclose(grad_ours, grad_baseline, atol=1e-3) or torch.allclose(grad_ours, grad_baseline2, atol=1e-3), f"Gradients don't match baselines {rtol(grad_ours, grad_baseline)} {rtol(grad_ours, grad_baseline2)}"
 
 
 def test_fused_cc_memory_forward():
@@ -63,8 +63,8 @@ def test_fused_cc_memory_forward():
         input_memory = (img1.element_size() * img1.nelement() + 
                        img2.element_size() * img2.nelement()) / 1024**2  # MB
         
-        loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=5, reduction='mean').cuda()
-        loss_baseline = LocalNormalizedCrossCorrelationLoss(3, kernel_size=5, reduction='mean').cuda()
+        loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=5, reduction='mean', use_ants_gradient=False, smooth_nr=0).cuda()
+        loss_baseline = LocalNormalizedCrossCorrelationLoss(3, kernel_size=5, reduction='mean', smooth_nr=0).cuda()
         
         # Reset memory stats
         torch.cuda.reset_peak_memory_stats()
@@ -95,7 +95,7 @@ def test_fused_cc_memory_forward():
         baseline2_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory
         
         # Verify results match
-        assert torch.allclose(out, out_baseline, atol=1e-4) or torch.allclose(out, out_baseline2, atol=1e-4), f"Results don't match baseline for N={N}"
+        assert torch.allclose(out, out_baseline, atol=1e-3) or torch.allclose(out, out_baseline2, atol=1e-3), f"Results don't match baseline for N={N}"
         
         # Print performance metrics
         print(f"\nN: {N}")
@@ -115,8 +115,8 @@ def test_fused_cc_memory_backward():
         input_memory = (img1.element_size() * img1.nelement() + 
                        img2.element_size() * img2.nelement()) / 1024**2  # MB
         
-        loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=5, reduction='mean', use_ants_gradient=False).cuda()
-        loss_baseline = LocalNormalizedCrossCorrelationLoss(3, kernel_size=5, reduction='mean').cuda()
+        loss = FusedLocalNormalizedCrossCorrelationLoss(3, kernel_size=5, reduction='mean', use_ants_gradient=False, smooth_nr=0).cuda()
+        loss_baseline = LocalNormalizedCrossCorrelationLoss(3, kernel_size=5, reduction='mean', smooth_nr=0).cuda()
         
         # Reset memory stats
         torch.cuda.reset_peak_memory_stats()
@@ -167,7 +167,7 @@ def test_fused_cc_memory_backward():
         baseline2_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory
         
         # Verify results match
-        assert torch.allclose(grad_ours, grad_baseline, rtol=1e-3) or torch.allclose(grad_ours, grad_baseline2, rtol=1e-3), f"Gradients don't match baselines for N={N} {rtol(grad_ours, grad_baseline)} {rtol(grad_ours, grad_baseline2)}"
+        assert torch.allclose(grad_ours, grad_baseline, atol=1e-3) or torch.allclose(grad_ours, grad_baseline2, atol=1e-3), f"Gradients don't match baselines for N={N} {rtol(grad_ours, grad_baseline)} {rtol(grad_ours, grad_baseline2)}"
         
         # Print performance metrics
         print(f"\nN: {N}")

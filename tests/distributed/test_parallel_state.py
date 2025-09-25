@@ -40,7 +40,6 @@ def parallel_setup(distributed_env):
     yield
     cleanup_parallel_state(wait=4)
 
-@pytest.mark.distributed
 def test_initialization(distributed_env):
     """Test parallel state initialization."""
     initialize_parallel_state(grid_parallel_size=2, data_parallel_size=2)
@@ -63,9 +62,8 @@ def test_initialization(distributed_env):
     assert state.data_parallel_rank == dp_rank
     assert state.grid_parallel_rank == gp_rank
     
-    cleanup_parallel_state()
+    cleanup_parallel_state(wait=10)
 
-@pytest.mark.distributed
 def test_dp_reduction(parallel_setup):
     """Test data parallel reduction."""
     # Create tensor with rank-specific values
@@ -91,7 +89,6 @@ def test_dp_reduction(parallel_setup):
     torch.distributed.barrier()
     assert torch.allclose(x, torch.tensor([expected_sum], device=get_device())), f"x: {x}, expected_sum: {expected_sum}, rank: {rank}, gp_rank: {gp_rank}, dp_rank: {get_parallel_state().data_parallel_rank}"
 
-@pytest.mark.distributed
 def test_gp_reduction(parallel_setup):
     """Test grid parallel reduction."""
     # Create tensor with rank-specific values
@@ -109,7 +106,6 @@ def test_gp_reduction(parallel_setup):
     torch.distributed.barrier()
     assert torch.allclose(x, torch.tensor([expected_sum], device=get_device())), f"x: {x}, expected_sum: {expected_sum}, rank: {rank}"
 
-@pytest.mark.distributed
 def test_device_mesh_properties(parallel_setup):
     """Test device mesh properties and group formation."""
     state = get_parallel_state()
@@ -138,13 +134,11 @@ def test_device_mesh_properties(parallel_setup):
         assert state.get_previous_gp_rank() == rank - 1
         assert state.get_next_gp_rank() is None
 
-@pytest.mark.distributed
 def test_parallel_sizes(parallel_setup):
     """Test parallel size getters."""
     assert get_grid_parallel_size() == 2
     assert get_data_parallel_size() == 2
 
-@pytest.mark.distributed
 def test_send_receive(parallel_setup):
     """Test send/receive operations between ranks."""
     state = get_parallel_state()

@@ -179,7 +179,7 @@ class TestFakeBatchedImages:
         tensor = torch.randn_like(batch())
         
         fake_batch = FakeBatchedImages(tensor, batch)
-        assert fake_batch.is_sharded  # Should be True by default
+        assert fake_batch.is_sharded == batch.is_sharded  # Should be the same as batch sharded status
         assert torch.equal(fake_batch(), tensor)
         assert fake_batch.dims == batch.dims
         assert fake_batch.shape == tensor.shape

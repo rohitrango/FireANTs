@@ -30,6 +30,7 @@ pip install fireants_fused_ops
 To check out some of the tutorials, check out the `tutorials/` directory for usage.
 Alternatively, to reproduce the results in the [paper](https://arxiv.org/abs/2404.01249) checkout the `fireants/scripts/` directory.
 
+
 ## Documentation
 You can also check out the [Documentation](https://fireants.readthedocs.io/en/latest/). Feel free to reach out to me for improvements in the documentation.
 
@@ -41,6 +42,14 @@ In the paper, we use the datasets as following:
 
 ## Contributing
 Feel free to [add issues](https://github.com/rohitrango/fireants/issues/new) or [pull requests](https://github.com/rohitrango/fireants/compare) to the repository. We welcome contributions to the package.
+
+## Tests
+
+To run the tests, run the following command:
+```bash
+bash run_tests.sh
+```
+Feel free to report any issues with the tests to the [issues](https://github.com/rohitrango/fireants/issues/new) page.
 
 ## License
 Please refer to the [LICENSE](LICENSE) file for the license details, especially pertaining to redistribution of code and derivative works.

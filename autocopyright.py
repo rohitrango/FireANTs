@@ -43,14 +43,19 @@ def check_copyright(content: str) -> Tuple[bool, Optional[int], Optional[int]]:
             return True, None, end_idx
     return False, None, None
 
-def find_python_files(root_dir: str) -> List[str]:
+def should_include_file(file_path: str) -> bool:
+    """Check if file should be included based on extension."""
+    allowed_extensions = {'.py', '.cu', '.h', '.cpp'}
+    return any(file_path.endswith(ext) for ext in allowed_extensions)
+
+def find_code_files(root_dir: str) -> List[str]:
     """Find all Python files in the directory and subdirectories."""
-    python_files = []
+    code_files = []
     for root, _, files in os.walk(root_dir):
         for file in files:
-            if file.endswith('.py'):
-                python_files.append(os.path.join(root, file))
-    return python_files
+            if should_include_file(file):
+                code_files.append(os.path.join(root, file))
+    return code_files
 
 def process_file(filepath: str, dry_run: bool = False, overwrite: bool = False) -> Optional[str]:
     """Process a file to add or update copyright notice."""
@@ -112,8 +117,8 @@ def main():
     repo_root = os.path.dirname(os.path.abspath(__file__))
     
     # Process all Python files
-    python_files = find_python_files(os.path.join(repo_root, 'fireants'))
-    for filepath in python_files:
+    code_files = find_code_files(os.path.join(repo_root, 'fireants')) + find_code_files(os.path.join(repo_root, 'fused_ops'))
+    for filepath in code_files:
         result = process_file(filepath, dry_run=args.dry_run, overwrite=args.overwrite)
         print(result)
 

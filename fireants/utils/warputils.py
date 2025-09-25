@@ -158,6 +158,7 @@ def compositive_warp_inverse(image: BatchedImages, ref_disp: torch.Tensor,
                         smooth_grad_sigma: float = 0.0,
                         smooth_warp_sigma: float = 0.0,
                         displacement: bool = False,
+                        progress_bar: bool = True,
                         ):
     '''
     Utility to compute the inverse of a compositive warp
@@ -176,6 +177,7 @@ def compositive_warp_inverse(image: BatchedImages, ref_disp: torch.Tensor,
         dtype=ref_disp.dtype,
         smooth_grad_sigma=smooth_grad_sigma,
         smooth_warp_sigma=smooth_warp_sigma,
+        progress_bar=progress_bar,
     )
     ## initialize disp with negative of initial displacement
     with torch.no_grad():

@@ -317,7 +317,12 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             # save transformed image
             if save_transformed:
                 fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
-                rev_inv_warp_field = compositive_warp_inverse(self.fixed_images, self.rev_warp.get_warp(), displacement=True,)
+                # if scale > 1, then we want to optimize a downsampled fixed image instead
+                if scale > 1:
+                    fake_fixed_image = FakeBatchedImages(fixed_image_down, self.fixed_images, ignore_size_match=True)
+                else:
+                    fake_fixed_image = self.fixed_images
+                rev_inv_warp_field = compositive_warp_inverse(fake_fixed_image, self.rev_warp.get_warp(), displacement=True, progress_bar=False)
                 # # smooth them out
                 if self.smooth_warp_sigma > 0:
                     fwd_warp_field = separable_filtering(fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg), warp_gaussian).permute(*self.fwd_warp.permute_imgtov)
@@ -325,7 +330,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
 
                 # # compose the two warp fields
                 composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field)
-                moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=composed_warp, mode='bilinear', align_corners=True, displacement=True)
+                moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=composed_warp, mode='bilinear', align_corners=True, is_displacement=True)
                 transformed_images.append(moved_image.detach())
                 
         if save_transformed:

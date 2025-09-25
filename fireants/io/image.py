@@ -300,12 +300,13 @@ class BatchedImages:
         if len(self.images) == 0:
             raise ValueError("BatchedImages must have at least one image")
         # check if all images have a PyTorch tensor representation
-        check_and_raise_cond(all([image.is_array_present for image in self.images]), "All images must have a PyTorch tensor representation", ValueError)
         # Check if all images are of type Image
-        check_and_raise_cond(all([isinstance(image, Image) for image in self.images]), "All images must be of type Image", TypeError)
         # check if all images have the same shape
+        check_and_raise_cond(all([image.is_array_present for image in self.images]), "All images must have a PyTorch tensor representation", ValueError)
+        check_and_raise_cond(all([isinstance(image, Image) for image in self.images]), "All images must be of type Image", TypeError)
         shapes = [x.array.shape[2:] for x in self.images]
         check_and_raise_cond(all([x == shapes[0] for x in shapes]), "All images must have the same shape", ValueError)
+
         # set the number of images
         self.n_images = len(self.images)
         self.interpolate_mode = 'bilinear' if len(self.images[0].shape) == 4 else 'trilinear'
@@ -452,7 +453,8 @@ class FakeBatchedImages:
                 logger.warning(f"Tensor size {tuple(tensor_size)} does not match the size of the batched images {tuple(batched_size)}, ignoring size match")
         self.tensor = tensor
         self.batched_images = batched_images
-        self.is_sharded = True   # assume that it inherits a sharded image
+        self.interpolate_mode = batched_images.interpolate_mode
+        self.is_sharded = batched_images.is_sharded
     
     def __call__(self):
         return self.tensor
@@ -462,6 +464,9 @@ class FakeBatchedImages:
     
     def get_phy2torch(self):
         return self.batched_images.phy2torch
+    
+    def size(self):
+        return self.tensor.shape[0]
     
     @property
     def device(self):

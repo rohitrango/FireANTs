@@ -33,6 +33,27 @@ from fireants.utils.globals import PERMITTED_ANTS_WARP_EXT
 # logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+from fireants.registration.distributed import parallel_state
+
+def divide_size_into_chunks(size: int, gp_size: int) -> list:
+    '''
+    Divide a size into as-equal-as-possible chunks based on world size for distributed
+    
+    Args:
+        size (int): The total size to be divided
+        gp_size (int): Number of processes to divide the size across
+
+    Returns:
+        list: List of chunk sizes that sum up to the original size
+    '''
+    base_size = size // gp_size
+    remainder = size % gp_size
+    chunks = [base_size] * gp_size
+    
+    # Distribute remainder across first 'remainder' processes
+    for i in range(remainder):
+        chunks[i] += 1
+    return chunks
 
 class Image:
     '''`Image` is a class to handle medical images with SimpleITK backend and PyTorch tensor support.
@@ -207,10 +228,28 @@ class Image:
         check_and_raise_cond(all([torch.allclose(self.phy2torch, other.phy2torch) for other in others]), "Images reside in different physical spaces, using the first image's physical space", logger.warning)
 
         self.array = torch.cat([self.array] + [other.array for other in others], dim=1)
+        self.channels = self.array.shape[1]
+
         if optimize_memory:
             logger.debug("Deleting the arrays of the other images after concatenation")
             for other in others:
                 other.delete_array()
+    
+    def to(self, device_or_dtype: Union[devicetype, torch.dtype]):
+        '''
+        Move the image to a different device or change its dtype.
+
+        Args:
+            device_or_dtype (Union[devicetype, torch.dtype]): Device to move the image to,
+                or dtype to convert the image to
+
+        Returns:
+            Image: The image on the new device or with the new dtype
+        '''
+        self.array = self.array.to(device_or_dtype)
+        if isinstance(device_or_dtype, (str, torch.device)):
+            self.device = device_or_dtype
+        return self
 
     def __del__(self):
         '''Delete the SimpleITK image and all intermediate variables.'''
@@ -261,12 +300,13 @@ class BatchedImages:
         if len(self.images) == 0:
             raise ValueError("BatchedImages must have at least one image")
         # check if all images have a PyTorch tensor representation
-        check_and_raise_cond(all([image.is_array_present for image in self.images]), "All images must have a PyTorch tensor representation", ValueError)
         # Check if all images are of type Image
-        check_and_raise_cond(all([isinstance(image, Image) for image in self.images]), "All images must be of type Image", TypeError)
         # check if all images have the same shape
+        check_and_raise_cond(all([image.is_array_present for image in self.images]), "All images must have a PyTorch tensor representation", ValueError)
+        check_and_raise_cond(all([isinstance(image, Image) for image in self.images]), "All images must be of type Image", TypeError)
         shapes = [x.array.shape[2:] for x in self.images]
         check_and_raise_cond(all([x == shapes[0] for x in shapes]), "All images must have the same shape", ValueError)
+
         # set the number of images
         self.n_images = len(self.images)
         self.interpolate_mode = 'bilinear' if len(self.images[0].shape) == 4 else 'trilinear'
@@ -281,6 +321,58 @@ class BatchedImages:
         # create metadata
         self.torch2phy = torch.cat([x.torch2phy for x in self.images], dim=0)
         self.phy2torch = torch.cat([x.phy2torch for x in self.images], dim=0)
+        # sharding info 
+        self.is_sharded = False
+    
+    def set_device(self, device_name):
+        # set the device for the batch tensor
+        self.batch_tensor = self.batch_tensor.to(device_name)
+        self.torch2phy = self.torch2phy.to(device_name)
+        self.phy2torch = self.phy2torch.to(device_name)
+    
+    def to(self, device_or_dtype: Union[devicetype, torch.dtype]):
+        '''
+        Move the batch to a different device or change its dtype.
+        '''
+        self.batch_tensor = self.batch_tensor.to(device_or_dtype)
+        return self
+
+    def _shard_dim(self, dim_to_shard, rank=None):
+        if self.is_sharded:
+            logger.warning("Batch is already sharded, cannot shard again")
+            return
+        if rank is None:
+            rank = parallel_state.get_parallel_state().get_rank()
+        gp_group = parallel_state.get_parallel_state().get_current_gp_group()
+        gp_size = len(gp_group)
+        size = self.batch_tensor.shape[dim_to_shard+2]
+        chunk_sizes = divide_size_into_chunks(size, gp_size)
+        local_rank = gp_group.index(rank)
+        # check 
+        start = sum(chunk_sizes[:local_rank])
+        end = sum(chunk_sizes[:local_rank+1])
+        # store the full tensor into batch_tensor_full, and sharded version in unshareded
+        self.batch_tensor_full = self.batch_tensor.clone()
+        self.batch_tensor = self.batch_tensor_full.narrow_copy(dim_to_shard+2, start, end-start).clone()
+        print(f"Sharded batch tensor shape: {self.batch_tensor.shape} and rank: {local_rank}/{gp_size}, rank: {rank}")
+        self._shard_start = start
+        self._shard_end = end
+        self._dim_to_shard = dim_to_shard
+        self.is_sharded = True
+    
+    def _save_shards(self, dim_to_shard):
+        gp_group = parallel_state.get_parallel_state().get_current_gp_group()
+        gp_size = len(gp_group)
+        # get size and chunk size
+        size = self.batch_tensor.shape[dim_to_shard+2]
+        chunk_size = (size + gp_size - 1) // gp_size
+        chunks = []
+        for _ in range(gp_size):
+            start = _ * chunk_size
+            end = min(start + chunk_size, size)
+            chunks.append((start, end))
+        self._sharded_chunks = chunks
+
 
     def __call__(self):
         '''Get the batch of images.
@@ -314,7 +406,7 @@ class BatchedImages:
     @property
     def device(self):
         '''Get the device where the image tensors are stored.'''
-        return self.images[0].device
+        return self.batch_tensor.device
     
     @property
     def dims(self):
@@ -328,7 +420,8 @@ class BatchedImages:
     @property
     def shape(self):
         '''Get the shape of the images.'''
-        shape = list(self.images[0].shape)
+        # shape = list(self.images[0].shape)
+        shape = list(self.batch_tensor.shape)
         shape[0] = self.n_images
         return shape
     
@@ -347,15 +440,21 @@ class FakeBatchedImages:
     We will use the metadata of the BatchedImages object to create a FakeBatchedImages object.
     with the content of the tensor.
     '''
-    def __init__(self, tensor: torch.Tensor, batched_images: BatchedImages) -> None:
+    def __init__(self, tensor: torch.Tensor, batched_images: BatchedImages, ignore_size_match: bool = False) -> None:
         batched_size = list(deepcopy(batched_images().shape))
         tensor_size = list(deepcopy(tensor.shape))
         # ignore channel dimension differences
         batched_size[1] = 1
         tensor_size[1] = 1
-        check_and_raise_cond(tuple(batched_size) == tuple(tensor_size), "Tensor size must match the size of the batched images", ValueError)
+        if not ignore_size_match:
+            check_and_raise_cond(tuple(batched_size) == tuple(tensor_size), "Tensor size must match the size of the batched images", ValueError)
+        else:
+            if tuple(batched_size) != tuple(tensor_size):
+                logger.warning(f"Tensor size {tuple(tensor_size)} does not match the size of the batched images {tuple(batched_size)}, ignoring size match")
         self.tensor = tensor
         self.batched_images = batched_images
+        self.interpolate_mode = batched_images.interpolate_mode
+        self.is_sharded = batched_images.is_sharded
     
     def __call__(self):
         return self.tensor
@@ -365,6 +464,9 @@ class FakeBatchedImages:
     
     def get_phy2torch(self):
         return self.batched_images.phy2torch
+    
+    def size(self):
+        return self.tensor.shape[0]
     
     @property
     def device(self):
@@ -450,8 +552,9 @@ class FakeBatchedImages:
 if __name__ == '__main__':
     from fireants.utils.util import get_tensor_memory_details
     from glob import glob
-    # files = sorted(glob("/data/rohitrango/IBSR_braindata/IBSR_01/*nii.gz"))
-    file = "/mnt/rohit_data2/fMOST/subject/15257_red_mm_IRA.nii.gz"
+    import os
+    # files = sorted(glob(f"{os.environ['DATAPATH_R']}/IBSR_braindata/IBSR_01/*nii.gz"))
+    file = f"{os.environ['DATA_PATH2']}/fMOST/subject/15257_red_mm_IRA.nii.gz"
     # torch.cuda.memory._record_memory_history()
 
     image = Image.load_file(file)
@@ -467,10 +570,10 @@ if __name__ == '__main__':
 
     # Check concatenation
     mem_start = torch.cuda.memory_allocated()
-    t1 = Image.load_file("/data/rohitrango/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t1.nii.gz")
-    t2 = Image.load_file("/data/rohitrango/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t2.nii.gz")
-    t1ce = Image.load_file("/data/rohitrango/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t1ce.nii.gz")
-    flair = Image.load_file("/data/rohitrango/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_flair.nii.gz")
+    t1 = Image.load_file(f"{os.environ['DATAPATH_R']}/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t1.nii.gz")
+    t2 = Image.load_file(f"{os.environ['DATAPATH_R']}/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t2.nii.gz")
+    t1ce = Image.load_file(f"{os.environ['DATAPATH_R']}/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_t1ce.nii.gz")
+    flair = Image.load_file(f"{os.environ['DATAPATH_R']}/BRATS2021/training/BraTS2021_00624/BraTS2021_00624_flair.nii.gz")
     t1.concatenate(t2, t1ce, flair)
     print(t1.array.shape)
     print(t2.is_array_present, t1ce.is_array_present, flair.is_array_present)

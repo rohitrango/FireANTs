@@ -44,6 +44,9 @@ import ray
 from ray import tune, air
 from ray.air import session
 from ray.tune.search import ConcurrencyLimiter, BasicVariantGenerator
+import os
+
+ROOT = os.environ['DATAPATH_R']
 
 def seg_preprocessor_full(segmentation: torch.Tensor, labels_all: np.ndarray):
     ''' custom preprocessor for IBSR dataset that maps only the common structures '''
@@ -56,9 +59,10 @@ def registration_run(config):
     ''' This is the main function that uses the config from ray.tune and
     performs image registration across the dataset
     '''
+    global ROOT
     sitk.ProcessObject_SetGlobalWarningDisplay(False)
-    DATA_DIR = "/data/rohitrango/brain_data/LPBA40/registered_pairs/"
-    LABEL_DIR = "/data/rohitrango/brain_data/LPBA40/registered_label_pairs/"
+    DATA_DIR = f"{ROOT}/brain_data/LPBA40/registered_pairs/"
+    LABEL_DIR = f"{ROOT}/brain_data/LPBA40/registered_label_pairs/"
     # first label is background 
     labels_all = np.array([  0,  21,  22,  23,  24,  25,  26,  27,  28,  29,  30,  31,  32,
             33,  34,  41,  42,  43,  44,  45,  46,  47,  48,  49,  50,  61,
@@ -101,7 +105,7 @@ def registration_run(config):
         print("Registering {} to {}".format(fixed_image_path, moving_image_path))
         affine = AffineRegistration([8, 4, 2, 1], [100, 50, 25, 20], fixed_image, moving_image, \
             loss_type='cc', optimizer='Adam', optimizer_lr=3e-4, optimizer_params={}, cc_kernel_size=5)
-        affine.optimize(save_transformed=False)
+        affine.optimize()
         # greedy registration
         comp = config['deformation_type'] == 'compositive'
         if algo == 'greedy':
@@ -119,7 +123,7 @@ def registration_run(config):
                                     optimizer_params={'beta1': config['beta1'], 'beta2': config['beta2']} if comp else {},
                                     smooth_grad_sigma=grad_sigma, smooth_warp_sigma=warp_sigma, init_affine=affine.get_affine_matrix().detach())
         # a = time.time()
-        deformable.optimize(save_transformed=False)
+        deformable.optimize()
         # b = time.time() - a
         # evaluate
         moved_seg_array = deformable.evaluate(fixed_seg, moving_seg)

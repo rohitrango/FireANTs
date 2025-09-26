@@ -39,12 +39,10 @@ from ray import tune, air
 from ray.air import session
 from ray.tune.search import ConcurrencyLimiter, BasicVariantGenerator
 
-SCANS_PATH = "/data/rohitrango/EMPIRE10/scans_v2/"
-MASKS_PATH = "/data/rohitrango/EMPIRE10/lungMasks_v2/"
-OUT_PATH = "/data/rohitrango/EMPIRE10/submission_v2/"
-# SCANS_PATH = "/data/rohitrango/EMPIRE10/scans/"
-# MASKS_PATH = "/data/rohitrango/EMPIRE10/lungMasks/"
-# OUT_PATH = "/data/rohitrango/EMPIRE10/submission/"
+ROOT = os.environ['DATAPATH_R']
+SCANS_PATH = f'{ROOT}/EMPIRE10/scans_v2/'
+MASKS_PATH = f'{ROOT}/EMPIRE10/lungMasks_v2/'
+OUT_PATH = f'{ROOT}/EMPIRE10/submission_v2/'
 
 class DiceLossModule(nn.Module):
     # Dice loss in the form of nn Module to pass into affine step 
@@ -114,7 +112,7 @@ def register_dataset(config):
         affine = AffineRegistration([6, 4, 2, 1], [200, 100, 50, 20], fixed_seg, moving_seg, \
                    loss_type='custom', custom_loss=dice_loss_mod, optimizer='Adam', optimizer_lr=3e-3, optimizer_params={}, cc_kernel_size=5)
         aff_start = time.time()
-        affine.optimize(save_transformed=False)
+        affine.optimize()
         aff_end = time.time()
         affine_matrix = affine.get_affine_matrix().detach()
         del affine
@@ -139,7 +137,7 @@ def register_dataset(config):
                                     optimizer_params={'beta1': config['beta1'], 'beta2': config['beta2']},
                                     smooth_grad_sigma=grad_sigma, smooth_warp_sigma=warp_sigma, init_affine=affine_matrix)
         def_start = time.time()
-        deformable.optimize(save_transformed=False)
+        deformable.optimize()
         def_end = time.time()
 
         print(f"For scan pair: {lung_id}")

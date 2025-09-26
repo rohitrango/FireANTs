@@ -13,4 +13,4 @@
 # For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
 
 
-from fireants.io.image import Image, BatchedImages
+from fireants.io.image import Image, BatchedImages, FakeBatchedImages

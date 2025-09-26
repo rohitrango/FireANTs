@@ -3,27 +3,38 @@
 The FireANTs library is a lightweight registration package for Riemannian diffeomorphic registration on GPUs.
 
 ## Installation 
-To use the FireANTs package, you can either clone the repository and install the package locally or install the package directly from PyPI.
-We recommend using a fresh Anaconda/Miniconda environment to install the package.
+To use the FireANTs package, you can either 
+
+- Use Docker (see [docker/README.md](docker/README.md), _highly recommended_)
+- Clone the repository and install the package locally
+- Install the package directly from PyPI.
+
+If you do not want to use Docker, we recommend using a fresh Anaconda/Miniconda environment to install the package.
 ```
-conda create -n fireants python=3.7
+conda create -n fireants python=3.9
 ```
 
 To install FireANTs locally:
 ```
 git clone https://github.com/rohitrango/fireants
 cd fireants
-pip install -e .
+pip install .
+pip install ./fused_ops
 ```
+
+By default, doing `pip install .` will **NOT** include the fused CUDA operations. 
+I highly recommend installing the fused CUDA operations using `pip install ./fused_ops`.
 
 Or install from PyPI:
 ```
 pip install fireants
+pip install fireants_fused_ops
 ```
 
 ## Tutorial
 To check out some of the tutorials, check out the `tutorials/` directory for usage.
 Alternatively, to reproduce the results in the [paper](https://arxiv.org/abs/2404.01249) checkout the `fireants/scripts/` directory.
+
 
 ## Documentation
 You can also check out the [Documentation](https://fireants.readthedocs.io/en/latest/). Feel free to reach out to me for improvements in the documentation.
@@ -36,6 +47,14 @@ In the paper, we use the datasets as following:
 
 ## Contributing
 Feel free to [add issues](https://github.com/rohitrango/fireants/issues/new) or [pull requests](https://github.com/rohitrango/fireants/compare) to the repository. We welcome contributions to the package.
+
+## Tests
+
+To run the tests, run the following command:
+```bash
+bash run_tests.sh
+```
+Feel free to report any issues with the tests to the [issues](https://github.com/rohitrango/fireants/issues/new) page.
 
 ## License
 Please refer to the [LICENSE](LICENSE) file for the license details, especially pertaining to redistribution of code and derivative works.

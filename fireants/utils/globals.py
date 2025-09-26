@@ -14,6 +14,7 @@
 
 
 MIN_IMG_SIZE = 32
+MIN_IMG_SHARDED_SIZE = 4
 
 # file formats for ANTs
 PERMITTED_ANTS_WARP_EXT = ['.nii.gz', '.nii']

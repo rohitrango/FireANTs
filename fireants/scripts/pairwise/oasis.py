@@ -35,8 +35,7 @@ import os.path as osp
 import ray
 from fireants.scripts.evalutils import compute_metrics
 
-# ROOT_DIR = "/data/rohitrango/OASIS/"
-ROOT_DIR = "/mnt/rohit_data2/neurite-OASIS"
+ROOT_DIR = f"{os.environ['DATA_PATH2']}/neurite-OASIS"
 
 def dice_score(p, q):
     ''' computes the dice score between two tensors '''
@@ -84,7 +83,7 @@ def register_val_dataset(config, test=False):
         else:
             raise NotImplementedError
         # deformation
-        deformable.optimize(save_transformed=False)
+        deformable.optimize()
         warp = deformable.get_warped_coordinates(fixed_image, moving_image)
         # del deformable
         # evaluate

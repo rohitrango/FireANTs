@@ -29,7 +29,7 @@ from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.utils.imageutils import downsample
 from fireants.utils.util import compose_warp
 from fireants.utils.warputils import compositive_warp_inverse
-
+from fireants.interpolator import fireants_interpolator
 from fireants.registration.deformablemixin import DeformableMixin
 
 class SyNRegistration(AbstractRegistration, DeformableMixin):
@@ -55,7 +55,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         optimizer_lr (float, optional): Learning rate for optimizer. Defaults to 0.1.
         integrator_n (Union[str, int], optional): Number of integration steps for geodesic shooting.
             Only used if deformation_type='geodesic'. Defaults to 10.
-        mi_kernel_type (str, optional): Kernel type for MI loss. Defaults to 'b-spline'.
+        mi_kernel_type (str, optional): Kernel type for MI loss. Defaults to 'gaussian'.
         cc_kernel_type (str, optional): Kernel type for CC loss. Defaults to 'rectangular'.
         smooth_warp_sigma (float, optional): Gaussian smoothing sigma for warp field. Defaults to 0.25.
         smooth_grad_sigma (float, optional): Gaussian smoothing sigma for gradient field. Defaults to 1.0.
@@ -84,11 +84,11 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                 optimizer: str = 'Adam', optimizer_params: dict = {},
                 optimizer_lr: float = 0.1, 
                 integrator_n: Union[str, int] = 10,
-                mi_kernel_type: str = 'b-spline', cc_kernel_type: str = 'rectangular',
-                smooth_warp_sigma: float = 0.25,
+                mi_kernel_type: str = 'gaussian', cc_kernel_type: str = 'rectangular',
+                smooth_warp_sigma: float = 0.5,
                 smooth_grad_sigma: float = 1.0,
                 reduction: str = 'mean',
-                cc_kernel_size: float = 3,
+                cc_kernel_size: float = 7,
                 loss_params: dict = {},
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10,
                 init_affine: Optional[torch.Tensor] = None,
@@ -109,17 +109,20 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         self.warp_reg = warp_reg
         self.displacement_reg = displacement_reg
 
+
         if deformation_type == 'geodesic':
-            fwd_warp = StationaryVelocity(fixed_images, moving_images, integrator_n=integrator_n, 
+            fwd_warp = StationaryVelocity(fixed_images, moving_images, integrator_n=integrator_n, dtype=self.dtype,
                                         optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params,
                                         smoothing_grad_sigma=smooth_grad_sigma)
-            rev_warp = StationaryVelocity(fixed_images, moving_images, integrator_n=integrator_n, 
+            rev_warp = StationaryVelocity(fixed_images, moving_images, integrator_n=integrator_n, dtype=self.dtype,
                                         optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params,
                                         smoothing_grad_sigma=smooth_grad_sigma)
         elif deformation_type == 'compositive':
             fwd_warp = CompositiveWarp(fixed_images, moving_images, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params, \
+                dtype=self.dtype,
                                    smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma)
             rev_warp = CompositiveWarp(fixed_images, moving_images, optimizer=optimizer, optimizer_lr=optimizer_lr, optimizer_params=optimizer_params, \
+                dtype=self.dtype,
                                    smoothing_grad_sigma=smooth_grad_sigma, smoothing_warp_sigma=smooth_warp_sigma)
             smooth_warp_sigma = 0  # this work is delegated to compositive warp
         else:
@@ -132,17 +135,17 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             init_affine = torch.eye(self.dims+1, device=fixed_images.device).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, D+1, D+1]
         B, D1, D2 = init_affine.shape
         if D1 == self.dims+1 and D2 == self.dims+1:
-            self.affine = init_affine.detach()
+            self.affine = init_affine.detach().to(self.dtype)
         elif D1 == self.dims and D2 == self.dims+1:
             # attach row to affine
             row = torch.zeros(self.opt_size, 1, self.dims+1, device=fixed_images.device)
             row[:, 0, -1] = 1.0
-            self.affine = torch.cat([init_affine.detach(), row], dim=1)
+            self.affine = torch.cat([init_affine.detach(), row], dim=1).to(self.dtype)
         else:
             raise ValueError('Invalid initial affine shape: {}'.format(init_affine.shape))
 
 
-    def get_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None, displacement=False):
+    def get_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None, displacement=False):
         """Get transformed coordinates for warping the moving image.
 
         Computes the coordinate transformation from fixed to moving image space
@@ -170,17 +173,15 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         else:
             shape = [fixed_arrays.shape[0], 1] + list(shape) 
 
-        fixed_t2p = fixed_images.get_torch2phy()
-        moving_p2t = moving_images.get_phy2torch()
+        fixed_t2p = fixed_images.get_torch2phy().to(self.dtype)
+        moving_p2t = moving_images.get_phy2torch().to(self.dtype)
         # fixed_size = fixed_arrays.shape[2:]
         # save init transform
-        init_grid = torch.eye(self.dims, self.dims+1).to(fixed_images.device).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, dims, dims+1]
-        affine_map_init = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]
-        fixed_image_affinecoords = F.affine_grid(affine_map_init, fixed_arrays.shape, align_corners=True)
-        fixed_image_vgrid  = F.affine_grid(init_grid, fixed_arrays.shape, align_corners=True)
+        # init_grid = torch.eye(self.dims, self.dims+1).to(fixed_images.device, self.dtype).unsqueeze(0).repeat(fixed_images.size(), 1, 1)  # [N, dims, dims+1]
+        affine_map_init = (torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]).contiguous().to(self.dtype)
+        # fixed_image_vgrid  = F.affine_grid(init_grid, fixed_arrays.shape, align_corners=True)
         # get warps
         fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
-        rev_warp_field = self.rev_warp.get_warp()
         if tuple(fwd_warp_field.shape[1:-1]) != tuple(shape[2:]):
             # interpolate this
             fwd_warp_field = F.interpolate(
@@ -189,37 +190,33 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                 mode="trilinear",
                 align_corners=True,
             ).permute(*self.fwd_warp.permute_imgtov)
-        if tuple(rev_warp_field.shape[1:-1]) != tuple(shape[2:]):
-            rev_warp_field = F.interpolate(
+
+        # compute inverse of rev_warp with the size of `fixed_images`
+        rev_inv_warp_field = compositive_warp_inverse(fixed_images, self.rev_warp.get_warp(), displacement=True)
+        if tuple(rev_inv_warp_field.shape[1:-1]) != tuple(shape[2:]):
+            rev_inv_warp_field = F.interpolate(
                 self.rev_warp.get_warp().permute(*self.rev_warp.permute_vtoimg),
                 size=shape[2:],
                 mode="trilinear",
                 align_corners=True,
             ).permute(*self.rev_warp.permute_imgtov)
 
-        rev_inv_warp_field = compositive_warp_inverse(fixed_images, rev_warp_field + fixed_image_vgrid, displacement=True)
-
-
-
         # # smooth them out
         if self.smooth_warp_sigma > 0:
-            warp_gaussian = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.dims, device=fixed_arrays.device) + self.smooth_warp_sigma)]
+            warp_gaussian = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.dims, device=fixed_arrays.device, dtype=self.dtype) + self.smooth_warp_sigma)]
             fwd_warp_field = separable_filtering(fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg), warp_gaussian).permute(*self.fwd_warp.permute_imgtov)
             rev_inv_warp_field = separable_filtering(rev_inv_warp_field.permute(*self.rev_warp.permute_vtoimg), warp_gaussian).permute(*self.rev_warp.permute_imgtov)
         # # compose the two warp fields
-        composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field, fixed_image_vgrid)
-        moved_coords_final = fixed_image_affinecoords + composed_warp
-        if displacement:
-            init_grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=moved_coords_final.device)[None], \
-                            fixed_images.shape, align_corners=True)
-            moved_coords_final = moved_coords_final - init_grid
-        return moved_coords_final
+        composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field)
+        return {
+            'affine': affine_map_init,
+            'grid': composed_warp,
+        }
 
-    def get_inverse_warped_coordinates(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
+    def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         raise NotImplementedError('Inverse warp not implemented for SyN registration')
 
-
-    def optimize(self, save_transformed=False):
+    def optimize(self):
         """Optimize the symmetric deformation parameters.
 
         Performs multi-resolution optimization of both forward and reverse deformation fields
@@ -228,12 +225,10 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         iteration.
 
         Args:
-            save_transformed (bool, optional): Whether to save transformed images
-                at each scale. Defaults to False.
+            None
 
         Returns:
-            Optional[List[torch.Tensor]]: If save_transformed=True, returns list of
-                transformed images at each scale. Otherwise returns None.
+            None
 
         Note:
             The optimization alternates between updating the forward and reverse warps.
@@ -242,26 +237,26 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
         """
         fixed_arrays = self.fixed_images()
         moving_arrays = self.moving_images()
-        fixed_t2p = self.fixed_images.get_torch2phy()
-        moving_p2t = self.moving_images.get_phy2torch()
+        fixed_t2p = self.fixed_images.get_torch2phy().to(self.dtype)
+        moving_p2t = self.moving_images.get_phy2torch().to(self.dtype)
         fixed_size = fixed_arrays.shape[2:]
 
         # save initial affine transform to initialize grid for the fixed image and moving image
-        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device).unsqueeze(0).repeat(self.fixed_images.size(), 1, 1)  # [N, dims, dims+1]
-        affine_map_init = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]
+        init_grid = torch.eye(self.dims, self.dims+1).to(self.fixed_images.device, self.dtype).unsqueeze(0).repeat(self.fixed_images.size(), 1, 1)  # [N, dims, dims+1]
+        affine_map_init = (torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]).contiguous().to(self.dtype)
 
         # to save transformed images
         transformed_images = []
         # gaussian filter for smoothing the velocity field
         if self.smooth_warp_sigma > 0:
-            warp_gaussian = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.dims, device=fixed_arrays.device) + self.smooth_warp_sigma)]
+            warp_gaussian = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.dims, device=fixed_arrays.device, dtype=self.dtype) + self.smooth_warp_sigma)]
         # multi-scale optimization
         for scale, iters in zip(self.scales, self.iterations):
             self.convergence_monitor.reset()
             # resize images 
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
             if self.blur and scale > 1:
-                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device)
+                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device, dtype=fixed_arrays.dtype)
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
                 fixed_image_down = downsample(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
                 moving_image_blur = separable_filtering(moving_arrays, gaussians)
@@ -274,8 +269,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             self.rev_warp.set_size(size_down)
 
             # Get coordinates to transform
-            fixed_image_affinecoords = F.affine_grid(affine_map_init, fixed_image_down.shape, align_corners=True)
-            fixed_image_vgrid  = F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)
+            # fixed_image_affinecoords = F.affine_grid(affine_map_init, fixed_image_down.shape, align_corners=True)
             #### Optimize
             pbar = tqdm(range(iters)) if self.progress_bar else range(iters)
             if self.reduction == 'mean':
@@ -294,15 +288,17 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                     fwd_warp_field = separable_filtering(fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg), warp_gaussian).permute(*self.fwd_warp.permute_imgtov)
                     rev_warp_field = separable_filtering(rev_warp_field.permute(*self.rev_warp.permute_vtoimg), warp_gaussian).permute(*self.rev_warp.permute_imgtov)
                 # moved and fixed coords
-                moved_coords = fixed_image_affinecoords + fwd_warp_field  # affine transform + warp field
-                fixed_coords = fixed_image_vgrid + rev_warp_field
                 # warp the "moving image" to moved_image_warp and fixed to "fixed image warp"
-                moved_image_warp = F.grid_sample(moving_image_blur, moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
-                fixed_image_warp = F.grid_sample(fixed_image_down, fixed_coords, mode='bilinear', align_corners=True)
+                moved_image_warp = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=fwd_warp_field.contiguous(), mode='bilinear', align_corners=True, is_displacement=True)
+                # reverse warp
+                fixed_image_warp = fireants_interpolator(fixed_image_down, affine=None, grid=rev_warp_field.contiguous(), mode='bilinear', align_corners=True, is_displacement=True)
                 # compute loss
                 loss = self.loss_fn(moved_image_warp, fixed_image_warp) 
                 # add regularization
                 if self.warp_reg is not None:
+                    # TODO: have to get the moved and fixed coords
+                    moved_coords = fwd_warp_field + F.affine_grid(affine_map_init, fixed_image_down.shape, align_corners=True)
+                    fixed_coords = rev_warp_field + F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)
                     loss = loss + self.warp_reg(moved_coords) + self.warp_reg(fixed_coords)
                 if self.displacement_reg is not None:
                     loss = loss + self.displacement_reg(fwd_warp_field) + self.displacement_reg(rev_warp_field)
@@ -316,35 +312,52 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                 if self.convergence_monitor.converged(loss.item()):
                     break
 
-            # save transformed image
-            if save_transformed:
-                fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
-                # rev_inv_warp_field = self.rev_warp.get_inverse_warp(n_iters=50, debug=True, lr=0.1)
-                rev_inv_warp_field = compositive_warp_inverse(self.fixed_images, self.rev_warp.get_warp() + fixed_image_vgrid, displacement=True,)
-                # # smooth them out
-                if self.smooth_warp_sigma > 0:
-                    fwd_warp_field = separable_filtering(fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg), warp_gaussian).permute(*self.fwd_warp.permute_imgtov)
-                    rev_inv_warp_field = separable_filtering(rev_inv_warp_field.permute(*self.rev_warp.permute_vtoimg), warp_gaussian).permute(*self.rev_warp.permute_imgtov)
 
-                # # compose the two warp fields
-                composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field, fixed_image_vgrid)
-                moved_coords_final = fixed_image_affinecoords + composed_warp
-                moved_image = F.grid_sample(moving_image_blur, moved_coords_final, mode='bilinear', align_corners=True)
-                transformed_images.append(moved_image.detach())
-                ## compose twice
-                # moved_image = F.grid_sample(moved_image_warp, rev_inv_warp_field + fixed_image_vgrid, mode='bilinear', align_corners=True)
-                # transformed_images.append(moved_image.detach().cpu())
-                # transformed_images.append(moved_image_warp.detach().cpu())
-                # transformed_images.append(fixed_image_warp.detach().cpu())
 
-                ## debug
-                # transformed_images.append(moved_image_warp.detach().cpu())
-                # fixed_warp_and_inverse = compose_warp(rev_inv_warp_field, rev_warp_field, fixed_image_vgrid)
-                # fixed_orig_image = F.grid_sample(fixed_image_warp, fixed_warp_and_inverse + fixed_image_vgrid, mode='bilinear', align_corners=True)
+if __name__ == '__main__':
+    from fireants.io.image import Image
+    from fireants.utils.util import get_gpu_memory
+    from time import time
+    from fireants.registration.affine import AffineRegistration
+    import gc
+    import os
 
-                # fixed_orig_image = F.grid_sample(fixed_image_warp, rev_inv_warp_field + fixed_image_vgrid, mode='bilinear', align_corners=True)
-                # transformed_images.append(fixed_image_warp.detach().cpu())
-                # transformed_images.append(fixed_orig_image.detach().cpu())
+    for img_dtype in [torch.bfloat16, torch.float32]:
+        # Record starting memory
+        start_mem = get_gpu_memory(clear=True)
+        # print(f"Starting memory for {img_dtype}: {start_mem} MB")
+        path = os.environ['DATAPATH_R']
+        img1 = Image.load_file(f'{path}/BRATS2021/training/BraTS2021_00598/BraTS2021_00598_t1.nii.gz', dtype=img_dtype)
+        img2 = Image.load_file(f'{path}/BRATS2021/training/BraTS2021_00597/BraTS2021_00597_t1.nii.gz', dtype=img_dtype)
+        fixed = BatchedImages([img1, ])
+        moving = BatchedImages([img2,])
+        transform = 0
 
-        if save_transformed:
-            return transformed_images
+        image_mem = get_gpu_memory(clear=True)
+        print(f"Memory for loading images {img_dtype}: {image_mem - start_mem} MB")
+        start_mem = image_mem
+
+        transform = AffineRegistration([8, 4, 2, 1], [200, 100, 50, 20], fixed, moving, \
+            dtype=img_dtype,
+            loss_type='cc', optimizer='Adam', optimizer_lr=3e-4) #, optimizer_params={'momentum': 0.9})
+        transform.optimize()
+        # get memory after affine registration
+        aff_mem = get_gpu_memory(clear=True)
+
+        print(f"Memory for affine registration {img_dtype}: {aff_mem - start_mem} MB")
+        init_affine = transform.get_affine_matrix().detach()
+        del transform
+
+        start_mem = get_gpu_memory(clear=True)
+        reg = SyNRegistration(scales=[4, 2, 1], iterations=[100, 50, 20], fixed_images=fixed, moving_images=moving, dtype=img_dtype,
+                                    optimizer='Adam', optimizer_lr=0.2, init_affine=init_affine)
+        a = time()
+        reg.optimize()
+        print(time() - a)
+        end = get_gpu_memory(clear=True)
+        print(f"Memory used for {img_dtype}: {end - start_mem} MB\n")
+        del reg
+        del fixed
+        del moving
+        del img1
+        del img2

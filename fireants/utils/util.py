@@ -25,6 +25,9 @@ import gc
 import os
 import inspect
 import logging
+from typing import Optional
+from fireants.interpolator import fireants_interpolator
+import SimpleITK as sitk
 logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
@@ -56,7 +59,7 @@ def get_tensor_memory_details() -> List[Tuple[torch.Tensor, float, str, str]]:
                 
                 tensor_details.append((tensor, size_mb, description, var_name))
         except Exception as e:
-            # print(e)
+            logger.warning(f"Error getting tensor details: {e}")
             pass
     return sorted(tensor_details, key=lambda x: x[1], reverse=True)
 
@@ -194,6 +197,31 @@ def any_extension(filename: str, permitted_ext: List[str]):
     '''
     return any(filename.endswith(ext) for ext in permitted_ext)
 
+def save_itk_affine(filename, param_dict):
+    '''
+    Given parameter dict, save filename
+    '''
+    keys = param_dict.keys()
+    affinekey = None
+    for k in keys:
+        if 'AffineTransform' in k:
+            affinekey = k
+            break
+    if affinekey is None:
+        raise ValueError("Affine matrix not found in parameter dict")
+    dims = int(affinekey.split('_')[-1])
+    transform = sitk.AffineTransform(dims)
+    # get affine and translation parts
+    mat = param_dict[affinekey]
+    A = mat[:dims, :dims]
+    t = mat[:dims, -1]
+    # save 
+    transform.SetMatrix(A.flatten().astype(np.float64))
+    transform.SetTranslation(t.flatten().astype(np.float64))
+    if "fixed" in keys:
+        transform.SetFixedParameters(param_dict["fixed"].flatten().astype(np.float64))
+    sitk.WriteTransform(transform, filename)
+
 def savetxt(filename: str, A: torch.Tensor, t: torch.Tensor):
     '''
     Save the transform matrix and translation vector to a text file
@@ -202,11 +230,12 @@ def savetxt(filename: str, A: torch.Tensor, t: torch.Tensor):
     with open(filename, 'w') as f:
         f.write("#Insight Transform File V1.0\n")
         f.write("#Transform 0\n")
-        f.write("Transform: AffineTransform_float_3_3\n")
+        f.write(f"Transform: AffineTransform_float_{dims}_{dims}\n")
         f.write("Parameters: " + " ".join(map(str, list(A.flatten()) + list(t.flatten()))) + "\n")
         f.write("FixedParameters: " + " ".join(map(str, np.zeros((dims, 1)).flatten())) + "\n")
 
-def compose_warp(warp1: torch.Tensor, warp2: torch.Tensor, grid: torch.Tensor):
+# def compose_warp(warp1: torch.Tensor, warp2: torch.Tensor, grid: torch.Tensor):
+def compose_warp(warp1: torch.Tensor, warp2: torch.Tensor, affine: Optional[torch.Tensor] = None):
     '''
     warp1 and warp2 are displacement maps u(x) and v(x) of size [N, H, W, D, dims]
 
@@ -221,7 +250,7 @@ def compose_warp(warp1: torch.Tensor, warp2: torch.Tensor, grid: torch.Tensor):
         permute_vtoimg = (0, 3, 1, 2)
         permute_imgtov = (0, 2, 3, 1)
     # compute u(x + v(x)) 
-    warp12 = F.grid_sample(warp1.permute(*permute_vtoimg), grid + warp2, mode='bilinear', align_corners=True).permute(*permute_imgtov)
+    warp12 = fireants_interpolator.warp_composer(warp1, affine, warp2, align_corners=True)
     return warp2 + warp12
 
 def collate_fireants_fn(batch):

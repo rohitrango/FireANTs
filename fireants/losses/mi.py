@@ -17,10 +17,37 @@ from __future__ import annotations
 
 from time import time, sleep
 import torch
-from torch import nn
+import torch.nn as nn
 from torch.nn import functional as F
 from typing import Optional
-# from torch.nn.modules.loss import _Loss
+import os
+
+from fireants.registration.distributed import parallel_state
+
+class allgather_mi(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, pab, pa, pb, sample_size):
+        # get sample size
+        total_size = torch.tensor([sample_size], dtype=torch.long, device=pab.device)
+        parallel_state.all_reduce_across_gp_ranks(total_size, torch.distributed.ReduceOp.SUM)
+        total_size = total_size.item()
+        wt = sample_size * 1.0 / total_size
+        # allreduce the histograms
+        pa.mul_(wt)
+        pb.mul_(wt)
+        pab.mul_(wt)
+        parallel_state.all_reduce_across_gp_ranks(pa, torch.distributed.ReduceOp.SUM)
+        parallel_state.all_reduce_across_gp_ranks(pb, torch.distributed.ReduceOp.SUM)
+        parallel_state.all_reduce_across_gp_ranks(pab, torch.distributed.ReduceOp.SUM)
+        ctx.wt = wt
+        # make sure they are weighted correctly
+        return pab, pa, pb
+
+    @staticmethod
+    def backward(ctx, grad_pab, grad_pa, grad_pb):
+        # get scaling factor
+        wt = ctx.wt
+        return wt * grad_pab, wt * grad_pa if grad_pa is not None else grad_pa, wt * grad_pb if grad_pb is not None else grad_pb, None
 
 class GlobalMutualInformationLoss(nn.Module):
     """
@@ -32,7 +59,7 @@ class GlobalMutualInformationLoss(nn.Module):
         self,
         kernel_type: str = "gaussian",
         num_bins: int = 32,
-        sigma_ratio: float = 0.5,
+        sigma_ratio: float = 1.0,
         reduction: str = "mean", 
         smooth_nr: float = 1e-7,
         smooth_dr: float = 1e-7,
@@ -64,8 +91,11 @@ class GlobalMutualInformationLoss(nn.Module):
         super().__init__()
         if num_bins <= 0:
             raise ValueError("num_bins must > 0, got {num_bins}")
-        bin_centers = torch.linspace(0.0, 1.0, num_bins)  # (num_bins,)
-        sigma = torch.mean(bin_centers[1:] - bin_centers[:-1]) * sigma_ratio
+        # bin_centers = torch.linspace(0.0, 1.0, num_bins) + 0.5 / num_bins  # (num_bins,)
+        bin_centers = torch.arange(num_bins, device=torch.cuda.current_device()) / num_bins + 0.5 / num_bins
+        sigma = torch.mean(bin_centers[1:] - bin_centers[:-1]) * sigma_ratio / 2
+        # print(f"sigma: {sigma}, 1/num_bins: {1/num_bins}")
+        self.sigma_ratio = sigma_ratio
         self.kernel_type = kernel_type
         self.num_bins = num_bins
         self.kernel_type = kernel_type
@@ -76,6 +106,11 @@ class GlobalMutualInformationLoss(nn.Module):
             self.preterm = 1 / (2 * sigma**2)
             self.bin_centers = bin_centers[None, None, ...]
         self.reduction = reduction 
+
+        # keep track of worldsize for allgather operation
+        # self.world_size = os.environ.get('WORLD_SIZE', None)
+        # if self.world_size is not None:
+            # self.world_size = int(self.world_size)
 
         self.smooth_nr = float(smooth_nr)
         self.smooth_dr = float(smooth_dr)
@@ -90,7 +125,7 @@ class GlobalMutualInformationLoss(nn.Module):
             # a third order BSpline kernel is used for the pred image intensity PDF.
             pred_weight, pred_probability = self.parzen_windowing_b_spline(pred, order=3)
             # a zero order (box car) BSpline kernel is used for the target image intensity PDF.
-            target_weight, target_probability = self.parzen_windowing_b_spline(target, order=0)
+            target_weight, target_probability = self.parzen_windowing_b_spline(target, order=3)
         else:
             raise ValueError
         return pred_weight, pred_probability, target_weight, target_probability
@@ -162,7 +197,10 @@ class GlobalMutualInformationLoss(nn.Module):
         probability = torch.mean(weight, dim=-2, keepdim=True)  # (batch, 1, num_bin)
         return weight, probability
 
-    def forward(self, pred: torch.Tensor, target: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def get_image_padding(self) -> int:
+        return 0
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
         Args:
             pred: the shape should be B[NDHW].
@@ -171,25 +209,28 @@ class GlobalMutualInformationLoss(nn.Module):
             ValueError: When ``self.reduction`` is not one of ["mean", "sum", "none"].
         """
         maxval = max(pred.max(), target.max())
-        pred = pred / maxval
-        target = target / maxval
+        if maxval > 1:
+            pred = pred / maxval
+            target = target / maxval
 
         if target.shape != pred.shape:
             raise ValueError(f"ground truth has differing shape ({target.shape}) from pred ({pred.shape})")
         wa, pa, wb, pb = self.parzen_windowing(pred, target)  # (batch, num_sample, num_bin), (batch, 1, num_bin)
 
-        pab = torch.bmm(wa.permute(0, 2, 1), wb.to(wa)).div(wa.shape[1])  # (batch, num_bins, num_bins)
-        papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))  # (batch, num_bins, num_bins)
+        # only perform reduction across grid parallel ranks
+        if parallel_state.is_initialized() and parallel_state.get_grid_parallel_size() > 1:
+            pab = torch.bmm(wa.permute(0, 2, 1), wb.to(wa))
+            pab, pa, pb = allgather_mi.apply(pab, pa, pb, wa.shape[1])
+            # divide by total number of samples (this is not exact but approximate)
+            pab = pab.div(self.world_size * wa.shape[1])
+            papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))
+        else:
+            pab = torch.bmm(wa.permute(0, 2, 1), wb.to(wa)).div(wa.shape[1])  # (batch, num_bins, num_bins)
+            papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))  # (batch, num_bins, num_bins)
+        
         mi = torch.sum(
             pab * torch.log((pab + self.smooth_nr) / (papb + self.smooth_dr) + self.smooth_dr), dim=(1, 2)
         )  # (batch)
-
-        ndim = len(pred.shape) - 2
-        if mask is not None:
-            maskmean = mask.flatten(2).mean(2)
-            for i in range(ndim):
-                maskmean = maskmean.unsqueeze(-1)
-            mi = mi * mask / maskmean
 
         if self.reduction == 'sum':
             return torch.sum(mi).neg()  # sum over the batch and channel ndims

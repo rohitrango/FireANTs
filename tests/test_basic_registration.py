@@ -9,7 +9,9 @@ import subprocess
 logging.basicConfig(level=logging.INFO)
 
 # Import FireANTs components
-from fireants.registration import MomentsRegistration, AffineRegistration, RigidRegistration
+from fireants.registration.moments import MomentsRegistration
+from fireants.registration.affine import AffineRegistration
+from fireants.registration.rigid import RigidRegistration
 from fireants.io.image import Image, BatchedImages, FakeBatchedImages
 try:
     from .conftest import dice_loss
@@ -22,14 +24,16 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+ext = "mat"
+
 @pytest.fixture(scope="class")
 def registration_results():
     """Fixture to compute and share registration results across subtests."""
     # Load test data
+    global ext
     test_data_dir = Path(__file__).parent / "test_data"
     output_dir = Path(__file__).parent / "test_results"
     output_dir.mkdir(exist_ok=True)
-    ext = "txt"
 
     # load images
     fixed_img = Image.load_file(str(test_data_dir / "oasis_157_image.nii.gz"))
@@ -53,7 +57,7 @@ def registration_results():
         moments=2,
         orientation='rot',
         blur=False,
-        loss_type='cc',
+        loss_type='fusedcc',
         cc_kernel_type='rectangular',
         cc_kernel_size=5
     )
@@ -161,10 +165,10 @@ class TestMomentsRegistration:
 def rigid_registration_results():
     """Fixture to compute and share rigid registration results across subtests."""
     # Load test data
+    global ext
     test_data_dir = Path(__file__).parent / "test_data"
     output_dir = Path(__file__).parent / "test_results"
     output_dir.mkdir(exist_ok=True)
-    ext = "txt"
 
     # load images
     fixed_img = Image.load_file(str(test_data_dir / "oasis_157_image.nii.gz"))
@@ -203,7 +207,7 @@ def rigid_registration_results():
         # init_translation=reg1.get_rigid_transl_init(),
         loss_type='mse',
         optimizer='Adam',
-        optimizer_lr=3e-1,
+        optimizer_lr=3e-2,
         scaling=False,
         cc_kernel_type='rectangular',
         cc_kernel_size=5,
@@ -314,10 +318,10 @@ class TestRigidRegistration:
 def affine_registration_results():
     """Fixture to compute and share affine registration results across subtests."""
     # Load test data
+    global ext
     test_data_dir = Path(__file__).parent / "test_data"
     output_dir = Path(__file__).parent / "test_results"
     output_dir.mkdir(exist_ok=True)
-    ext = "txt"
 
     # load images
     fixed_img = Image.load_file(str(test_data_dir / "oasis_157_image.nii.gz"))

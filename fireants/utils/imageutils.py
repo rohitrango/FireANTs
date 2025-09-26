@@ -23,6 +23,23 @@ from typing import Optional, List
 from fireants.losses.cc import gaussian_1d, separable_filtering
 from fireants.types import ItemOrList
 import warnings
+from enum import Enum
+import logging
+logger = logging.getLogger(__name__)
+try:
+    import fireants_fused_ops as ffo
+except ImportError:
+    logger.warn("fireants_fused_ops not found, will use torch fft instead")
+    ffo = None
+
+class TorchFloatType(Enum):
+    FLOAT16 = torch.float16
+    FLOAT32 = torch.float32
+    FLOAT64 = torch.float64
+    BFLOAT16 = torch.bfloat16
+
+def is_torch_float_type(dtype: torch.dtype):
+    return any([dtype == t.value for t in TorchFloatType])
 
 def lie_bracket(u: torch.Tensor, v: torch.Tensor):
     if len(u.shape) == 4:
@@ -106,24 +123,72 @@ def lie_bracket_3d(u: torch.Tensor, v: torch.Tensor):
     lie_bracket = J_u_v - J_v_u
     return lie_bracket
 
-def downsample(image: ItemOrList[torch.Tensor], size: List[int], mode: str, sigma: Optional[torch.Tensor]=None,
-               gaussians: Optional[torch.Tensor] = None) -> torch.Tensor:
+def downsample(image: torch.Tensor, size: List[int], mode: str, sigma: Optional[torch.Tensor]=None,
+               gaussians: Optional[torch.Tensor] = None, use_fft=True) -> torch.Tensor:
     ''' 
     this function is to downsample the image to the given size
     but first, we need to perform smoothing 
     if sigma is provided (in voxels), then use this sigma for downsampling, otherwise infer sigma
     '''
+    if use_fft and ffo is None:
+        logger.warn("fireants_fused_ops is not found, will default to standard downsampling")
+        use_fft = False
+
+    if use_fft:
+        return downsample_fft(image.to(torch.float32), size).to(image.dtype)
+
     if gaussians is None:
         if sigma is None:
             orig_size = list(image.shape[2:])
             sigma = [0.5 * orig_size[i] / size[i] for i in range(len(orig_size))]   # use sigma as the downsampling factor
-        sigma = torch.tensor(sigma, dtype=torch.float32, device=image.device)
+        sigma = torch.tensor(sigma, dtype=image.dtype, device=image.device)
         # create gaussian convs
         gaussians = [gaussian_1d(s, truncated=2) for s in sigma]
     # otherwise gaussians is given, just downsample
-    image_smooth = separable_filtering(image+0, gaussians)
-    image_down = F.interpolate(image_smooth, size=size, mode=mode, align_corners=True)
+    image_down = separable_filtering(image, gaussians)
+    image_down = F.interpolate(image_down, size=size, mode=mode, align_corners=True)
     return image_down
+
+def downsample_fft(image: torch.Tensor, size: List[int], padding=1) -> torch.Tensor:
+    ''' downsample using fft transform instead '''
+    dims = num_dims = len(image.shape) - 2
+    dims = [-x for x in range(1, dims+1)]
+    im_fft = torch.fft.fftn(image, dim=dims)
+    im_fft = torch.fft.fftshift(im_fft, dim=dims)
+    # get spatial coords
+    source_dims = list(image.shape[2:])
+    target_dims = size
+    # print(source_dims, target_dims)
+    # get start and end indices
+    start_idx = [H//2 - (h//2 + padding) for H, h in zip(source_dims, target_dims)]
+    end_idx = [si + sz + padding+1 for si, sz in zip(start_idx, target_dims)]
+    # crop the image
+    multiplier = [1.0 * sz / SZ for sz, SZ in zip(target_dims, source_dims)]
+    multiplier = np.prod(multiplier)
+    # print(multiplier, [-(h//2 + padding) for h in target_dims], [h - (h//2) + padding for h in target_dims])
+    if num_dims == 2:
+        im_fft = im_fft[:, :, start_idx[0]:end_idx[0], start_idx[1]:end_idx[1]].contiguous()
+        ffo.gaussian_blur_fft2(im_fft, *[-(h//2 + padding) for h in target_dims], *[h - (h//2) + padding for h in target_dims], multiplier)
+    elif num_dims == 3:
+        im_fft = im_fft[:, :, start_idx[0]:end_idx[0], start_idx[1]:end_idx[1], start_idx[2]:end_idx[2]].contiguous()
+        ffo.gaussian_blur_fft3(im_fft, *[-(h//2 + padding) for h in target_dims], *[h - (h//2) + padding for h in target_dims], multiplier)
+    else:
+        raise ValueError(f"Invalid dimension: {dims}")
+    
+    # print("cropped", im_fft.shape)
+    # crop the image
+    if padding > 0:
+        if num_dims == 2:
+            im_fft = im_fft[:, :, padding:-padding, padding:-padding]
+        elif num_dims == 3:
+            im_fft = im_fft[:, :, padding:-padding, padding:-padding, padding:-padding]
+    
+    # print("after padding", im_fft.shape)
+    im_fft = torch.fft.ifftshift(im_fft, dim=dims)
+    im_fft = torch.real(torch.fft.ifftn(im_fft, dim=dims)).contiguous()
+    im_fft = torch.clamp(im_fft, image.min().item(), image.max().item())
+    return im_fft
+    
 
 def apply_gaussian(image: torch.Tensor, sigma: torch.Tensor, truncated: float = 2) -> torch.Tensor:
     '''
@@ -177,7 +242,7 @@ def image_gradient_singlechannel(image, normalize=False):
             facx, facy = (W-1)/2, (H-1)/2
         else:
             facx, facy = 1, 1 
-        k = torch.cuda.FloatTensor([[-1.0, 0.0, 1.0]], device=device)[None, None] / 2
+        k = torch.tensor([[-1.0, 0.0, 1.0]], device=device, dtype=image.dtype)[None, None] / 2
         gradx = F.conv2d(image, facx * k, padding=(0, 1))
         grady = F.conv2d(image, facy * k.permute(0, 1, 3, 2), padding=(1, 0))
         grad = torch.cat([gradx, grady], dim=1)
@@ -187,7 +252,7 @@ def image_gradient_singlechannel(image, normalize=False):
             facx, facy, facz = (W-1)/2, (H-1)/2, (D-1)/2
         else:
             facx, facy, facz = 1, 1, 1
-        k = torch.cuda.FloatTensor([[[-1.0, 0.0, 1.0]]], device=device)[None, None] / 2
+        k = torch.tensor([[[-1.0, 0.0, 1.0]]], device=device, dtype=image.dtype)[None, None] / 2
         gradx = F.conv3d(image, facx * k, padding=(0, 0, 1))
         grady = F.conv3d(image, facy * k.permute(0, 1, 2, 4, 3), padding=(0, 1, 0))
         gradz = F.conv3d(image, facz * k.permute(0, 1, 4, 2, 3), padding=(1, 0, 0))
@@ -226,7 +291,7 @@ def integer_to_onehot(image: torch.Tensor, background_label:int=0, dtype: torch.
     for i in range(num_labels+1):
         if i == background_label:
             continue
-        onehot[count, ...] = (image == i)
+        onehot[count, ...] = (image == i).to(dtype)
         count += 1
     return onehot
 

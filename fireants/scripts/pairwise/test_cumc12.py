@@ -89,7 +89,7 @@ if __name__ == '__main__':
             print("Registering {} to {}".format(fixed_image_path, moving_image_path))
             affine = AffineRegistration([8, 4, 2, 1], [100, 50, 25, 20], fixed_image, moving_image, \
                 loss_type='cc', optimizer='Adam', optimizer_lr=3e-4, optimizer_params={}, cc_kernel_size=5)
-            affine.optimize(save_transformed=False)
+            affine.optimize()
             # greedy registration
             if algo == 'greedy':
                 deformable = GreedyRegistration(scales=[4, 2, 1], iterations=[200, 100, 25], fixed_images=fixed_image, moving_images=moving_image,
@@ -104,7 +104,7 @@ if __name__ == '__main__':
             else:
                 raise NotImplementedError
             a = time.time()
-            deformable.optimize(save_transformed=False)
+            deformable.optimize()
             b = time.time() - a
             all_times[(i, j)] = b
             # evaluate

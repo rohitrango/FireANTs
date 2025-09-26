@@ -11,6 +11,8 @@ num_subjects: 16    # set to null to use all subjects
 init_template_path: /mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0270_MR1/aligned_norm.nii.gz
 # init_template_path: null
 template_iterations: 6
+normalize_images: True
+save_as_uint8: False
 
 # laplacian params
 num_laplacian: 2

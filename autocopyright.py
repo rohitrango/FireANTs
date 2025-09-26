@@ -7,33 +7,47 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-COPYRIGHT_NOTICE = '''# Copyright (c) {year} Rohit Jena. All rights reserved.
-# 
-# This file is part of FireANTs, distributed under the terms of
-# the FireANTs License version 1.0. A copy of the license can be found
-# in the LICENSE file at the root of this repository.
-#
-# IMPORTANT: This code is part of FireANTs and its use, reproduction, or
-# distribution must comply with the full license terms, including:
-# - Maintaining all copyright notices and bibliography references
-# - Using only approved (re)-distribution channels 
-# - Proper attribution in derivative works
-#
-# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE \n\n
+# Map file extensions to comment styles
+COMMENT_STYLES = {
+    '.py': '#',
+    '.cpp': '//',
+    '.cu': '//',
+    '.h': '//'
+}
+
+def get_comment_style(filepath: str) -> str:
+    """Get the appropriate comment style for a file based on its extension."""
+    ext = os.path.splitext(filepath)[1]
+    return COMMENT_STYLES.get(ext, '#')  # Default to # if extension not found
+
+COPYRIGHT_NOTICE = '''{comment} Copyright (c) {year} Rohit Jena. All rights reserved.
+{comment} 
+{comment} This file is part of FireANTs, distributed under the terms of
+{comment} the FireANTs License version 1.0. A copy of the license can be found
+{comment} in the LICENSE file at the root of this repository.
+{comment}
+{comment} IMPORTANT: This code is part of FireANTs and its use, reproduction, or
+{comment} distribution must comply with the full license terms, including:
+{comment} - Maintaining all copyright notices and bibliography references
+{comment} - Using only approved (re)-distribution channels 
+{comment} - Proper attribution in derivative works
+{comment}
+{comment} For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE \n\n
 '''
 
-def check_copyright(content: str) -> Tuple[bool, Optional[int], Optional[int]]:
+def check_copyright(content: str, filepath: str) -> Tuple[bool, Optional[int], Optional[int]]:
     """
     Check if file has a copyright notice and extract its position and year if present.
     Returns (has_copyright, year, end_line_idx)
     """
+    comment_style = get_comment_style(filepath)
     lines = content.split('\n')
     for i, line in enumerate(lines[:10]):  # Check first 10 lines
         if 'copyright' in line.lower():
             # Find the end of the copyright block
             end_idx = i
             while end_idx < len(lines) and end_idx < i + 15:  # Look at most 15 lines after copyright
-                if not lines[end_idx].strip().startswith('#'):
+                if not lines[end_idx].strip().startswith(comment_style):
                     break
                 end_idx += 1
             # Try to extract year
@@ -43,14 +57,19 @@ def check_copyright(content: str) -> Tuple[bool, Optional[int], Optional[int]]:
             return True, None, end_idx
     return False, None, None
 
-def find_python_files(root_dir: str) -> List[str]:
+def should_include_file(file_path: str) -> bool:
+    """Check if file should be included based on extension."""
+    allowed_extensions = {'.py', '.cu', '.h', '.cpp'}
+    return any(file_path.endswith(ext) for ext in allowed_extensions)
+
+def find_code_files(root_dir: str) -> List[str]:
     """Find all Python files in the directory and subdirectories."""
-    python_files = []
+    code_files = []
     for root, _, files in os.walk(root_dir):
         for file in files:
-            if file.endswith('.py'):
-                python_files.append(os.path.join(root, file))
-    return python_files
+            if should_include_file(file):
+                code_files.append(os.path.join(root, file))
+    return code_files
 
 def process_file(filepath: str, dry_run: bool = False, overwrite: bool = False) -> Optional[str]:
     """Process a file to add or update copyright notice."""
@@ -58,8 +77,9 @@ def process_file(filepath: str, dry_run: bool = False, overwrite: bool = False) 
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
             
-        has_copyright, existing_year, end_idx = check_copyright(content)
+        has_copyright, existing_year, end_idx = check_copyright(content, filepath)
         current_year = datetime.now().year
+        comment_style = get_comment_style(filepath)
         
         if has_copyright and not overwrite:
             if existing_year is None:
@@ -88,9 +108,9 @@ def process_file(filepath: str, dry_run: bool = False, overwrite: bool = False) 
                 # Remove old copyright notice and add new one
                 lines = content.split('\n')
                 remaining_content = '\n'.join(lines[end_idx:])
-                new_content = COPYRIGHT_NOTICE.format(year=current_year) + remaining_content
+                new_content = COPYRIGHT_NOTICE.format(year=current_year, comment=comment_style) + remaining_content
             else:
-                new_content = COPYRIGHT_NOTICE.format(year=current_year) + content
+                new_content = COPYRIGHT_NOTICE.format(year=current_year, comment=comment_style) + content
                 
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(new_content)
@@ -112,8 +132,8 @@ def main():
     repo_root = os.path.dirname(os.path.abspath(__file__))
     
     # Process all Python files
-    python_files = find_python_files(os.path.join(repo_root, 'fireants'))
-    for filepath in python_files:
+    code_files = find_code_files(os.path.join(repo_root, 'fireants')) + find_code_files(os.path.join(repo_root, 'fused_ops'))
+    for filepath in code_files:
         result = process_file(filepath, dry_run=args.dry_run, overwrite=args.overwrite)
         print(result)
 

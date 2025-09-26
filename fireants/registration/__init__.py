@@ -11,10 +11,3 @@
 # - Proper attribution in derivative works
 #
 # For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
-
-
-from .affine import AffineRegistration
-from .rigid import RigidRegistration
-from .greedy import GreedyRegistration
-from .syn import SyNRegistration
-from .moments import MomentsRegistration

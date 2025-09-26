@@ -50,7 +50,7 @@ def main():
                                 optimizer='adam', optimizer_lr=0.5, cc_kernel_size=7,
                                 smooth_grad_sigma=1,
                                 smooth_warp_sigma=0.5)
-    deformable.optimize(save_transformed=False)
+    deformable.optimize()
     warp = deformable.get_warped_coordinates(fixed_image, moving_image)
     moved_image = deformable.evaluate(fixed_image, moving_image)
     ncc = -deformable.loss_fn(fixed_image(), moved_image)

@@ -23,9 +23,13 @@ fireants/baselines
 docs/site
 .vscode
 fireants/scripts/template/evaltemplate/
-fireants/scripts/template/saved*/
+fireants/scripts/template/saved_*
+notepad/
+fused_ops/fireants_fused_ops*.so
 **/saved_results
 notepad
 **/*pkl
+benchmarks/
+tests/notebooks
 tests/test_results/
 **/*.zip

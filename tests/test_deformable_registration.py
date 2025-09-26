@@ -8,7 +8,8 @@ import logging
 from pathlib import Path
 import torch.nn.functional as F
 
-from fireants.registration import GreedyRegistration, SyNRegistration
+from fireants.registration.greedy import GreedyRegistration
+from fireants.registration.syn import SyNRegistration
 from fireants.io.image import Image, BatchedImages
 from fireants.utils.imageutils import jacobian
 try:

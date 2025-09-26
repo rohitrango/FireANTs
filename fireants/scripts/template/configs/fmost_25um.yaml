@@ -1,0 +1,83 @@
+debug: True
+verbose: True
+
+# input params
+image_file: /mnt/rohit_data2/fMOST/fmost_min_list_aligned.txt
+image_prefix: /mnt/rohit_data2/fMOST/processedv2/
+image_suffix: 
+num_subjects: 52    # set to null to use all subjects
+
+# template params
+init_template_path: /mnt/rohit_data2/fMOST/processedv2/18469_red_mm_SLA_preprocessed_25um_aligned_to_18469.nii.gz
+# init_template_path: null
+template_iterations: 6
+
+# normalize and save images
+normalize_images: true
+save_as_uint8: false
+
+# laplacian params
+num_laplacian: 2
+laplace_params:
+  learning_rate: 0.25
+  itk_scale: true
+
+# shape averaging
+shape_avg: true
+orientation: SLA
+
+# save outputs
+save_dir: ./saved_templates/fmost_25um
+save_every: 2               # number of epochs to save the template (last epoch will always be saved)
+save_init_template: true  
+save_moved_images: false    # set to true if you want to save the moved images at last step (used for template creation)
+# no num_subjects: will be the same as the number of subjects used for creation
+save_additional:
+  image_file: []
+  image_prefix: []
+  image_suffix: []
+  is_segmentation: []
+
+# registration params
+batch_size: 2
+
+do_moments: False
+moments:
+  scale: 4
+  moments: 2
+
+# rigid transform
+do_rigid: False
+rigid:
+  iterations: [200, 100, 25]
+  scales: [4, 2, 1]
+  progress_bar: ${verbose}
+  loss_type: cc
+
+# affine transform
+do_affine: False
+affine:
+  iterations: [200, 100, 50]
+  scales: [4, 2, 1]
+  progress_bar: ${verbose}
+  loss_type: cc
+  optimizer: Adam
+  cc_kernel_size: 5
+  optimizer_lr: 1e-3
+
+# deformation transform
+do_deform: True
+deform_algo: greedy
+deform:
+  iterations: [100, 200, 100, 50]
+  scales: [6, 4, 2, 1]
+  optimizer_lr: 0.5        # for template creation, use lower learning rate than pairwise
+  smooth_warp_sigma: 0.5
+  smooth_grad_sigma: 1.5
+  progress_bar: ${verbose}
+  cc_kernel_size: 5
+  reduction: mean
+
+# additional params
+tmpdir: null
+last_reg: null

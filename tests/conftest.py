@@ -35,3 +35,18 @@ def dice_loss(pred: torch.Tensor, target: torch.Tensor, smooth: float = 1e-5, re
     # Return 1 - mean Dice (as a loss)
     # return 1 - dice.mean()
     return (1 - dice).mean() if reduce else (1 - dice)
+
+# def pytest_addoption(parser):
+#     parser.addoption(
+#         "--skip-distributed",
+#         action="store_true",
+#         default=True,
+#         help="skip distributed tests that require torchrun"
+#     )
+
+# def pytest_collection_modifyitems(config, items):
+#     if config.getoption("--skip-distributed"):
+#         skip_distributed = pytest.mark.skip(reason="need --no-skip-distributed option to run")
+#         for item in items:
+#             if "distributed" in item.keywords:
+#                 item.add_marker(skip_distributed)

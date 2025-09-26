@@ -6,7 +6,7 @@ from pathlib import Path
 import logging
 
 # Import FireANTs components
-from fireants.registration import MomentsRegistration
+from fireants.registration.moments import MomentsRegistration
 from fireants.io.image import Image, BatchedImages
 
 try:

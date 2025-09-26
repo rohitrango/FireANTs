@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools", "wheel", "torch>=2.3.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fireants_fused_ops"
+version = "1.0.0"
+description = "Fused CUDA operations for FireANTs"
+authors = [{name = "Rohit Jena"}]
+requires-python = ">=3.8"
+dependencies = ["torch>=2.3.0"]
+
+[project.urls]
+Homepage = "https://github.com/rohitrango/FireANTs"

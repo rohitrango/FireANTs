@@ -223,7 +223,26 @@ def parse_metric(metric_str: str) -> Tuple[str, List[Union[str, float]]]:
 
 
 def prepare_prev_transform(prev_transform, prev_transform_type, transform_type):
-    ''' prepare the previous transform for the next transform. '''
+    '''
+    Prepare the previous transform for the next transform.
+
+    Parameters
+    ----------
+    prev_transform : object
+        The previous transform object.
+    prev_transform_type : str or None
+        The type of the previous transform. If None, no previous transform is used.
+    transform_type : str
+        The type of the next transform.
+
+    Returns
+    -------
+    dict
+        A dictionary containing initialization parameters for the next transform.
+        If `prev_transform_type` is None, returns an empty dictionary.
+        For other values of `prev_transform_type`, returns a dictionary with keys and values
+        appropriate for initializing the next transform, depending on the types.
+    '''
     if prev_transform_type is None:
         return {}
     elif prev_transform_type == 'Moments':

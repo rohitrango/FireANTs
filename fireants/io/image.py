@@ -400,6 +400,16 @@ class BatchedImages:
             return self.batch_tensor.expand(self.n_images, *minusones)
         else:
             return self.batch_tensor
+
+    def get_interpolator_type(self):
+        ''' 
+        get the interpolator type to be used in `fireants_interpolator` 
+
+        - since the grid sampler only accepts only bilinear / nearest, we need to return 'bilinear' for bilinear/trilinear
+        '''
+        if self.interpolate_mode in ['bilinear', 'trilinear']:
+            return 'bilinear'
+        return self.interpolate_mode
     
     def broadcast(self, n):
         '''Broadcast the batch to n channels.
@@ -474,6 +484,16 @@ class FakeBatchedImages:
         self.interpolate_mode = batched_images.interpolate_mode
         self.is_sharded = batched_images.is_sharded
     
+    def get_interpolator_type(self):
+        ''' 
+        get the interpolator type to be used in `fireants_interpolator` 
+
+        - since the grid sampler only accepts only bilinear / nearest, we need to return 'bilinear' for bilinear/trilinear
+        '''
+        if self.interpolate_mode in ['bilinear', 'trilinear']:
+            return 'bilinear'
+        return self.interpolate_mode
+    
     def __call__(self):
         return self.tensor
     
@@ -497,6 +517,7 @@ class FakeBatchedImages:
     @property
     def shape(self):
         return self.tensor.shape
+    
     
     def write_image(self, filenames: Union[str, List[str]], permitted_ext: List[str] = PERMITTED_ANTS_WARP_EXT):
         """

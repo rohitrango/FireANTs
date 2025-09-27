@@ -310,5 +310,6 @@ class AbstractRegistration(ABC):
 
         moving_arrays = moving_images()
         moved_coords = self.get_warp_parameters(fixed_images, moving_images, shape=shape)
-        moved_image = fireants_interpolator(moving_arrays, **moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+        interpolate_mode = moving_images.get_interpolator_type()
+        moved_image = fireants_interpolator(moving_arrays, **moved_coords, mode=interpolate_mode, align_corners=True)  # [N, C, H, W, [D]]
         return moved_image

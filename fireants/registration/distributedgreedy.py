@@ -423,10 +423,11 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
         # get coordinates to interpolate
         moved_coords = self.get_warp_parameters(fixed_images, moving_images, shape=shape)
         # note that we have to provide (min, max) coordinates too
+        interpolate_mode = moving_images.get_interpolator_type()
         if self.use_ring_sampler:
-            moved_image = fireants_ringsampler_interpolator(moving_image_blur, **moved_coords, mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_fixed, max_coords=max_coords_fixed, min_img_coords=min_coords_moving, max_img_coords=max_coords_moving)
+            moved_image = fireants_ringsampler_interpolator(moving_image_blur, **moved_coords, mode=interpolate_mode, align_corners=True, is_displacement=True, min_coords=min_coords_fixed, max_coords=max_coords_fixed, min_img_coords=min_coords_moving, max_img_coords=max_coords_moving)
         else:
-            moved_image = fireants_interpolator(moving_image_blur, **moved_coords, mode='bilinear', align_corners=True, is_displacement=True, min_coords=min_coords_moving, max_coords=max_coords_moving)
+            moved_image = fireants_interpolator(moving_image_blur, **moved_coords, mode=interpolate_mode, align_corners=True, is_displacement=True, min_coords=min_coords_moving, max_coords=max_coords_moving)
         # gather it up again
         del moving_image_blur
         moved_image, _ = gather_and_concat(moved_image, self.rank, is_state_sharded=True, dim_to_shard=self.dim_to_shard)

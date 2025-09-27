@@ -35,6 +35,8 @@ pip install fireants_fused_ops
 To check out some of the tutorials, check out the `tutorials/` directory for usage.
 Alternatively, to reproduce the results in the [paper](https://arxiv.org/abs/2404.01249) checkout the `fireants/scripts/` directory.
 
+## Template building
+FireANTs includes a powerful template builder for creating anatomical templates from medical images. For detailed instructions, configuration options, and usage examples, see [fireants/scripts/template/README.md](fireants/scripts/template/README.md).
 
 ## Documentation
 You can also check out the [Documentation](https://fireants.readthedocs.io/en/latest/). Feel free to reach out to me for improvements in the documentation.

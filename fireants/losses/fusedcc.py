@@ -411,6 +411,8 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         if tgrad and not pgrad:
             pred, target = target, pred
         
+        pred, target = pred.contiguous(), target.contiguous()
+        
         if self.kernel_type == "gaussian":
             return -FusedNCC3dGaussian.apply(pred, target, self.kernel_size, self.sigma, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
         elif self.kernel_type == "rectangular":

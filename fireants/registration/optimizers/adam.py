@@ -116,7 +116,7 @@ class WarpAdam:
         # set grid
         self.batch_size = batch_size = warp.shape[0]
         # init grid
-        self.affine_init = torch.eye(self.n_dims, self.n_dims+1, device=warp.device, dtype=dtype)[None].expand(batch_size, -1, -1)
+        self.affine_init = torch.eye(self.n_dims, self.n_dims+1, device=warp.device, dtype=dtype)[None].expand(batch_size, -1, -1).contiguous()
         self.initialize_grid(warp.shape[1:-1])
         # gaussian smoothing parameters (if any)
         self.smoothing_gaussians = smoothing_gaussians

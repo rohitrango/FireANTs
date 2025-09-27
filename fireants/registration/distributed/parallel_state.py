@@ -198,6 +198,12 @@ def get_grid_parallel_size():
 def get_data_parallel_size():
     return _PARALLEL_STATE.data_parallel_size
 
+def get_data_parallel_rank():
+    return _PARALLEL_STATE.data_parallel_rank
+
+def get_grid_parallel_rank():
+    return _PARALLEL_STATE.grid_parallel_rank
+
 def launched_with_torchrun():
     return (
         "RANK" in os.environ

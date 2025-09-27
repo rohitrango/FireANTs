@@ -69,23 +69,11 @@ class InverseConsistencyOperator(nn.Module):
         u2_x_u1 = fireants_interpolator.warp_composer(ref_disp_i, None, disp, align_corners=True)
         loss2 = F.mse_loss(u2_x_u1, -disp)
 
-        # grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=warp.device)[None], shape, align_corners=True)
-        # ref_grid = F.affine_grid(torch.eye(self.dims, self.dims+1, device=warp.device)[None], [1, 1] + list(ref_warp_i.shape[1:-1]), align_corners=True)
-        # psi(phi(x))
-        ## compute u * phi(x) instead of psi(phi(x)) because u = 0 outside of grid sample range, but not so much for psi
-        # loss1 = F.grid_sample((warp - grid).permute(*self.permute_vtoimg), ref_warp_i, mode='bilinear', align_corners=True).permute(*self.permute_imgtov) + ref_warp_i
-        # loss1 = F.mse_loss(loss1, ref_grid)
-        # eps = np.mean([2/(s-1) for s in ref_grid.shape[1:-1]])  
-        # loss1 = ((loss1 - ref_grid).pow(2) / (ref_grid.pow(2) + eps)).mean()
-        # phi(psi(y))
-        # loss2 = F.grid_sample((ref_warp_i - ref_grid).permute(*self.permute_vtoimg), warp, mode='bilinear', align_corners=True).permute(*self.permute_imgtov) + warp
-        # loss2 = F.mse_loss(loss2, grid)
-        # eps = np.mean([2/(s-1) for s in grid.shape[1:-1]])
-        # loss2 = ((loss2 - grid).pow(2) / (grid.pow(2) + eps)).mean()
         return loss1 + loss2
 
 
 class ShapeAveragingOperator(nn.Module):
+    ''' Simple loss function to find the closest diffeomorphic warp to the reference warp '''
     def __init__(self, ref_warp: torch.Tensor):
         super().__init__()
         self.ref_warp = ref_warp.detach()
@@ -114,12 +102,15 @@ class ShapeAveragingOperator(nn.Module):
         return loss
 
 def shape_averaging_invwarp( 
-                  template_image: BatchedImages, ref_warp: torch.Tensor,
-                  scales: List[float] = [4, 2, 1],
-                  iterations: List[int] = [200, 100, 50],
+        template_image: BatchedImages, 
+        ref_warp: torch.Tensor,
+        scales: List[float] = [4, 2, 1],
+        iterations: List[int] = [200, 100, 50],
     ):
     ''' 
     Optimize the warp using the template image and the reference warp
+
+    Here, ref_warp is the actual warp (not displacement field)
     '''
     from fireants.registration.greedy import GreedyRegistration
     reg = GreedyRegistration( 
@@ -131,24 +122,13 @@ def shape_averaging_invwarp(
         deformation_type='compositive',
         optimizer='adam',
         optimizer_lr=0.5,
-        optimizer_params={
-            'optimize_inverse_warp': True
-        },
         warp_reg=ShapeAveragingOperator(ref_warp),
         smooth_grad_sigma=1.0,
         smooth_warp_sigma=0.25,
     )
     reg.optimize()
-    inverse_warp = reg.warp.get_inverse_warp(n_iters=20)  # [B, H, W, [D], dims]
-    dims = len(inverse_warp.shape) - 2
-    if dims == 2:
-        B, H, W, _ = inverse_warp.shape
-        grid = F.affine_grid(torch.eye(2, 3, device=inverse_warp.device)[None], (B, 1, H, W), align_corners=True).expand(B, -1, -1, -1)
-    else:
-        B, H, W, D, _ = inverse_warp.shape
-        grid = F.affine_grid(torch.eye(3, 4, device=inverse_warp.device)[None], (B, 1, H, W, D), align_corners=True).expand(B, -1, -1, -1, -1)
+    inverse_warp = compositive_warp_inverse(template_image, reg.warp.get_warp(), displacement=True)
     # add the grid to the inverse warp
-    inverse_warp = inverse_warp + grid
     return inverse_warp
 
 
@@ -162,6 +142,9 @@ def compositive_warp_inverse(image: BatchedImages, ref_disp: torch.Tensor,
                         ):
     '''
     Utility to compute the inverse of a compositive warp
+
+    Here, ref_disp is the actual displacement field
+    and we want to obtain the inverse warp of this displacement field
     '''
     from fireants.registration.greedy import GreedyRegistration
     reg = GreedyRegistration( 

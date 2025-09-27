@@ -86,7 +86,7 @@ class GridSampleDispatcher:
             raise ValueError("Cannot set use_ffo to True when fused operations are not available")
         self._use_ffo = value
     
-    def _get_image_dim(self, *args, image_idx: int = 0, arg_name: str = "image", **kwargs) -> int:
+    def _get_image_dim(self, *args, image_idx: int = 0, arg_name: str = "input", **kwargs) -> int:
         ''' return spatial dimensions of image '''
         image = kwargs.get(arg_name, None)
         if image is None:

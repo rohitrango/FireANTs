@@ -2,10 +2,11 @@ debug: True
 verbose: True
 
 # input params
-image_file: /mnt/rohit_data2/fMOST/fmost_min_list_aligned.txt
+image_list_file: /mnt/rohit_data2/fMOST/fmost_min_list_aligned.txt
 image_prefix: /mnt/rohit_data2/fMOST/processedv2/
 image_suffix: 
 num_subjects: 52    # set to null to use all subjects
+orientation: SLA
 
 # template params
 init_template_path: /mnt/rohit_data2/fMOST/processedv2/18469_red_mm_SLA_preprocessed_25um_aligned_to_18469.nii.gz
@@ -24,7 +25,6 @@ laplace_params:
 
 # shape averaging
 shape_avg: true
-orientation: SLA
 
 # save outputs
 save_dir: ./saved_templates/fmost_25um

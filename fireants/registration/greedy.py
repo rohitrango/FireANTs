@@ -146,6 +146,8 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
             self.affine = torch.cat([init_affine.detach(), row], dim=1).to(self.dtype)
         else:
             raise ValueError('Invalid initial affine shape: {}'.format(init_affine.shape))
+        # make it contiguous
+        self.affine = self.affine.contiguous()
     
     def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], \
                                              moving_images: Union[BatchedImages, FakeBatchedImages], \

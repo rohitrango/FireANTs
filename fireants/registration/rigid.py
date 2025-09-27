@@ -235,7 +235,7 @@ class RigidRegistration(AbstractRegistration):
             transl = transl + self.center - (matclone[:, :-1, :-1] @ self.center[..., None]).squeeze(-1)
         # now we can assign the translation
         matclone[:, :-1, -1] = transl  # [N, dim+1, dim+1]
-        return matclone if homogenous else matclone[:, :-1, :]  # [N, dim, dim+1]
+        return matclone.contiguous() if homogenous else matclone[:, :-1, :].contiguous()  # [N, dim, dim+1]
     
     def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         raise NotImplementedError("Inverse warped coordinates not implemented for rigid registration")

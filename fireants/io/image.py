@@ -34,6 +34,20 @@ from fireants.utils.globals import PERMITTED_ANTS_WARP_EXT
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 from fireants.registration.distributed import parallel_state
+from contextlib import contextmanager
+import fcntl
+
+@contextmanager
+def get_lock():
+    rank = parallel_state.get_data_parallel_rank() if parallel_state.is_initialized() else 0
+    with open("/tmp/fireants_image_lock", "w") as fi:
+        try:
+            print(f"Rank {rank} is acquiring lock")
+            fcntl.flock(fi, fcntl.LOCK_EX)
+            yield
+        finally:
+            print(f"Rank {rank} is releasing lock")
+            fcntl.flock(fi, fcntl.LOCK_UN)
 
 def divide_size_into_chunks(size: int, gp_size: int) -> list:
     '''
@@ -214,6 +228,9 @@ class Image:
             flair = Image.load_file(flair_path)
             t1.concatenate(t2, flair, optimize_memory=True)   # deletes the arrays of t2 and flair after concatenation
         '''
+        if len(others) == 0:
+            return self
+
         check_and_raise_cond(self.is_array_present, "Image must have a PyTorch tensor representation to concatenate", ValueError)
         if isinstance(others[0], list) and len(others) == 1:
             others = others[0]
@@ -234,6 +251,7 @@ class Image:
             logger.debug("Deleting the arrays of the other images after concatenation")
             for other in others:
                 other.delete_array()
+        return self
     
     def to(self, device_or_dtype: Union[devicetype, torch.dtype]):
         '''
@@ -545,8 +563,9 @@ class FakeBatchedImages:
                 raise ValueError("No corresponding BatchedImages object found for image {}".format(i))
             
             save_filename = filenames[i]
-            # Save the image
-            sitk.WriteImage(itk_image, save_filename)
+            # Save the image (this needs to be thread safe)
+            with get_lock():
+                sitk.WriteImage(itk_image, save_filename)
             logger.info(f"Saved image to {save_filename}")
 
 if __name__ == '__main__':

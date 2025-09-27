@@ -18,10 +18,13 @@
 helper functions for the template building script
 '''
 
+from omegaconf import OmegaConf
 import time
 import os
 import torch
-from fireants.io.image import Image, BatchedImages
+from fireants.io.image import Image, BatchedImages, FakeBatchedImages
+from fireants.registration.abstract import AbstractRegistration
+from typing import Optional
 import SimpleITK as sitk
 
 class Timer:
@@ -38,6 +41,32 @@ class Timer:
         elapsed_time = end_time - self.start_time
         if self.logger is not None:
             self.logger.info(f'"{self.description}" took {elapsed_time:.2f} seconds.')
+
+def normalize(img):
+    imgmin = img.flatten(2).min(2).values
+    imgmax = img.flatten(2).max(2).values
+    dims = len(img.shape) - 2
+    for _ in range(dims):
+        imgmin = imgmin.unsqueeze(-1)
+        imgmax = imgmax.unsqueeze(-1)
+    return (img - imgmin) / (imgmax - imgmin)
+
+def add_shape(avg_warp: Optional[torch.Tensor], reg: AbstractRegistration):
+    if avg_warp is None:
+        return None
+    avg_warp = avg_warp + reg.get_warped_coordinates(reg.fixed_images, reg.moving_images).sum(0, keepdim=True)
+    return avg_warp
+
+def try_add_to_config(args, key, default):
+    ''' 
+    args: hydra args object 
+    key: string key to check
+    default: default value to add if key is not found
+    '''
+    try:
+        _ = args[key]
+    except:
+        OmegaConf.update(args, key, default, force_add=True)
 
 def check_args(args, logger):
     ''' 
@@ -102,8 +131,6 @@ def save_moved(moved_tensor, id_list, save_dir, template_img, prefix=None):
         else:
             torch.distributed.barrier()
          
-        
-
 def save_additional(reg_obj, init_template_batch, additional_save_batches, batchid, save_dir):
     ''' save additional files 
     
@@ -119,3 +146,26 @@ def save_additional(reg_obj, init_template_batch, additional_save_batches, batch
         moving_batch = BatchedImages([Image.load_file(imgfile, device=torch.cuda.current_device(), is_segmentation=is_segm) for imgfile in add_files])
         moved_images = reg_obj.evaluate(init_template_batch, moving_batch)
         save_moved(moved_images, add_ids, save_dir, init_template_batch.images[0], f"add_{add_id}")
+
+def get_average_template(image_dataloader, args):
+    '''
+    Given a dataloader, get the average template. Also make sure the `torch2phy` is the same for all images.
+    '''
+    out = 0
+    count = 0
+    torch2phy = None
+    for batch in image_dataloader:
+        img = batch['image']()
+        out = out + img
+        count = count + img.shape[0]
+        # check if the `torch2phy` is the same for all images
+        if torch2phy is None:
+            torch2phy = img.get_torch2phy()
+        else:
+            assert torch.allclose(torch2phy, img.get_torch2phy(), atol=1e-4), "`torch2phy` is not the same for all images"
+    out = out / count
+    # lets get an image and set its torch2phy to the average `torch2phy`
+    init_template = image_dataloader.dataset.images[0]
+    init_template.array = out
+    # init_template_batch = FakeBatchedImages(out, batch['image'])
+    return init_template

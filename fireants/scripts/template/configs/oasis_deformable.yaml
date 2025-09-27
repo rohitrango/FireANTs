@@ -2,10 +2,10 @@ debug: True
 verbose: True
 
 # input params
-image_file: oasis_subjects.txt
-image_prefix: /mnt/rohit_data2/neurite-OASIS/
-image_suffix: /aligned_norm.nii.gz
-num_subjects: 16    # set to null to use all subjects
+image_list_file: /mnt/rohit_data2/neurite-OASIS/paths.txt
+image_prefix: null
+image_suffix: null
+num_subjects: 8    # set to null to use all subjects
 
 # template params
 init_template_path: /mnt/rohit_data2/neurite-OASIS/OASIS_OAS1_0270_MR1/aligned_norm.nii.gz
@@ -36,7 +36,7 @@ save_additional:
   is_segmentation: []
 
 # registration params
-batch_size: 10
+batch_size: 8
 
 do_moments: False
 moments:
@@ -70,6 +70,7 @@ deform:
   smooth_grad_sigma: 1.0
   progress_bar: ${verbose}
   cc_kernel_size: 5
+  loss_type: fusedcc
 
 # additional params
 tmpdir: null

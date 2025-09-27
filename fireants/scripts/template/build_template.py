@@ -121,6 +121,8 @@ def main(args):
             init_template.array = init_template.array * image_dp_frac
             # add template across all processes
             parallel_state.all_reduce_across_dp_ranks(init_template.array, op=torch.distributed.ReduceOp.SUM)
+            logger.info(f'Init template (shape, min, max): {init_template.array.shape}, {init_template.array.min()}, {init_template.array.max()}')
+            pass
 
     logger.debug((init_template.shape, init_template.array.min(), init_template.array.max()))
 

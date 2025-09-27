@@ -9,11 +9,17 @@ The template builder creates high-quality anatomical templates by iteratively re
 ## 📋 Features
 
 🔥 **Multi-modal template creation** - Support for multiple image modalities
+
 ⚡ **Distributed processing** - Parallel processing across multiple GPUs/nodes
+
 🎯 **Multiple registration algorithms** - Rigid, affine, and deformable registration
+
 🔧 **Flexible configuration** - YAML-based configuration for easy customization
+
 📊 **Shape averaging** - Advanced shape averaging for better template quality
+
 💾 **Checkpoint saving** - Save templates at specified intervals
+
 🖼️ **Image preprocessing** - Automatic normalization and filtering options
 
 ## 🛠️ Installation
@@ -158,7 +164,9 @@ verbose: True
 The template builder generates:
 
 🎯 **Templates**: `template_0.nii.gz`, `template_1.nii.gz`, etc.
+
 📋 **Logs**: Detailed logging of the registration process
+
 🖼️ **Moved Images** (optional): Registered images from the final iteration
 
 ## 🔧 Advanced Options
@@ -204,8 +212,11 @@ tmpdir: /path/to/temp
 ## 🆘 Troubleshooting
 
 🔧 **Memory Issues**: Reduce batch_size or use more distributed nodes
+
 ⚡ **Slow Convergence**: Adjust learning rates or increase iterations
+
 📁 **File Path Errors**: Ensure all paths in your image list are valid
+
 🖥️ **GPU Issues**: Check CUDA availability and device settings
 
 ## 📖 References

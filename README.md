@@ -35,6 +35,9 @@ pip install fireants_fused_ops
 To check out some of the tutorials, check out the `tutorials/` directory for usage.
 Alternatively, to reproduce the results in the [paper](https://arxiv.org/abs/2404.01249) checkout the `fireants/scripts/` directory.
 
+## CLI Tools
+FireANTs provides command-line interface tools similar to the original ANTs toolkit. For detailed instructions and available tools, see [cli/README.md](cli/README.md).
+
 ## Template building
 FireANTs includes a powerful template builder for creating anatomical templates from medical images. For detailed instructions, configuration options, and usage examples, see [fireants/scripts/template/README.md](fireants/scripts/template/README.md).
 

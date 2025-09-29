@@ -162,7 +162,7 @@ def get_average_template(image_dataloader, args):
         if torch2phy is None:
             torch2phy = batch['image'].get_torch2phy()
         else:
-            assert torch.allclose(torch2phy, img.get_torch2phy(), atol=1e-4), "`torch2phy` is not the same for all images"
+            assert torch.allclose(torch2phy, batch['image'].get_torch2phy(), atol=1e-4), "`torch2phy` is not the same for all images"
     out = out / count
     # lets get an image and set its torch2phy to the average `torch2phy`
     init_template = image_dataloader.dataset[0]['image']

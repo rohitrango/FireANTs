@@ -288,10 +288,7 @@ def fused_grid_sampler_3d(
         Sampled tensor of shape [B, C, Z, Y, X]
     """
     B, C, Z, Y, X = input.shape
-    # input = input.contiguous()
-    # affine = affine.contiguous() if affine is not None else None
-    # grid = grid.contiguous() if grid is not None else None
-    assert input.is_contiguous(), "input must be contiguous"
+    #assert input.is_contiguous(), "input must be contiguous"
     assert affine is None or affine.is_contiguous(), "affine must be contiguous"
     assert grid is None or grid.is_contiguous(), "grid must be contiguous"
     # specify output shape if grid is not provided
@@ -299,7 +296,7 @@ def fused_grid_sampler_3d(
         out_shape = out_shape[-3:]
     else:
         out_shape = grid.shape[1:-1]
-    output = FusedGridSampler3d.apply(input, affine, grid, grid_affine, output, mode, padding_mode, align_corners, out_shape, min_coords, max_coords, is_displacement)
+    output = FusedGridSampler3d.apply(input.contiguous(), affine, grid, grid_affine, output, mode, padding_mode, align_corners, out_shape, min_coords, max_coords, is_displacement)
     return output
 
 def fused_warp_composer_3d(

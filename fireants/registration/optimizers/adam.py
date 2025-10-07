@@ -30,7 +30,7 @@ import logging
 logger = logging.getLogger(__name__)
 USE_NO_GP = bool(int(os.environ.get('USE_NO_GP', '0').lower()))
 
-def adam_update_fused(grad, exp_avg, exp_avg_sq, beta1, beta2, eps):
+def adam_update_fused_baseline(grad, exp_avg, exp_avg_sq, beta1, beta2, eps):
     grad.copy_(exp_avg / (beta1) / (exp_avg_sq / (beta2)).sqrt().add_(eps))
 
 try:
@@ -38,6 +38,7 @@ try:
     adam_update_fused = ffo.adam_update_fused
 except ImportError:
     logger.warning("Fused ops not found, using baseline implementation")
+    adam_update_fused = adam_update_fused_baseline
 
 ## Function for smoothing
 def _get_smoothing_wrapper(optimizer):
@@ -107,6 +108,7 @@ class WarpAdam:
         self.scaledown = scaledown   # if true, the scale the gradient even if norm is below 1
         # offload params
         self.device = warp.device
+        self.adam_update_kernel = adam_update_fused if self.device.type == 'cuda' else adam_update_fused_baseline
         self.offload = offload
         # warp grad params
         self.exp_avg = torch.zeros_like(warp, device=self.device if not self.offload else 'cpu')
@@ -228,7 +230,7 @@ class WarpAdam:
         beta_correction2 = 1 - self.beta2 ** self.step_t
 
         # adam_update_fused(grad, self.exp_avg, self.exp_avg_sq, beta_correction1, beta_correction2, self.eps)
-        adam_update_fused(grad, self.exp_avg, self.exp_avg_sq, beta_correction1, beta_correction2, self.eps)
+        self.adam_update_kernel(grad, self.exp_avg, self.exp_avg_sq, beta_correction1, beta_correction2, self.eps)
 
         # we offload this to CPU
         if self.offload:

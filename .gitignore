@@ -1,4 +1,5 @@
 *egg-info
+**/*.nii.gz
 *pdf
 *svg
 dist/

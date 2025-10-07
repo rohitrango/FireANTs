@@ -133,6 +133,8 @@ def downsample(image: torch.Tensor, size: List[int], mode: str, sigma: Optional[
     if use_fft and ffo is None:
         logger.warn("fireants_fused_ops is not found, will default to standard downsampling")
         use_fft = False
+    if image.device.type == 'cpu':
+        use_fft = False
 
     if use_fft:
         return downsample_fft(image.to(torch.float32), size).to(image.dtype)
@@ -288,7 +290,7 @@ def integer_to_onehot(image: torch.Tensor, background_label:int=0, dtype: torch.
     dtype = dtype if dtype is not None else image.dtype
     onehot = torch.zeros((num_labels, *image.shape), dtype=dtype, device=image.device)
     count = 0
-    for i in range(num_labels+1):
+    for i in range(max_label+1):
         if i == background_label:
             continue
         onehot[count, ...] = (image == i).to(dtype)

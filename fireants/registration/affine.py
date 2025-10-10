@@ -131,6 +131,8 @@ class AffineRegistration(AbstractRegistration):
             self.optimizer = Adam([self.affine], lr=optimizer_lr, **optimizer_params)
         else:
             raise ValueError(f"Optimizer {optimizer} not supported")
+        
+        
     
     def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         raise NotImplementedError("Inverse warped coordinates not implemented for affine registration")
@@ -236,8 +238,8 @@ class AffineRegistration(AbstractRegistration):
             self.convergence_monitor.reset()
             prev_loss = np.inf
             # downsample fixed array and retrieve coords
-            size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
-            mov_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_arrays.shape[2:]]
+            size_down = [max(int(s / scale), self.min_dim) for s in fixed_size]
+            mov_size_down = [max(int(s / scale), self.min_dim) for s in moving_arrays.shape[2:]]
             # downsample
             if self.blur and scale > 1:
                 sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device, dtype=moving_arrays.dtype)

@@ -276,8 +276,8 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         for scale, iters in zip(self.scales, self.iterations):
             self.convergence_monitor.reset()
             # resize images 
-            size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
-            moving_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_size]
+            size_down = [max(int(s / scale), self.min_dim) for s in fixed_size]
+            moving_size_down = [max(int(s / scale), self.min_dim) for s in moving_size]
             if self.blur and scale > 1:
                 sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device, dtype=fixed_arrays.dtype)
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]

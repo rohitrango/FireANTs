@@ -27,6 +27,7 @@ from torch.nn import functional as F
 from functools import partial
 from fireants.utils.imageutils import is_torch_float_type
 from fireants.interpolator import fireants_interpolator
+from fireants.utils.globals import MIN_IMG_SIZE, MIN_IMG_SHARDED_SIZE
 import logging
 
 logger = logging.getLogger(__name__)
@@ -157,8 +158,28 @@ class AbstractRegistration(ABC):
         if hasattr(self.loss_fn, 'set_scales'):
             logger.info("Setting scales for loss function")
             self.loss_fn.set_scales(self.scales)
+        
+        # set min dim for img_size
+        self._set_min_dim()
 
         self.print_init_msg()
+        
+    def _set_min_dim(self):
+        self.min_dim = None
+        fixed_arrays = self.fixed_images()
+        moving_arrays = self.moving_images()
+        fixed_size = fixed_arrays.shape[2:]
+        moving_size = moving_arrays.shape[2:]
+        min_dim = MIN_IMG_SIZE
+        while min_dim > MIN_IMG_SHARDED_SIZE:
+            if all([s >= min_dim for s in fixed_size]) and all([s >= min_dim for s in moving_size]):
+                self.min_dim = min_dim
+                break
+            else:
+                min_dim = int(min_dim / 2)
+        if not self.min_dim:
+            raise ValueError(f"One of fixed or moving image dimensions is too small, absolute min dimension size is {MIN_IMG_SHARDED_SIZE}, recommended min dimemsion size is {MIN_IMG_SIZE}")
+
 
     def print_init_msg(self):
         logger.info(f"Registration of type {self.__class__.__name__} initialized with dtype {self.dtype}")
@@ -310,6 +331,7 @@ class AbstractRegistration(ABC):
 
         moving_arrays = moving_images()
         moved_coords = self.get_warp_parameters(fixed_images, moving_images, shape=shape)
-        interpolate_mode = moving_images.get_interpolator_type()
-        moved_image = fireants_interpolator(moving_arrays, **moved_coords, mode=interpolate_mode, align_corners=True)  # [N, C, H, W, [D]]
+        moved_image = fireants_interpolator(moving_arrays, **moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
+        # interpolate_mode = moving_images.get_interpolator_type()
+        # moved_image = fireants_interpolator(moving_arrays, **moved_coords, mode=interpolate_mode, align_corners=True)  # [N, C, H, W, [D]]
         return moved_image

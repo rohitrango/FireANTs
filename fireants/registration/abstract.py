@@ -16,7 +16,6 @@
 from abc import ABC, abstractmethod
 from typing import List
 import torch
-import numpy as np
 from torch import nn
 from fireants.utils.util import _assert_check_scales_decreasing
 from fireants.losses import GlobalMutualInformationLoss, LocalNormalizedCrossCorrelationLoss, NoOp, MeanSquaredError

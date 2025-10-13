@@ -131,8 +131,6 @@ class AffineRegistration(AbstractRegistration):
             self.optimizer = Adam([self.affine], lr=optimizer_lr, **optimizer_params)
         else:
             raise ValueError(f"Optimizer {optimizer} not supported")
-        
-        
     
     def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         raise NotImplementedError("Inverse warped coordinates not implemented for affine registration")

@@ -165,7 +165,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         if shape is None:
             shape = moving_images.shape if use_moving_shape else fixed_images.shape
         else:
-            shape = [moving_arrays.shape[0], 1] + list(shape) if use_moving_shape else [fixed_arrays.shape[0], 1] + list(shape)
+            shape = [moving_arrays.shape[0], 1] + list(shape) if use_moving_shape else [fixed_images.shape[0], 1] + list(shape)
 
         warp = self.warp.get_warp().detach().clone()
         warp_inv = compositive_warp_inverse(moving_images if use_moving_shape else fixed_images, warp, displacement=True) 

@@ -1,0 +1,56 @@
+# VCS
+.git
+.gitignore
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+*.pyo
+*.pyd
+
+# Build artifacts
+build/
+dist/
+.fuse_hidden*
+
+# Local envs and caches
+.venv/
+venv/
+.env
+.mypy_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+.cache/
+
+# Data and large assets
+**/*.nii.gz
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.bmp
+**/*.tif
+**/*.tiff
+
+# Project-specific large dirs/files
+fireants/notebooks/
+notepad/
+cli/demo_output/
+cli/saved_results/
+
+docs/site/
+
+docker/*.md
+
+# Fused ops build outputs
+fused_ops/build/
+**/*.so
+**/*.dylib
+**/*.a
+
+# OS files
+.DS_Store
+Thumbs.db

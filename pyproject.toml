@@ -14,20 +14,16 @@ dependencies = [
     "SimpleITK==2.2.1", 
     "nibabel",
     "numpy", "scipy", "scikit-image", "matplotlib",
-    "typing", "tqdm", "pandas", "hydra-core"
+    "typing", "tqdm", "pandas", "hydra-core",
+    "pytest"
 ]
 
 [build-system]
-requires = [
-    "setuptools>=42.0.0",
-    "wheel",
-    "torch>=2.3.0"
-]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.21.0"]
+build-backend = "hatchling.build"
 
-[tool.setuptools.packages.find]
-include = ["fireants*"]
+[tool.hatch.build]
 exclude = ["docker*", "notepad*", "fused_ops*", "tutorials*"]
 
-[tool.setuptools]
-package-dir = {"" = "."}
+[tool.hatch.build.targets.wheel]
+packages = ["fireants"]

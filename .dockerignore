@@ -1,56 +1,45 @@
-# VCS
-.git
-.gitignore
-
-# Python artifacts
+# Ignore Python caches and build artifacts
 __pycache__/
 *.py[cod]
 *.egg-info/
-.eggs/
 *.egg
-pip-wheel-metadata/
-*.pyo
-*.pyd
-
-# Build artifacts
+*.whl
 build/
 dist/
-.fuse_hidden*
-
-# Local envs and caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .venv/
 venv/
 .env
-.mypy_cache/
-.pytest_cache/
-.ipynb_checkpoints/
-.cache/
 
-# Data and large assets
-**/*.nii.gz
-**/*.png
-**/*.jpg
-**/*.jpeg
-**/*.bmp
-**/*.tif
-**/*.tiff
+# Git
+.git
+.gitignore
 
-# Project-specific large dirs/files
-fireants/notebooks/
-notepad/
-cli/demo_output/
-cli/saved_results/
+# IDE and editor folders
+.vscode/
+.idea/
 
-docs/site/
+# Notebooks and large data
+*.ipynb_checkpoints
+data/
+datasets/
+logs/
+outputs/
+checkpoints/
 
+# Docker
 docker/*.md
+docker-compose*.yml
 
-# Fused ops build outputs
-fused_ops/build/
-**/*.so
-**/*.dylib
-**/*.a
+# Node and web (if any)
+node_modules/
 
-# OS files
-.DS_Store
-Thumbs.db
+# Misc
+*.log
+*.tmp
+*.bak
+*.swp
+
+

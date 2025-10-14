@@ -24,6 +24,8 @@ docker buildx build -t fireants -f docker/Dockerfile .
 
 This will create a Docker image named `fireants` with all the necessary dependencies installed.
 
+> Note: If your system has CUDA 11.8, you can use the `Dockerfile-cu118` dockerfile instead.
+
 ## Running the Container
 
 To run the container with GPU support:

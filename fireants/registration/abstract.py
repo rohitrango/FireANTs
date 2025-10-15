@@ -27,6 +27,7 @@ from torch.nn import functional as F
 from functools import partial
 from fireants.utils.imageutils import is_torch_float_type
 from fireants.interpolator import fireants_interpolator
+from fireants.utils.util import get_min_dim
 import logging
 
 logger = logging.getLogger(__name__)
@@ -157,6 +158,13 @@ class AbstractRegistration(ABC):
         if hasattr(self.loss_fn, 'set_scales'):
             logger.info("Setting scales for loss function")
             self.loss_fn.set_scales(self.scales)
+        
+        # set min dim for img_size
+        fixed_arrays = self.fixed_images()
+        moving_arrays = self.moving_images()
+        fixed_size = fixed_arrays.shape[2:]
+        moving_size = moving_arrays.shape[2:]
+        self.min_dim = get_min_dim(fixed_size + moving_size)
 
         self.print_init_msg()
 

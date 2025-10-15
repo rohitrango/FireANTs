@@ -27,6 +27,7 @@ import inspect
 import logging
 from typing import Optional
 from fireants.interpolator import fireants_interpolator
+from fireants.utils.globals import MIN_IMG_SIZE, MIN_IMG_SHARDED_SIZE
 import SimpleITK as sitk
 logging.basicConfig(level=logging.INFO)
 
@@ -262,3 +263,10 @@ def collate_fireants_fn(batch):
 def check_and_raise_cond(cond: bool, msg: str, error_type: Exception = ValueError):
     if not cond:
         raise error_type(msg)
+    
+def get_min_dim(sizes: List[int]):
+    sizes = [x for x in sizes if x > 0]
+    minimax_dim = min([2**int((np.log2(x))) for x in sizes])
+    if minimax_dim < MIN_IMG_SHARDED_SIZE:
+        raise ValueError(f"One of fixed or moving image dimensions is too small, absolute min dimension size is {MIN_IMG_SHARDED_SIZE}, recommended min dimension size is {MIN_IMG_SIZE}")
+    return min(MIN_IMG_SIZE, minimax_dim)

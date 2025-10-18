@@ -1,7 +1,7 @@
 # :fire: FireANTs: Adaptive Riemannian Optimization for Multi-Scale Diffeomorphic Registration
 
 <div style="text-align: center;">
-    <img src="assets/overview.png" width="60%" alt="FireANTs"/>
+    <img src="assets/overview.png" width="90%" alt="FireANTs"/>
 </div>
 
 The FireANTs library is a lightweight, general-purpose registration package for Riemannian diffeomorphic registration on GPUs. It is designed to be easy to use, fast, accurate, and extensible.

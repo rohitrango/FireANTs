@@ -19,16 +19,15 @@ To install FireANTs locally:
 git clone https://github.com/rohitrango/fireants
 cd fireants
 pip install .
-pip install ./fused_ops
+cd fused_ops && python setup.py build_ext && python setup.py install && cd ..
 ```
 
 By default, doing `pip install .` will **NOT** include the fused CUDA operations. 
-I highly recommend installing the fused CUDA operations using `pip install ./fused_ops`.
+I highly recommend installing the fused CUDA operations using the command above.
 
-Or install from PyPI:
+Or install from PyPI (does not install fused ops):
 ```
 pip install fireants
-pip install fireants_fused_ops
 ```
 
 ## Tutorial
@@ -66,7 +65,7 @@ Please refer to the [LICENSE](LICENSE) file for the license details, especially 
 
 ## Citation
 
-If you use FireANTs in your research, please cite the following paper:
+If you use FireANTs in your research, please cite the following papers:
 
 ```
 @article{jena2024fireants,
@@ -74,6 +73,13 @@ If you use FireANTs in your research, please cite the following paper:
   author={Jena, Rohit and Chaudhari, Pratik and Gee, James C},
   journal={arXiv preprint arXiv:2404.01249},
   year={2024}
+}
+
+@article{jena2025scalable,
+  title={A Scalable Distributed Framework for Multimodal GigaVoxel Image Registration},
+  author={Jena, Rohit and Zope, Vedant and Chaudhari, Pratik and Gee, James C},
+  journal={arXiv preprint arXiv:2509.25044},
+  year={2025}
 }
 ```
 

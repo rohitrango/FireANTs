@@ -1,6 +1,26 @@
 # :fire: FireANTs: Adaptive Riemannian Optimization for Multi-Scale Diffeomorphic Registration
 
-The FireANTs library is a lightweight registration package for Riemannian diffeomorphic registration on GPUs.
+<div style="text-align: center;">
+    <img src="assets/overview.png" width="60%" alt="FireANTs"/>
+</div>
+
+The FireANTs library is a lightweight, general-purpose registration package for Riemannian diffeomorphic registration on GPUs. It is designed to be easy to use, fast, accurate, and extensible.
+The salient features of the library include:
+
+- **Powerful optimization algorithms** ⚡️🧠: FireANTs utilizes a novel Riemmanian Adaptive optimization algorithm to perform gradient descent on the space of diffeomorphisms. Diffeomorphisms are a deformable transforms that do not lie on a Euclidean manifold, and hence require specialized optimization algorithms.
+- **Blazing fast inference** 🚀: FireANTs is much faster at inference than most other registration libraries, including deep learning methods. 
+- **Lightweight** 🧩: FireANTs consumes about 10x less memory than state-of-the-art deep learning methods, scaling easily to high resolution images.
+- **Batched Registration** 📚: Simultaneously register multiple image pairs with ease, which reduces runtime per image pair to upto 250ms per image pair on a single GPU.
+
+<div style="display: flex; justify-content: space-between;">
+    <img src="assets/dice_runtime_tradeoff.png" width="32%" alt="Comparison of Dice Score vs Runtime"/>
+    <img src="assets/runtime_memory_tradeoff.png" width="32%" alt="Runtime vs Memory Tradeoff"/>
+    <img src="assets/amortized_runtime_plot.png" width="32%" alt="Amortized Runtime Plot"/>
+</div>
+
+- **Composable transforms** 🔗⚡️: FireANTs provides a simple API for composing transforms. You can easily compose multiple transforms and apply the composition to images directly. This avoids aliasing due to multiple resampling. Check out the [documentation](https://fireants.readthedocs.io/en/latest/) for more details.
+
+*FireANTs achieves up to 10x speedup compared to traditional registration methods and deep learning approaches while improving accuracy and runtime.*
 
 ## Installation 
 To use the FireANTs package, you can either 

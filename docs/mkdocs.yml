@@ -6,7 +6,9 @@ nav:
   - Home: index.md
   - Installation: install.md
   - Quickstart: quickstart.md
+  - Registration Workflow: architecture.md
   - Custom loss functions: customloss.md
+  - CLI Tools: cli.md
   - Template construction: template.md
   - Advanced concepts:
     - Image representation: advanced/image.md

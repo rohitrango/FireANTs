@@ -170,8 +170,8 @@ class MomentsRegistration(AbstractRegistration):
             fixed_size = fixed_arrays.shape[2:]
             moving_size = moving_arrays.shape[2:]
             scale = self.scales[0]
-            size_down_f = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
-            size_down_m = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_size]
+            size_down_f = [max(int(s / scale), self.min_dim) for s in fixed_size]
+            size_down_m = [max(int(s / scale), self.min_dim) for s in moving_size]
             # downsample
             if self.blur:
                 # blur and downsample for higher scale

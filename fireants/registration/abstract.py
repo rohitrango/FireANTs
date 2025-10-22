@@ -1,5 +1,5 @@
 # Copyright (c) 2025 Rohit Jena. All rights reserved.
-# 
+#
 # This file is part of FireANTs, distributed under the terms of
 # the FireANTs License version 1.0. A copy of the license can be found
 # in the LICENSE file at the root of this repository.
@@ -7,10 +7,10 @@
 # IMPORTANT: This code is part of FireANTs and its use, reproduction, or
 # distribution must comply with the full license terms, including:
 # - Maintaining all copyright notices and bibliography references
-# - Using only approved (re)-distribution channels 
+# - Using only approved (re)-distribution channels
 # - Proper attribution in derivative works
 #
-# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE
 
 
 from abc import ABC, abstractmethod
@@ -41,8 +41,8 @@ class AbstractRegistration(ABC):
     This abstract class provides the core functionality and interface for image registration,
     handling all the common functionality for all linear and non-linear registration algorithms.
     It handles features like
-        - multi-resolution optimization, 
-        - arbitrary similarity metrics, and 
+        - multi-resolution optimization,
+        - arbitrary similarity metrics, and
         - convergence monitoring.
 
     Args:
@@ -57,7 +57,7 @@ class AbstractRegistration(ABC):
                 Global mutual information between the fixed image and the moved image is measured using Parzen windowing using different kernel types.
                 Mutual information is implemented using the `GlobalMutualInformationLoss` class.
             - 'cc': Cross correlation (default)
-                Local normalized cross correlation between the fixed image and the moved image is measured using a kernel of size `cc_kernel_size`. This is a de-facto standard similarity metric for both linear and non-linear image registration. It also consumes less very little memory than mutual information.  
+                Local normalized cross correlation between the fixed image and the moved image is measured using a kernel of size `cc_kernel_size`. This is a de-facto standard similarity metric for both linear and non-linear image registration. It also consumes less very little memory than mutual information.
                 Cross correlation is implemented using the `LocalNormalizedCrossCorrelationLoss` class.
             - 'mse': Mean squared error
                 Mean squared error is implemented using the `MeanSquaredError` class.
@@ -86,15 +86,15 @@ class AbstractRegistration(ABC):
     """
 
     def __init__(self,
-                scales: List[int], iterations: List[float], 
+                scales: List[int], iterations: List[float],
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
                 mi_kernel_type: str = 'gaussian', cc_kernel_type: str = 'rectangular',
                 custom_loss: nn.Module = None,
                 loss_params: dict = {},
-                cc_kernel_size: int = 3, 
+                cc_kernel_size: int = 3,
                 reduction: str = 'mean',
-                tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
+                tolerance: float = 1e-6, max_tolerance_iters: int = 10,
                 progress_bar: bool = True,
                 dtype: torch.dtype = torch.float32,
                 ) -> None:
@@ -115,7 +115,7 @@ class AbstractRegistration(ABC):
         fsize, msize = self.fixed_images.size(), self.moving_images.size()
         assert (fsize == msize) or (fsize == 1) or (msize == 1), "Number of fixed and moving images must match or broadcastable"
         self.opt_size = max(fsize, msize)
-        
+
         self.tolerance = tolerance
         self.max_tolerance_iters = max_tolerance_iters
         self.convergence_monitor = ConvergenceMonitor(self.max_tolerance_iters, self.tolerance)
@@ -127,15 +127,21 @@ class AbstractRegistration(ABC):
 
         self.dims = self.fixed_images.dims
         self.progress_bar = progress_bar        # variable to show or hide progress bar
+
         # initialize losses
+        if loss_type.startswith("masked_"):
+            loss_params['masked'] = True
+            loss_type = loss_type.replace("masked_", "")
+            logger.info(f"Masked mode specified, will use {loss_type} function with masking if it supports it.")
+
         if loss_type == 'mi':
             self.loss_fn = GlobalMutualInformationLoss(kernel_type=mi_kernel_type, reduction=reduction, **loss_params)
         elif loss_type == 'cc':
-            self.loss_fn = LocalNormalizedCrossCorrelationLoss(kernel_type=cc_kernel_type, spatial_dims=self.dims, 
+            self.loss_fn = LocalNormalizedCrossCorrelationLoss(kernel_type=cc_kernel_type, spatial_dims=self.dims,
                                                                kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
         elif loss_type == 'fusedcc':
             from fireants.losses.fusedcc import FusedLocalNormalizedCrossCorrelationLoss
-            self.loss_fn = FusedLocalNormalizedCrossCorrelationLoss(spatial_dims=self.dims, 
+            self.loss_fn = FusedLocalNormalizedCrossCorrelationLoss(spatial_dims=self.dims,
                                                     kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
         elif loss_type == 'fusedmi':
             from fireants.losses.fusedmi import FusedGlobalMutualInformationLoss
@@ -145,11 +151,10 @@ class AbstractRegistration(ABC):
         elif loss_type == 'noop':
             self.loss_fn = NoOp()
         elif loss_type == 'mse':
-            # self.loss_fn = partial(F.mse_loss, reduction=reduction)
-            self.loss_fn = MeanSquaredError(reduction=reduction)
+            self.loss_fn = MeanSquaredError(reduction=reduction, **loss_params)
         else:
             raise ValueError(f"Loss type {loss_type} not supported")
-        
+
         # see if loss can store the iterations
         if hasattr(self.loss_fn, 'set_iterations'):
             logger.info("Setting iterations for loss function")
@@ -165,7 +170,7 @@ class AbstractRegistration(ABC):
 
     @abstractmethod
     def optimize(self):
-        ''' 
+        '''
         Abstract method to perform registration optimization
         '''
         pass
@@ -174,7 +179,7 @@ class AbstractRegistration(ABC):
     def get_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         ''' Get dictionary of parameters to pass into fireants_interpolator '''
         raise NotImplementedError("This method must be implemented by the registration class")
-    
+
     @abstractmethod
     def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         ''' Get dictionary of parameters to pass into fireants_interpolator '''
@@ -246,7 +251,7 @@ class AbstractRegistration(ABC):
             moved_images (Union[BatchedImages, FakeBatchedImages, torch.Tensor]): The moved images to save.
             filenames (Union[str, List[str]]): The filenames to save the moved images to.
             moving_to_fixed (bool, optional): If True, the moving images are saved to the fixed image space. Defaults to True.
-                if False, we are dealing with an image that is moved from fixed space to moving space            
+                if False, we are dealing with an image that is moved from fixed space to moving space
         '''
         if isinstance(moved_images, BatchedImages):
             moved_images_save = FakeBatchedImages(moved_images(), moved_images, ignore_size_match)   # roundabout way to call the fakebatchedimages
@@ -282,8 +287,8 @@ class AbstractRegistration(ABC):
             - Validate registration performance on test images
             - Apply learned transformations to new data
             - Transform auxiliary data (e.g. segmentation masks) using learned parameters
-        
-        All registration classes will implement their own `get_warped_coordinates` method, 
+
+        All registration classes will implement their own `get_warped_coordinates` method,
         which is used to apply the learned transformation to new images.
 
         Args:

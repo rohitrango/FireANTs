@@ -1,5 +1,5 @@
 // Copyright (c) 2025 Rohit Jena. All rights reserved.
-// 
+//
 // This file is part of FireANTs, distributed under the terms of
 // the FireANTs License version 1.0. A copy of the license can be found
 // in the LICENSE file at the root of this repository.
@@ -7,10 +7,10 @@
 // IMPORTANT: This code is part of FireANTs and its use, reproduction, or
 // distribution must comply with the full license terms, including:
 // - Maintaining all copyright notices and bibliography references
-// - Using only approved (re)-distribution channels 
+// - Using only approved (re)-distribution channels
 // - Proper attribution in derivative works
 //
-// For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+// For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE
 
 
 // #define TORCH_ASSERT_NO_OPERATORS
@@ -76,7 +76,7 @@ inline void check_grid_sampler_common_v2(
 template<typename scalar_t, typename index_t>
 __forceinline__ __device__
 void safe_add_3d_oneoffset(
-                scalar_t *data, 
+                scalar_t *data,
                 int d, int h, int w,
                 int D, int H, int W,
                 scalar_t delta,
@@ -372,7 +372,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
         _affine_grad_[i] = 0;
     }
     // shared memory to take affine gradient sum over block
-    __shared__ gridmath_t _affine_grad_shared_[BLOCKSIZE_3D];   
+    __shared__ gridmath_t _affine_grad_shared_[BLOCKSIZE_3D];
     _affine_grad_shared_[threadIdx.x] = 0;
 
     // also collect affine map locally to avoid loading multiple times
@@ -426,7 +426,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
                 i_dz = affine_3d_pregrid_ptr[6] * dx + affine_3d_pregrid_ptr[7] * dy + affine_3d_pregrid_ptr[8] * dz;
             }
             else {
-                i_dx = dx; 
+                i_dx = dx;
                 i_dy = dy;
                 i_dz = dz;
             }
@@ -624,7 +624,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
 
             // affine pre-conditioning if s*u(x) is provided
             if (affine_3d_pregrid) {
-                // can use pax to store modified gix, giy, giz 
+                // can use pax to store modified gix, giy, giz
                 const grid_t* affine_3d_pregrid_ptr = affine_3d_pregrid + (broadcast_affine_3d_pregrid ? 0 : (9 * n));
                 pax = gix * affine_3d_pregrid_ptr[0] + giy * affine_3d_pregrid_ptr[3] + giz * affine_3d_pregrid_ptr[6];
                 pay = gix * affine_3d_pregrid_ptr[1] + giy * affine_3d_pregrid_ptr[4] + giz * affine_3d_pregrid_ptr[7];
@@ -642,7 +642,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
                     gpuAtomicAdd(grad_grid + grad_grid_index, static_cast<grid_t>(gix));
                     gpuAtomicAdd(grad_grid + grad_grid_index + 1, static_cast<grid_t>(giy));
                     gpuAtomicAdd(grad_grid + grad_grid_index + 2, static_cast<grid_t>(giz));
-                } 
+                }
                 else {
                     index_t grad_grid_index = 3 * (w + W * (h + H * (d + D * n)));
                     grad_grid[grad_grid_index] += static_cast<grid_t>(gix);
@@ -682,7 +682,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
             // put it in shared memory to compute the sum over the batch dimension
             _affine_grad_shared_[threadIdx.x] = _affine_grad_[affid];
             __syncthreads();
-            
+
             // reduce over threads
             for (int tid = BLOCKSIZE_3D / 2; tid > 0; tid /= 2) {
                 if (threadIdx.x < tid) {
@@ -690,7 +690,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
                 }
                 __syncthreads();
             }
-            
+
             // write to global memory
             if (threadIdx.x == 0) {
                 // broadcasted, we need to perform safe atomic add to avoid conflicts with other threads along batch dimension
@@ -709,7 +709,7 @@ __global__ void fused_grid_sampler_3d_backward_kernel(
 }
 
 torch::Tensor fused_grid_sampler_3d_forward_impl(
-    const torch::Tensor &input, 
+    const torch::Tensor &input,
     const std::optional<torch::Tensor> affine_3d,
     const std::optional<torch::Tensor> grid,
     const std::optional<torch::Tensor> affine_3d_pregrid,
@@ -717,7 +717,7 @@ torch::Tensor fused_grid_sampler_3d_forward_impl(
     const int64_t out_D,
     const int64_t out_H,
     const int64_t out_W,
-    const float grid_xmin, 
+    const float grid_xmin,
     const float grid_ymin,
     const float grid_zmin,
     const float grid_xmax,
@@ -750,7 +750,7 @@ torch::Tensor fused_grid_sampler_3d_forward_impl(
     if (grid.has_value()) {
         batch_size_max = std::max(batch_size_max, grid.value().size(0));
     }
-    // broadcast none by default 
+    // broadcast none by default
     bool broadcast_input = false, broadcast_affine_3d = false, broadcast_grid = false;
     bool broadcast_grid_affine_pre = false;
     if (batch_size_max > 1) {
@@ -763,7 +763,7 @@ torch::Tensor fused_grid_sampler_3d_forward_impl(
         // broadcast affine_3d if it exists
         if (affine_3d.has_value() && affine_3d.value().size(0) == 1) {
             broadcast_affine_3d = true;
-        } else if (affine_3d.has_value() && affine_3d.value().size(0) != batch_size_max) {  
+        } else if (affine_3d.has_value() && affine_3d.value().size(0) != batch_size_max) {
             TORCH_CHECK(false, "affine_3d batch size must match batch size of input or grid");
         }
 
@@ -773,7 +773,7 @@ torch::Tensor fused_grid_sampler_3d_forward_impl(
         } else if (affine_3d_pregrid.has_value() && affine_3d_pregrid.value().size(0) != batch_size_max) {
             TORCH_CHECK(false, "grid_affine_pre batch size must match batch size of input or affine_3d");
         }
-        
+
         // broadcast grid if it exists
         if (grid.has_value() && grid.value().size(0) == 1) {
             broadcast_grid = true;
@@ -921,7 +921,7 @@ torch::Tensor fused_grid_sampler_3d_forward_impl(
 
 void fused_grid_sampler_3d_backward_impl(
         /* we need input, A, u, s */
-        const torch::Tensor &input, 
+        const torch::Tensor &input,
         const std::optional<torch::Tensor> affine_3d,
         const std::optional<torch::Tensor> grid,
         const std::optional<torch::Tensor> affine_3d_pregrid,
@@ -934,7 +934,7 @@ void fused_grid_sampler_3d_backward_impl(
         const int64_t out_D,
         const int64_t out_H,
         const int64_t out_W,
-        const float grid_xmin, 
+        const float grid_xmin,
         const float grid_ymin,
         const float grid_zmin,
         const float grid_xmax,
@@ -967,7 +967,7 @@ void fused_grid_sampler_3d_backward_impl(
             batch_size_max = std::max(batch_size_max, affine_3d_pregrid.value().size(0));
         }
 
-        // broadcast none by default 
+        // broadcast none by default
         bool broadcast_input = false, broadcast_affine_3d = false, broadcast_grid = false, broadcast_grid_affine_pre = false;
         if (batch_size_max > 1) {
             if (input.size(0) == 1) {
@@ -979,10 +979,10 @@ void fused_grid_sampler_3d_backward_impl(
             // broadcast affine_3d if it exists
             if (affine_3d.has_value() && affine_3d.value().size(0) == 1) {
                 broadcast_affine_3d = true;
-            } else if (affine_3d.has_value() && affine_3d.value().size(0) != batch_size_max) {  
+            } else if (affine_3d.has_value() && affine_3d.value().size(0) != batch_size_max) {
                 TORCH_CHECK(false, "affine_3d batch size must match batch size of input or grid");
             }
-            
+
             // broadcast grid if it exists
             if (grid.has_value() && grid.value().size(0) == 1) {
                 broadcast_grid = true;

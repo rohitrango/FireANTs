@@ -1,5 +1,5 @@
 # Copyright (c) 2025 Rohit Jena. All rights reserved.
-# 
+#
 # This file is part of FireANTs, distributed under the terms of
 # the FireANTs License version 1.0. A copy of the license can be found
 # in the LICENSE file at the root of this repository.
@@ -7,10 +7,10 @@
 # IMPORTANT: This code is part of FireANTs and its use, reproduction, or
 # distribution must comply with the full license terms, including:
 # - Maintaining all copyright notices and bibliography references
-# - Using only approved (re)-distribution channels 
+# - Using only approved (re)-distribution channels
 # - Proper attribution in derivative works
 #
-# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE
 
 
 '''
@@ -21,37 +21,46 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from typing import Union, Tuple, List, Optional, Dict, Any, Callable
+from fireants.losses.maskedutils import POSSIBLE_MASKED_MODES, DEFAULT_MASK_MODE, get_tensors_and_mask, mask_loss_function
 
 class NoOp(nn.Module):
-    ''' dummy loss function that does not penalize anything 
+    ''' dummy loss function that does not penalize anything
 
-    this can be used for regularization only. 
+    this can be used for regularization only.
     '''
     def __init__(self, *args, **kwargs):
         super().__init__()
         # ignore everything
-    
+
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         return torch.tensor(0.0).to(pred.dtype).to(pred.device)
-    
+
     def get_image_padding(self) -> int:
         return 0
-        
 
 class MeanSquaredError(nn.Module):
     """
+    Computes mean squared error
     """
 
     def __init__(
         self,
         reduction: str = "mean",
+        masked: bool = False,
+        mask_mode: str = DEFAULT_MASK_MODE,
     ) -> None:
         """
        """
         super().__init__()
         self.reduction = reduction
+        self.masked_reduction = reduction
+        self.masked = masked
+        self.mask_mode = mask_mode
+        if self.masked:
+            self.reduction = "none"
+        assert mask_mode in POSSIBLE_MASKED_MODES
 
-    def forward(self, pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
+    def forward_util(self, pred: torch.Tensor, target: torch.Tensor)  -> torch.Tensor:
         """
         Args:
             pred: the shape should be BNH[WD].
@@ -61,13 +70,23 @@ class MeanSquaredError(nn.Module):
         """
         mse = F.mse_loss(pred, target, reduction=self.reduction)
         return mse
-    
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor)  -> torch.Tensor:
+        if not self.masked:
+            return self.forward_util(pred, target)
+        # masked mode is on
+        pred, target, mask_tensor = get_tensors_and_mask(pred, target, self.mask_mode)
+        mse = self.forward_util(pred, target)
+        masked_mse = mask_loss_function(mse, mask_tensor, self.masked_reduction)
+        return masked_mse
+
+
     def get_image_padding(self) -> int:
         return 0
 
 
 if __name__ == '__main__':
-    N = 64  
+    N = 64
     img1 = torch.rand(1, 1, N, N, N).cuda()
     img2 = torch.rand(1, 1, N, N, N).cuda()
     # loss = torch.jit.script(LocalNormalizedCrossCorrelationLoss(3, kernel_type='rectangular', reduction='mean')).cuda()
@@ -80,7 +99,7 @@ if __name__ == '__main__':
             out = loss(img1, img2)
             total += out.item()
         return total
-    
+
     a = time()
     # total = train(img1, img2, 200)
     for i in range(200):

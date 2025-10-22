@@ -1,5 +1,5 @@
 # Copyright (c) 2025 Rohit Jena. All rights reserved.
-# 
+#
 # This file is part of FireANTs, distributed under the terms of
 # the FireANTs License version 1.0. A copy of the license can be found
 # in the LICENSE file at the root of this repository.
@@ -7,10 +7,10 @@
 # IMPORTANT: This code is part of FireANTs and its use, reproduction, or
 # distribution must comply with the full license terms, including:
 # - Maintaining all copyright notices and bibliography references
-# - Using only approved (re)-distribution channels 
+# - Using only approved (re)-distribution channels
 # - Proper attribution in derivative works
 #
-# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE
 
 
 '''
@@ -27,6 +27,7 @@ from fireants.types import ItemOrList
 import fireants_fused_ops as ffo
 from fireants.losses.cc import LocalNormalizedCrossCorrelationLoss, gaussian_1d
 from fireants.tests.cc_mem_test import fast_lncc
+from fireants.losses.maskedutils import POSSIBLE_MASKED_MODES, DEFAULT_MASK_MODE, get_tensors_and_mask, mask_loss_function
 import itertools
 import logging
 logger = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ class FusedNCC3d(torch.autograd.Function):
         # interm[:, 3*C:4*C, :, :, :] = target_img * target_img
         # interm[:, 4*C:, :, :, :] = input_img * target_img  # [B, 5C, H, W, D]
         ffo.create_intermediates(input_img, target_img, interm)
-        # compute kernel 
+        # compute kernel
         kernel_vol = kernel_size ** 3
 
         if use_separable:
@@ -88,12 +89,12 @@ class FusedNCC3d(torch.autograd.Function):
         ctx.save_for_backward(interm, input_img, target_img, out)
         ctx.kernel_size = kernel_size
         ctx.nr = nr
-        ctx.dr = dr 
+        ctx.dr = dr
         ctx.reduction = reduction
         ctx.use_ants_gradient = use_ants_gradient
         ctx.use_separable = use_separable
         return out
-    
+
     @staticmethod
     def backward(ctx, grad_output):
         # retrieve saved tensors
@@ -185,7 +186,7 @@ class FusedNCC3dGaussian(torch.autograd.Function):
         assert input_img.is_contiguous() and target_img.is_contiguous(), "input_img and target_img must be contiguous"
         interm = torch.zeros(B, 5 * C, H, W, D, device=input_img.device, dtype=input_img.dtype)
         ffo.create_intermediates(input_img, target_img, interm)
-        # compute kernel 
+        # compute kernel
         kernel_vol = kernel_size ** 3
         # get truncated to match kernel size
         truncated = (kernel_size//2 - 0.5)/sigma
@@ -228,12 +229,12 @@ class FusedNCC3dGaussian(torch.autograd.Function):
         ctx.sigma = sigma
         ctx.truncated = truncated
         ctx.nr = nr
-        ctx.dr = dr 
+        ctx.dr = dr
         ctx.reduction = reduction
         ctx.use_ants_gradient = use_ants_gradient
         ctx.use_separable = use_separable
         return out
-    
+
     @staticmethod
     def backward(ctx, grad_output):
         # retrieve saved tensors
@@ -243,7 +244,7 @@ class FusedNCC3dGaussian(torch.autograd.Function):
 
         input_too_large = interm.numel() >= MAX_INT32_NUMEL
         inp_size = 5*C if not input_too_large else 1
-    
+
         gauss_filt = gaussian_1d(torch.tensor(sigma, device=input_img.device, dtype=input_img.dtype), truncated=truncated, approx="sampled")  # kernel size
 
         if reduction == ffo.Reduction.MEAN:
@@ -339,6 +340,9 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         use_separable: bool = True,
         kernel_type: str = "rectangular",
         sigma: float = 1.5,
+        # masked params
+        masked: bool = False,
+        mask_mode: str = DEFAULT_MASK_MODE,
     ) -> None:
         """
         Args:
@@ -368,37 +372,58 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
             raise ValueError(f"kernel_size must be odd, got {self.kernel_size}")
 
         # _kernel = look_up_option(kernel_type, kernel_dict)
-        kernel_vol = self.kernel_size ** self.ndim 
+        kernel_vol = self.kernel_size ** self.ndim
         self.smooth_nr = float(smooth_nr) * kernel_vol
         self.smooth_dr = float(smooth_dr) * kernel_vol
         self.use_ants_gradient = use_ants_gradient
         self.use_separable = use_separable
-    
+
+        # masked params
+        self.masked = masked
+        self.mask_mode = mask_mode
+        self.masked_reduction = reduction
+        assert mask_mode in POSSIBLE_MASKED_MODES
+        # turn off reduction for our own thing
+        if self.masked:
+            self.reduction = 'none'
+
     def set_scales(self, scales):
         ''' function is called at initialization of abstract registration '''
         self.scales = scales
         if self.kernel_size_list:
             assert len(self.kernel_size_list) == len(self.scales), "kernel_size must be a list of the same length as scales"
-    
+
     def set_iterations(self, iterations):
         ''' function is called at initialization of abstract registration '''
         self.iterations = iterations
-    
+
     def set_current_scale_and_iterations(self, scale, iters):
         if self.kernel_size_list:
             idx = self.scales.index(scale)
             self.kernel_size = self.kernel_size_list[idx]
-    
+
     def get_image_padding(self) -> int:
         return (self.kernel_size - 1) // 2
 
-    def forward(self, pred: torch.Tensor, target: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, pred: torch.Tensor, target: torch.Tensor,) -> torch.Tensor:
         """
         Args:
             pred: the shape should be BNH[WD].
             target: the shape should be BNH[WD].
-        Raises:
-            ValueError: When ``self.reduction`` is not one of ["mean", "sum", "none"].
+        """
+        if not self.masked:
+            return self.forward_util(pred, target)
+        # masked mode
+        pred, target, mask = get_tensors_and_mask(pred, target, self.mask_mode)
+        loss_tensor = self.forward_util(pred, target)
+        loss = mask_loss_function(loss_tensor, mask, self.masked_reduction)
+        return loss
+
+    def forward_util(self, pred: torch.Tensor, target: torch.Tensor,) -> torch.Tensor:
+        """
+        Args:
+            pred: the shape should be BNH[WD].
+            target: the shape should be BNH[WD].
         """
         if pred.ndim - 2 != self.ndim:
             raise ValueError(f"expecting pred with {self.ndim} spatial dimensions, got pred of shape {pred.shape}")
@@ -406,13 +431,13 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
             raise ValueError(f"ground truth has differing shape ({target.shape}) from pred ({pred.shape})")
         # check if both pred and target require grad
         pgrad, tgrad = pred.requires_grad, target.requires_grad
-        # if both or neither require grad, dont shuffle the order 
+        # if both or neither require grad, dont shuffle the order
         # the first tensor will always require grad (or neither does)
         if tgrad and not pgrad:
             pred, target = target, pred
-        
+
         pred, target = pred.contiguous(), target.contiguous()
-        
+
         if self.kernel_type == "gaussian":
             return -FusedNCC3dGaussian.apply(pred, target, self.kernel_size, self.sigma, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
         elif self.kernel_type == "rectangular":

@@ -50,32 +50,32 @@ Or install from PyPI (does not install fused ops):
 pip install fireants
 ```
 
-## Tutorial
+## 🤷 Tutorial
 To check out some of the tutorials, check out the `tutorials/` directory for usage.
 Alternatively, to reproduce the results in the [paper](https://arxiv.org/abs/2404.01249) checkout the `fireants/scripts/` directory.
 
-## Fused CUDA Operations
+## 🚀 Fused CUDA Operations
 If you want to use the fast and memory efficient fused CUDA operations, you can install the `fireants_fused_ops` package. See [fused_ops/README.md](fused_ops/README.md) for a basic user guide.
 
-## CLI Tools
+## 👾 CLI Tools
 FireANTs provides command-line interface tools similar to the original ANTs toolkit. For detailed instructions and available tools, see [cli/README.md](cli/README.md).
 
-## Template building
+## 📚 Template building
 FireANTs includes a powerful template builder for creating anatomical templates from medical images. For detailed instructions, configuration options, and usage examples, see [fireants/scripts/template/README.md](fireants/scripts/template/README.md).
 
-## Documentation
+## 📖 Documentation
 You can also check out the [Documentation](https://fireants.readthedocs.io/en/latest/). Feel free to reach out to me for improvements in the documentation.
 
-## Datasets
+## 📊 Datasets
 In the paper, we use the datasets as following: 
 * Klein's evaluation of 14 non-linear registration algorithms: [here](https://www.synapse.org/#!Synapse:syn3251018)
 * EMPIRE10 lung registration challenge: [here](https://empire10.grand-challenge.org/)
 * Expansion Microscopy dataset: [here](https://rnr-exm.grand-challenge.org/)
 
-## Contributing
+## 🤝 Contributing
 Feel free to [add issues](https://github.com/rohitrango/fireants/issues/new) or [pull requests](https://github.com/rohitrango/fireants/compare) to the repository. We welcome contributions to the package.
 
-## Tests
+## 🧪 Tests
 
 To run the tests, run the following command:
 ```bash

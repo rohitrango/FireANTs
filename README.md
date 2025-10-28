@@ -54,6 +54,9 @@ pip install fireants
 To check out some of the tutorials, check out the `tutorials/` directory for usage.
 Alternatively, to reproduce the results in the [paper](https://arxiv.org/abs/2404.01249) checkout the `fireants/scripts/` directory.
 
+## Fused CUDA Operations
+If you want to use the fast and memory efficient fused CUDA operations, you can install the `fireants_fused_ops` package. See [fused_ops/README.md](fused_ops/README.md) for a basic user guide.
+
 ## CLI Tools
 FireANTs provides command-line interface tools similar to the original ANTs toolkit. For detailed instructions and available tools, see [cli/README.md](cli/README.md).
 

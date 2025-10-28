@@ -1,5 +1,5 @@
 # Copyright (c) 2025 Rohit Jena. All rights reserved.
-# 
+#
 # This file is part of FireANTs, distributed under the terms of
 # the FireANTs License version 1.0. A copy of the license can be found
 # in the LICENSE file at the root of this repository.
@@ -7,10 +7,10 @@
 # IMPORTANT: This code is part of FireANTs and its use, reproduction, or
 # distribution must comply with the full license terms, including:
 # - Maintaining all copyright notices and bibliography references
-# - Using only approved (re)-distribution channels 
+# - Using only approved (re)-distribution channels
 # - Proper attribution in derivative works
 #
-# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE
 
 
 import torch
@@ -36,12 +36,12 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-## Deformable utils 
+## Deformable utils
 from fireants.registration.deformablemixin import DeformableMixin
 
 class GreedyRegistration(AbstractRegistration, DeformableMixin):
     """Greedy deformable registration class for non-linear image alignment.
-    
+
     Args:
         scales (List[int]): Downsampling factors for multi-resolution optimization.
             Must be in descending order (e.g. [4,2,1]).
@@ -50,7 +50,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         fixed_images (BatchedImages): Fixed/reference images to register to.
         moving_images (BatchedImages): Moving images to be registered.
         loss_type (str, optional): Similarity metric to use. Defaults to "cc".
-        deformation_type (str, optional): Type of deformation model - 'geodesic' or 'compositive'. 
+        deformation_type (str, optional): Type of deformation model - 'geodesic' or 'compositive'.
             Defaults to 'compositive'.
         optimizer (str, optional): Optimization algorithm - 'SGD' or 'Adam'. Defaults to 'Adam'.
         optimizer_params (dict, optional): Additional parameters for optimizer. Defaults to {}.
@@ -68,7 +68,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         max_tolerance_iters (int, optional): Max iterations for convergence check. Defaults to 10.
         init_affine (Optional[torch.Tensor], optional): Initial affine transformation. Defaults to None.
         warp_reg (Optional[Union[Callable, nn.Module]], optional): Regularization on warp field. Defaults to None.
-        displacement_reg (Optional[Union[Callable, nn.Module]], optional): Regularization on displacement field. 
+        displacement_reg (Optional[Union[Callable, nn.Module]], optional): Regularization on displacement field.
             Defaults to None.
         blur (bool, optional): Whether to blur images during downsampling. Defaults to True.
         custom_loss (nn.Module, optional): Custom loss module. Defaults to None.
@@ -83,12 +83,12 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         smooth_warp_sigma (float): Smoothing sigma for warp field
 
     """
-    def __init__(self, scales: List[int], iterations: List[float], 
+    def __init__(self, scales: List[int], iterations: List[float],
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
                 deformation_type: str = 'compositive',
                 optimizer: str = 'Adam', optimizer_params: dict = {},
-                optimizer_lr: float = 0.5, 
+                optimizer_lr: float = 0.5,
                 integrator_n: Union[str, int] = 7,
                 mi_kernel_type: str = 'gaussian', cc_kernel_type: str = 'rectangular',
                 cc_kernel_size: int = 7,
@@ -96,7 +96,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                 smooth_grad_sigma: float = 1.0,
                 loss_params: dict = {},
                 reduction: str = 'mean',
-                tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
+                tolerance: float = 1e-6, max_tolerance_iters: int = 10,
                 init_affine: Optional[torch.Tensor] = None,
                 warp_reg: Optional[Union[Callable, nn.Module]] = None,
                 displacement_reg: Optional[Union[Callable, nn.Module]] = None,
@@ -105,8 +105,8 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                 custom_loss: nn.Module = None, **kwargs) -> None:
         # initialize abstract registration
         # nn.Module.__init__(self)
-        super().__init__(scales=scales, iterations=iterations, fixed_images=fixed_images, moving_images=moving_images, 
-                         loss_type=loss_type, mi_kernel_type=mi_kernel_type, cc_kernel_type=cc_kernel_type, custom_loss=custom_loss, 
+        super().__init__(scales=scales, iterations=iterations, fixed_images=fixed_images, moving_images=moving_images,
+                         loss_type=loss_type, mi_kernel_type=mi_kernel_type, cc_kernel_type=cc_kernel_type, custom_loss=custom_loss,
                          loss_params=loss_params,
                          cc_kernel_size=cc_kernel_size, reduction=reduction,
                          tolerance=tolerance, max_tolerance_iters=max_tolerance_iters, **kwargs)
@@ -148,7 +148,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
             raise ValueError('Invalid initial affine shape: {}'.format(init_affine.shape))
         # make it contiguous
         self.affine = self.affine.contiguous()
-    
+
     def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], \
                                              moving_images: Union[BatchedImages, FakeBatchedImages], \
                                              smooth_warp_sigma: float = 0, smooth_grad_sigma: float = 0,
@@ -168,16 +168,18 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
             shape = [moving_arrays.shape[0], 1] + list(shape) if use_moving_shape else [fixed_arrays.shape[0], 1] + list(shape)
 
         warp = self.warp.get_warp().detach().clone()
-        warp_inv = compositive_warp_inverse(moving_images if use_moving_shape else fixed_images, warp, displacement=True) 
+        warp_inv = compositive_warp_inverse(moving_images if use_moving_shape else fixed_images, warp, displacement=True)
         # resample if needed
         mode = "bilinear" if self.dims == 2 else "trilinear"
         if tuple(warp_inv.shape[1:-1]) != tuple(shape[2:]):
             warp_inv = F.interpolate(warp_inv.permute(*self.warp.permute_vtoimg), size=shape[2:], mode=mode, align_corners=True).permute(*self.warp.permute_imgtov)
-        
+
+
         # get affine transform
-        fixed_t2p = fixed_images.get_torch2phy().to(self.dtype)
+        fixed_t2p: torch.Tensor = fixed_images.get_torch2phy().to(self.dtype)
         moving_p2t = moving_images.get_phy2torch().to(self.dtype)
-        # save initial affine transform to initialize grid 
+
+        # save initial affine transform to initialize grid
         affine_map_init = torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))
         affine_map_inv  = torch.linalg.inv(affine_map_init)
         # get A^-1 * v[y]
@@ -216,15 +218,15 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                 Shape: [N, H, W, [D], dims]
         """
 
-        fixed_arrays = fixed_images() 
+        fixed_arrays = fixed_images()
         if shape is None:
             shape = fixed_images.shape
         else:
-            shape = [fixed_arrays.shape[0], 1] + list(shape) 
+            shape = [fixed_arrays.shape[0], 1] + list(shape)
 
         fixed_t2p = fixed_images.get_torch2phy().to(self.dtype)
         moving_p2t = moving_images.get_phy2torch().to(self.dtype)
-        # save initial affine transform to initialize grid 
+        # save initial affine transform to initialize grid
         affine_map_init = (torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]).contiguous()
         # set affine coordinates
         warp_field = self.warp.get_warp()
@@ -235,7 +237,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
             # interpolate this
             warp_field = F.interpolate(warp_field.permute(*self.warp.permute_vtoimg), size=shape[2:], mode=mode, align_corners=True).permute(*self.warp.permute_imgtov)
 
-        # smooth out the warp field if asked to 
+        # smooth out the warp field if asked to
         if self.smooth_warp_sigma > 0:
             warp_gaussian = [gaussian_1d(s, truncated=2) for s in (torch.zeros(self.dims, device=fixed_arrays.device, dtype=self.dtype) + self.smooth_warp_sigma)]
             warp_field = separable_filtering(warp_field.permute(*self.warp.permute_vtoimg), warp_gaussian).permute(*self.warp.permute_imgtov)
@@ -265,7 +267,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         moving_p2t = self.moving_images.get_phy2torch().to(self.dtype)
         fixed_size = fixed_arrays.shape[2:]
         moving_size = moving_arrays.shape[2:]
-        # save initial affine transform to initialize grid 
+        # save initial affine transform to initialize grid
         affine_map_init = (torch.matmul(moving_p2t, torch.matmul(self.affine, fixed_t2p))[:, :-1]).contiguous().to(self.dtype)
 
         # to save transformed images
@@ -275,7 +277,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         # multi-scale optimization
         for scale, iters in zip(self.scales, self.iterations):
             self.convergence_monitor.reset()
-            # resize images 
+            # resize images
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
             moving_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_size]
             if self.blur and scale > 1:
@@ -296,7 +298,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
             # Get coordinates to transform
             # fixed_image_affinecoords = F.affine_grid(affine_map_init, fixed_image_down.shape, align_corners=True)
             pbar = tqdm(range(iters)) if self.progress_bar else range(iters)
-            # reduce 
+            # reduce
             if self.reduction == 'mean':
                 scale_factor = 1
             else:
@@ -305,7 +307,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
             for i in pbar:
                 self.warp.set_zero_grad()
                 warp_field = self.warp.get_warp()  # [N, HWD, 3]
-                # smooth out the warp field if asked to 
+                # smooth out the warp field if asked to
                 if self.smooth_warp_sigma > 0:
                     warp_field = separable_filtering(warp_field.permute(*self.warp.permute_vtoimg), warp_gaussian).permute(*self.warp.permute_imgtov)
                 # move the image
@@ -316,7 +318,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                     loss = loss + self.displacement_reg(warp_field)
                 if self.warp_reg is not None:
                     # internally should use the fireants interpolator to avoid additional memory allocation
-                    moved_coords = self.get_warped_coordinates(self.fixed_images, self.moving_images)  
+                    moved_coords = self.get_warped_coordinates(self.fixed_images, self.moving_images)
                     loss = loss + self.warp_reg(moved_coords)
                 loss.backward()
                 if self.progress_bar:

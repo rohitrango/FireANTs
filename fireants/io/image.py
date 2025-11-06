@@ -12,7 +12,6 @@
 #
 # For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
 
-
 '''
 This module provides classes for handling medical images with SimpleITK backend and PyTorch tensor support.
 It includes functionality for loading, manipulating, and transforming images, as well as batching operations for efficiency.
@@ -24,7 +23,7 @@ import numpy as np
 from typing import Any, Union, List, Tuple
 from time import time
 from fireants.types import devicetype
-from fireants.utils.imageutils import integer_to_onehot
+from fireants.utils.imageutils import integer_to_onehot, winsorize_image
 from fireants.utils.util import check_and_raise_cond, augment_filenames
 import logging
 from copy import deepcopy
@@ -109,6 +108,8 @@ class Image:
                  is_segmentation=False, max_seg_label=None, 
                  background_seg_label=0, seg_preprocessor=lambda x: x,
                  orientation: str = None,
+                 winsorize: bool = False,
+                 winsorize_percentile: Tuple[float, float] = (1.0, 99.0),
                 spacing=None, direction=None, origin=None, center=None) -> None:
 
         if orientation is not None:
@@ -120,7 +121,10 @@ class Image:
         # check for segmentation parameters
         # if `is_segmentation` is False, then just treat this as an image with given dtype
         if not is_segmentation:
-            self.array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(float)).to(device, dtype)
+            itk_img = sitk.GetArrayFromImage(itk_image).astype(float)
+            if winsorize:
+                itk_img = winsorize_image(itk_img, winsorize_percentile[0], winsorize_percentile[1])
+            self.array = torch.from_numpy(itk_img).to(device, dtype)
             # self.array = self.array[None, None]   # TODO: Change it to support multichannel images, right now just batchify and add a dummy channel to it
             channels = itk_image.GetNumberOfComponentsPerPixel()
             self.channels = channels
@@ -215,6 +219,10 @@ class Image:
         '''
         if self.is_array_present:
             del self.array
+    
+    def concat(self, *others, optimize_memory: bool = True):
+        ''' alias for concatenate '''
+        return self.concatenate(*others, optimize_memory=optimize_memory)
     
     def concatenate(self, *others, optimize_memory: bool = True):
         ''' 
@@ -315,6 +323,7 @@ class BatchedImages:
         if isinstance(images, Image):
             images = [images]
         self.images = images
+        
         if len(self.images) == 0:
             raise ValueError("BatchedImages must have at least one image")
         # check if all images have a PyTorch tensor representation

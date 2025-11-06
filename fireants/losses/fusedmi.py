@@ -113,8 +113,8 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         num_bins: int = 32,
         reduction: str = "mean",
         normalize_image_if_required: bool = True,
-        smooth_nr: float = 1e-7,
-        smooth_dr: float = 1e-7,
+        smooth_nr: float = 1e-5,
+        smooth_dr: float = 1e-5,
         sigma_ratio: float = 1.0,
         approximate_reduction: bool = True,
         torch_compile: bool = False,
@@ -184,6 +184,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
             t = t[:, :, coords].contiguous()  # need contiguity for fused kernel
             mival = self.forward_util(p, t)
             mivals.append(mival)
+            breakpoint()
         # each item is either (1, c, bin, bin) or (1)
         mivals = torch.cat(mivals, dim=0)
         if self.reduction == "mean":

@@ -345,6 +345,14 @@ def compute_inverse_warp_displacement(warp, grid, initial_inverse=None, iters=20
             #         invwarp.data = separable_filtering(invwarp.permute(*permute_vtoimg), warp_gaussian).permute(*permute_imgtov)
     return invwarp.data
 
+def winsorize_image(image: np.ndarray, min_percentile: float, max_percentile: float) -> np.ndarray:
+    ''' winsorize the image intensities '''
+    logger.info(f"Winsorizing image with percentile {min_percentile} and {max_percentile}")
+    minval = np.percentile(image, min_percentile)
+    maxval = np.percentile(image, max_percentile)
+    image = np.clip(image, minval, maxval)
+    return image
+
 def compute_inverse_warp_exp(warp, grid, lr=5e-3, iters=200, n=10):
     ''' compute warp inverse using exponential map '''
 

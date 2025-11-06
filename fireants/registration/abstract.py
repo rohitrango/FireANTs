@@ -27,6 +27,7 @@ from torch.nn import functional as F
 from functools import partial
 from fireants.utils.imageutils import is_torch_float_type
 from fireants.interpolator import fireants_interpolator
+from fireants.io.keypoints import BatchedKeypoints
 import logging
 
 logger = logging.getLogger(__name__)
@@ -318,3 +319,45 @@ class AbstractRegistration(ABC):
         interpolate_mode = moving_images.get_interpolator_type()
         moved_image = fireants_interpolator(moving_arrays, **moved_coords, mode=interpolate_mode, align_corners=True)  # [N, C, H, W, [D]]
         return moved_image
+
+    def evaluate_keypoints(self, fixed_keypoints: BatchedKeypoints, moving_keypoints: BatchedKeypoints):
+        '''Apply the learned transformation to keypoints in the fixed image space
+
+        This method applies the registration transformation learned during optimization
+        to a set of unordered keypoints in the fixed image space. It can be used to:
+            - Validate registration performance on test images 
+
+        All registration classes will implement their own `get_warped_coordinates` method,
+        which is used to apply the learned transformation to new images.
+
+        Args:
+            fixed_keypoints (BatchedKeypoints): Fixed/reference keypoints that define the target space
+
+        Returns:
+            BatchedKeypoints: The transformed keypoints in the space of the fixed image.
+        '''
+        moved_coords = self.get_warp_parameters(self.fixed_images, self.moving_images)
+        kps_tensor = fixed_keypoints.as_torch_coordinates() # tensor if can_collate, list of tensors otherwise
+        can_collate = fixed_keypoints.can_collate
+        dims = self.dims
+        if can_collate:
+            # kps_tensor is a [B, N, dims] tensor -> unsqueeze to (B, 1, N, dims) or (B, 1, 1, N, dims)
+            kps_tensor_disp = kps_tensor
+            for _ in range(dims - 1):
+                kps_tensor_disp = kps_tensor_disp.unsqueeze(1)
+            # compute displacement first
+            final_coord = 0
+            if 'grid' in moved_coords:
+                # compute u(x_f) and squeeze back
+                final_coord = F.grid_sample(moved_coords['grid'].permute(*self.warp.permute_vtoimg), kps_tensor_disp, mode='bilinear', align_corners=True).permute(*self.warp.permute_imgtov)
+                for _ in range(dims - 1):
+                    final_coord = final_coord.squeeze(1)
+
+            if 'affine' in moved_coords:
+                final_coord = final_coord + BatchedKeypoints.transform_keypoints_batch(moved_coords['affine'], kps_tensor)
+            else:
+                final_coord = final_coord + kps_tensor
+            # final_coord is [B, N, dims] tensor
+            return BatchedKeypoints.from_tensor_and_metadata(final_coord, moving_keypoints, space='torch')
+        else:
+            raise NotImplementedError("Not implemented for non-collated keypoints")

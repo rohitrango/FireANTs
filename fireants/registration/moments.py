@@ -199,6 +199,13 @@ class MomentsRegistration(AbstractRegistration):
             raise ValueError("Optimize rigid registration first.")
         return self.Rf
     
+    def get_rigid_init_dict(self):
+        ''' convenience wrapper for getting the rigid initialization as a dictionary '''
+        return {
+            "init_translation": self.get_rigid_transl_init(),
+            "init_moment": self.get_rigid_moment_init(),
+        }
+    
     def get_affine_init(self):
         if not self.optimized:
             raise ValueError("Optimize rigid registration first.")
@@ -207,6 +214,12 @@ class MomentsRegistration(AbstractRegistration):
         aff[:, :, :-1] = Rf
         aff[:, :, -1] = tf
         return aff.to(self.dtype)
+    
+    def get_affine_init_dict(self):
+        ''' convenience wrapper for getting the affine initialization as a dictionary '''
+        return {
+            "init_rigid": self.get_affine_init()
+        }
     
     def save_as_ants_transforms(self, filenames: Union[str, List[str]]):
         ''' 

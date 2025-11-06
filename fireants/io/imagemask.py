@@ -21,7 +21,7 @@ def generate_image_mask_allones(image: Image):
     mask_img = np.ones(mask_shape)
     mask_itk = sitk.GetImageFromArray(mask_img)
     mask_itk.CopyInformation(itk_img)
-    return Image(mask_itk, device=image.device, dtype=image.dtype)
+    return Image(mask_itk, device=image.device, dtype=image.array.dtype)
 
 def apply_mask_to_image(image: Image, mask: Image, optimize_memory: bool = True):
     '''

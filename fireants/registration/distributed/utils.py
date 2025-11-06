@@ -22,7 +22,7 @@ import subprocess
 import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-from fireants.interpolator.fused_grid_sample import get_min_coords3d, get_min_coords2d, get_max_coords3d, get_max_coords2d
+from fireants.interpolator.grid_sample import get_min_coords3d, get_min_coords2d, get_max_coords3d, get_max_coords2d
 from fireants.registration.distributed import parallel_state
 import os
 

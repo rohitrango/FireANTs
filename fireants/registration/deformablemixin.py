@@ -251,4 +251,51 @@ class DeformableMixin:
         '''
         Save the warp field in scipy format - typically used for submission to learn2reg challenge or similar
         '''
-        pass
+
+        # not supported for distributed
+        if "distributed" in reg.__class__.__name__.lower():
+            raise ValueError("Saving as scipy transforms is not supported for distributed registration")
+        
+        if isinstance(filenames, str):
+            filenames = [filenames]
+        assert len(filenames) == reg.opt_size, "Number of filenames should match the number of warps"
+        # get the warp field
+        fixed_image: BatchedImages = reg.fixed_images
+        moving_image: BatchedImages = reg.moving_images
+
+        # get metadata to convert torch space to physical space
+        moving_t2p = moving_image.get_torch2phy()
+        fixed_t2p = fixed_image.get_torch2phy()
+
+        moved_params = reg.get_warp_parameters(fixed_image, moving_image)   # contains affine and grid
+
+        moved_coords = moved_params['grid'].detach()
+        affine = moved_params['affine']
+        batch_size = affine.shape[0]
+        dims = reg.dims
+        # get (A-I)x
+        affine[:, :dims, :dims] = affine[:, :dims, :dims] - torch.eye(dims, device=affine.device, dtype=affine.dtype)
+        # get displacement coordinates in torch space
+        disp = fireants_interpolator.affine_warp(affine=affine, grid=moved_coords)
+        # convert to physical space
+        sizes = list(disp.shape[1:-1])
+        sizes = sizes[::-1]
+        for i in range(dims):
+            disp[..., i] *= ((sizes[i]-1)/2)   # assumed align_corners = True
+
+       # save to nifti or npz file
+        for i in range(reg.opt_size):
+            moved_disp = disp[i].detach().cpu().numpy()  # [ZYX,(xyz)]
+            if dims == 3:
+                moved_disp = moved_disp.transpose(2, 1, 0, 3)
+            elif dims == 2:
+                moved_disp = moved_disp.transpose(1, 0, 2)
+            savefile = filenames[i]
+            if savefile.endswith('.npz'): # save in npz format
+                np.savez(savefile, moved_disp.astype(np.float16))
+            elif savefile.endswith('.nii.gz') or savefile.endswith('.nii'): # save in nifti format
+                import nibabel as nib
+                nib.save(nib.Nifti1Image(moved_disp, np.eye(4)), savefile)
+            else:
+                raise ValueError(f"Unsupported file extension: {savefile}")
+

@@ -85,6 +85,7 @@ def test_lowdim():
             optimizer_lr=3e-2,
         )
         assert reg.min_dim <= min(fixed_dims), f"Min dimension is {reg.min_dim}, expected {min(fixed_dims)}"
+        reg.optimize()
 
         # Test GreedyRegistration
         reg = GreedyRegistration(
@@ -99,6 +100,7 @@ def test_lowdim():
             smooth_grad_sigma=0.5
         )
         assert reg.min_dim <= min(fixed_dims), f"Min dimension is {reg.min_dim}, expected {min(fixed_dims)}"
+        reg.optimize()
 
         # Test SynRegistration
         reg = SyNRegistration(
@@ -113,3 +115,4 @@ def test_lowdim():
             smooth_grad_sigma=0.5
         )
         assert reg.min_dim <= min(fixed_dims), f"Min dimension is {reg.min_dim}, expected {min(fixed_dims)}"
+        reg.optimize()

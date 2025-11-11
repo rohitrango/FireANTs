@@ -46,7 +46,7 @@ def test_lowdim():
 
     downscales = [24, 12, 6]
     expected_zdims = [128 // (128 // zdim) for zdim in downscales]
-    for zdim, expected_zdim in zip(downscales, expected_zdims):
+    for downscale, expected_zdim in zip(downscales, expected_zdims):
         if any(not Path(f).exists() for f in [fixed_image_path, moving_image_path]):
             fixed_np, moving_np = create_synthetic_data_np(128)
         else:
@@ -54,10 +54,11 @@ def test_lowdim():
             moving_img = Image.load_file(moving_image_path)
             fixed_np = sitk.GetArrayFromImage(fixed_img.itk_image)
             moving_np = sitk.GetArrayFromImage(moving_img.itk_image)
+            expected_zdim = fixed_np.shape[2] // (fixed_np.shape[2] // downscale)
 
         # Scale down
-        fixed_np = fixed_np[:,:,::128//zdim]
-        moving_np = moving_np[:,:,::128//zdim]
+        fixed_np = fixed_np[:,:,::128//downscale]
+        moving_np = moving_np[:,:,::128//downscale]
 
         fixed_dims = fixed_np.shape
         moving_dims = moving_np.shape
@@ -65,8 +66,8 @@ def test_lowdim():
         fixed_itk = sitk.GetImageFromArray(fixed_np)
         moving_itk = sitk.GetImageFromArray(moving_np)
 
-        fixed_itk.SetSpacing((1.0, 1.0, 128//zdim))
-        moving_itk.SetSpacing((1.0, 1.0, 128//zdim))
+        fixed_itk.SetSpacing((1.0, 1.0, 128//downscale))
+        moving_itk.SetSpacing((1.0, 1.0, 128//downscale))
 
         fixed_img = Image(fixed_itk, device='cuda')
         moving_img = Image(moving_itk, device='cuda')

@@ -127,10 +127,14 @@ ax[2].set_title("Moving Image", fontsize=20)
 
 ![Image](assets/quickstart/quickstart_3.png)
 
-This looks a lot better! You can save the warp in PyTorch format by simply calling `reg.get_warped_coordinates()`.
+
+## Saving the image
+To save the moved image or any other image that you want to transform, you can use the `FakeBatchedImages` class.
 
 ```python
-torch.save(reg.get_warped_coordinates(), "1000_1001_warp.pt")
+moved_image = reg.evaluate(fixed_batch, moving_batch)
+moved_batch = FakeBatchedImages(moved_image, fixed_batch)  # this uses the metadata of the fixed batch but the content of the moved image
+moved_batch.write_image("1000_1001_moved.nii.gz")
 ```
 
 ## Saving warp in ANTs format

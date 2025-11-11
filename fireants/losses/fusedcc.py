@@ -333,7 +333,7 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         spatial_dims: int = 3,
         kernel_size: Union[int, List[int]] = 3,
         reduction: str = "mean",
-        smooth_nr: float = 0,
+        smooth_nr: float = 1e-5,
         smooth_dr: float = 1e-5,
         use_ants_gradient: bool = True,
         use_separable: bool = True,
@@ -354,8 +354,8 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         """
         super().__init__()
         self.ndim = spatial_dims
-        if self.ndim not in {1, 2, 3}:
-            raise ValueError(f"Unsupported ndim: {self.ndim}-d, only 1-d, 2-d, and 3-d inputs are supported")
+        if self.ndim != 3:
+            raise ValueError(f"Unsupported ndim: {self.ndim}-d, only 3-d inputs are supported")
         self.reduction = reduction
         # gaussian kernel parameters
         self.kernel_type = kernel_type

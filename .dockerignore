@@ -1,0 +1,45 @@
+# Ignore Python caches and build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+*.whl
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.env
+
+# Git
+.git
+.gitignore
+
+# IDE and editor folders
+.vscode/
+.idea/
+
+# Notebooks and large data
+*.ipynb_checkpoints
+data/
+datasets/
+logs/
+outputs/
+checkpoints/
+
+# Docker
+docker/*.md
+docker-compose*.yml
+
+# Node and web (if any)
+node_modules/
+
+# Misc
+*.log
+*.tmp
+*.bak
+*.swp
+
+

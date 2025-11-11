@@ -1,6 +1,26 @@
 # :fire: FireANTs: Adaptive Riemannian Optimization for Multi-Scale Diffeomorphic Registration
 
-The FireANTs library is a lightweight registration package for Riemannian diffeomorphic registration on GPUs.
+<div style="text-align: center;">
+    <img src="assets/overview.png" width="90%" alt="FireANTs"/>
+</div>
+
+The FireANTs library is a lightweight, general-purpose registration package for Riemannian diffeomorphic registration on GPUs. It is designed to be easy to use, fast, accurate, and extensible.
+The salient features of the library include:
+
+- **Powerful optimization algorithms** ⚡️🧠: FireANTs utilizes a novel Riemmanian Adaptive optimization algorithm to perform gradient descent on the space of diffeomorphisms. Diffeomorphisms are a deformable transforms that do not lie on a Euclidean manifold, and hence require specialized optimization algorithms.
+- **Blazing fast inference** 🚀: FireANTs is much faster at inference than most other registration libraries, including deep learning methods. 
+- **Lightweight** 🧩: FireANTs consumes about 10x less memory than state-of-the-art deep learning methods, scaling easily to high resolution images.
+- **Batched Registration** 📚: Simultaneously register multiple image pairs with ease, which reduces runtime per image pair to upto 250ms per image pair on a single GPU.
+
+<div style="display: flex; justify-content: space-between;">
+    <img src="assets/dice_runtime_tradeoff.png" width="32%" alt="Comparison of Dice Score vs Runtime"/>
+    <img src="assets/runtime_memory_tradeoff.png" width="32%" alt="Runtime vs Memory Tradeoff"/>
+    <img src="assets/amortized_runtime_plot.png" width="32%" alt="Amortized Runtime Plot"/>
+</div>
+
+- **Composable transforms** 🔗⚡️: FireANTs provides a simple API for composing transforms. You can easily compose multiple transforms and apply the composition to images directly. This avoids aliasing due to multiple resampling. Check out the [documentation](https://fireants.readthedocs.io/en/latest/) for more details.
+
+*FireANTs achieves up to 10x speedup compared to traditional registration methods and deep learning approaches while improving accuracy and runtime.*
 
 ## Installation 
 To use the FireANTs package, you can either 
@@ -19,41 +39,43 @@ To install FireANTs locally:
 git clone https://github.com/rohitrango/fireants
 cd fireants
 pip install .
-pip install ./fused_ops
+cd fused_ops && python setup.py build_ext && python setup.py install && cd ..
 ```
 
 By default, doing `pip install .` will **NOT** include the fused CUDA operations. 
-I highly recommend installing the fused CUDA operations using `pip install ./fused_ops`.
+I highly recommend installing the fused CUDA operations using the command above.
 
-Or install from PyPI:
+Or install from PyPI (does not install fused ops):
 ```
 pip install fireants
-pip install fireants_fused_ops
 ```
 
-## Tutorial
+## 🤷 Tutorial
 To check out some of the tutorials, check out the `tutorials/` directory for usage.
 Alternatively, to reproduce the results in the [paper](https://arxiv.org/abs/2404.01249) checkout the `fireants/scripts/` directory.
 
-## CLI Tools
+## 🚀 Fused CUDA Operations
+If you want to use the fast and memory efficient fused CUDA operations, you can install the `fireants_fused_ops` package. See [fused_ops/README.md](fused_ops/README.md) for a basic user guide.
+
+## 👾 CLI Tools
 FireANTs provides command-line interface tools similar to the original ANTs toolkit. For detailed instructions and available tools, see [cli/README.md](cli/README.md).
 
-## Template building
+## 📚 Template building
 FireANTs includes a powerful template builder for creating anatomical templates from medical images. For detailed instructions, configuration options, and usage examples, see [fireants/scripts/template/README.md](fireants/scripts/template/README.md).
 
-## Documentation
+## 📖 Documentation
 You can also check out the [Documentation](https://fireants.readthedocs.io/en/latest/). Feel free to reach out to me for improvements in the documentation.
 
-## Datasets
+## 📊 Datasets
 In the paper, we use the datasets as following: 
 * Klein's evaluation of 14 non-linear registration algorithms: [here](https://www.synapse.org/#!Synapse:syn3251018)
 * EMPIRE10 lung registration challenge: [here](https://empire10.grand-challenge.org/)
 * Expansion Microscopy dataset: [here](https://rnr-exm.grand-challenge.org/)
 
-## Contributing
+## 🤝 Contributing
 Feel free to [add issues](https://github.com/rohitrango/fireants/issues/new) or [pull requests](https://github.com/rohitrango/fireants/compare) to the repository. We welcome contributions to the package.
 
-## Tests
+## 🧪 Tests
 
 To run the tests, run the following command:
 ```bash
@@ -66,7 +88,7 @@ Please refer to the [LICENSE](LICENSE) file for the license details, especially 
 
 ## Citation
 
-If you use FireANTs in your research, please cite the following paper:
+If you use FireANTs in your research, please cite the following papers:
 
 ```
 @article{jena2024fireants,
@@ -74,6 +96,13 @@ If you use FireANTs in your research, please cite the following paper:
   author={Jena, Rohit and Chaudhari, Pratik and Gee, James C},
   journal={arXiv preprint arXiv:2404.01249},
   year={2024}
+}
+
+@article{jena2025scalable,
+  title={A Scalable Distributed Framework for Multimodal GigaVoxel Image Registration},
+  author={Jena, Rohit and Zope, Vedant and Chaudhari, Pratik and Gee, James C},
+  journal={arXiv preprint arXiv:2509.25044},
+  year={2025}
 }
 ```
 

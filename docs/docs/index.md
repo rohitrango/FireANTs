@@ -51,6 +51,14 @@ The salient features are:
 * **Extensible 🧩**: FireANTs is built on top of PyTorch, which makes it easy to extend and customize the library. One can easily add new loss functions, metrics, and optimization algorithms to the library *with a few lines of code*. Adding custom loss functions and extending existing algorithms is extremely easy. Checkout the [tutorial](customloss.md) for more. <br><br>
 * **Works with arbitrary image sizes**: In a lot of clinical applications (in-vivo to ex-vivo or histology, microscopy, etc.), the image sizes can vary significantly and the two images may not be of the same size either. FireANTs is designed to work with arbitrary image sizes and can handle large images with ease. <br><br>
 
+Some performance benchmarks:
+<div style="display: flex; justify-content: space-between;">
+    <img src="assets/dice_runtime_tradeoff.png" width="32%" alt="Comparison of Dice Score vs Runtime"/>
+    <img src="assets/runtime_memory_tradeoff.png" width="32%" alt="Runtime vs Memory Tradeoff"/>
+    <img src="assets/amortized_runtime_plot.png" width="32%" alt="Amortized Runtime Plot"/>
+</div>
+<br>
+
 !!! info "More Details"
 
     Check out more details in the [paper](https://arxiv.org/abs/2404.01249) for the algorithm details, benchmark results and runtime analysis.

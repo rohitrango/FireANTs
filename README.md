@@ -34,6 +34,25 @@ If you do not want to use Docker, we recommend using a fresh Anaconda/Miniconda 
 conda create -n fireants python=3.9
 ```
 
+If you use pixi, the following should work to give you an enviroment with fireANTs available:
+```
+git clone https://github.com/rohitrango/fireants
+cd fireants
+pixi init --format pyproject
+pixi add python=3.9
+pixi add cuda-nvcc=12.2
+pixi add libcusparse-dev libcublas-dev libcusolver-dev
+pixi add pip setuptools
+# sometimes setuptools is not exposed due to pixi internals.
+pixi run python -m pip uninstall setuptools
+pixi run python -m pip install setuptools
+pixi install
+cd fused_ops
+pixi shell
+##
+python setup.py build_ext
+```
+
 To install FireANTs locally:
 ```
 git clone https://github.com/rohitrango/fireants

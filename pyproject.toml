@@ -15,7 +15,8 @@ dependencies = [
     "nibabel",
     "numpy", "scipy", "scikit-image", "matplotlib",
     "typing", "tqdm", "pandas", "hydra-core",
-    "pytest"
+    "pytest",
+    "portalocker"
 ]
 
 [project.scripts]

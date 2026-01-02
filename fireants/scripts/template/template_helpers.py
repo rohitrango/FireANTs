@@ -21,6 +21,7 @@ helper functions for the template building script
 from omegaconf import OmegaConf
 import time
 import os
+import tempfile
 import torch
 from fireants.io.image import Image, BatchedImages, FakeBatchedImages
 from fireants.registration.abstract import AbstractRegistration
@@ -77,7 +78,7 @@ def check_args(args, logger):
     '''
     # save tmpdir
     if args.tmpdir is None:
-        args.tmpdir = os.environ.get('TMPDIR', '/tmp')
+        args.tmpdir = os.environ.get('TMPDIR', tempfile.gettempdir())
     
     # check for last registration 
     if args.do_deform:

@@ -43,7 +43,7 @@ def is_compatible_next_transform(prev_transforms: List[str], transform_type: str
     }
     return all([t in compat_table[transform_type] for t in prev_transforms])
 
-def parse_args():
+def parse_args(argv: Optional[List[str]] = None):
     class CustomHelpFormatter(argparse.RawDescriptionHelpFormatter):
         def format_help(self):
             return show_help(None)
@@ -88,7 +88,14 @@ def parse_args():
     parser.add_argument('--verbose', action='store_true',
                       help='Enable verbose output')
 
-    return parser.parse_args()
+    if argv is None:
+        argv = sys.argv[1:]
+
+    if len(argv) == 0:
+        parser.print_help()
+        sys.exit(0)
+
+    return parser.parse_args(argv)
 
 def preprocess_images(fixed_image, moving_image, normalize_image_intensities, winsorize_image_intensities):
     ''' preprocess the images '''
@@ -625,5 +632,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-
 

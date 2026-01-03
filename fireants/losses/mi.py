@@ -244,10 +244,9 @@ class GlobalMutualInformationLoss(nn.Module):
 
 if __name__ == '__main__':
     N = 256
+    # Only use CUDA or CPU - MPS has float64 limitations that cause issues
     if torch.cuda.is_available():
         device = torch.device("cuda")
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        device = torch.device("mps")
     else:
         device = torch.device("cpu")
     img1 = torch.rand(1, 1, N, N, N, device=device)

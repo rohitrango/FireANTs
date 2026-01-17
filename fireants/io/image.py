@@ -29,25 +29,35 @@ from fireants.utils.util import check_and_raise_cond, augment_filenames
 import logging
 from copy import deepcopy
 import os
+import hashlib
 from fireants.utils.globals import PERMITTED_ANTS_WARP_EXT
 # logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 from fireants.registration.distributed import parallel_state
 from contextlib import contextmanager
-import fcntl
+import tempfile
+import portalocker
+
+
+def _lock_file_path() -> str:
+    """Get a cross-platform lock file path in the system temp directory."""
+    if "FIREANTS_LOCK_PATH" in os.environ:
+        return os.environ["FIREANTS_LOCK_PATH"]
+    return os.path.join(tempfile.gettempdir(), "fireants_image_lock")
+
 
 @contextmanager
 def get_lock():
     rank = parallel_state.get_data_parallel_rank() if parallel_state.is_initialized() else 0
-    with open("/tmp/fireants_image_lock", "w") as fi:
+    with open(_lock_file_path(), "w") as fi:
         try:
             print(f"Rank {rank} is acquiring lock")
-            fcntl.flock(fi, fcntl.LOCK_EX)
+            portalocker.lock(fi, portalocker.LOCK_EX)
             yield
         finally:
             print(f"Rank {rank} is releasing lock")
-            fcntl.flock(fi, fcntl.LOCK_UN)
+            portalocker.unlock(fi)
 
 def divide_size_into_chunks(size: int, gp_size: int) -> list:
     '''
@@ -624,4 +634,3 @@ if __name__ == '__main__':
     details = get_tensor_memory_details()
     for tensor, size, _, _ in details:
         print(tensor.shape, size)
-

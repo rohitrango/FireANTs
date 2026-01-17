@@ -6,9 +6,9 @@ FireANTs provides command-line interface (CLI) tools that offer ANTs-compatible 
 
 The FireANTs CLI tools aim to provide a familiar interface for users coming from ANTs while leveraging GPU acceleration and the modern PyTorch backend of FireANTs. These tools maintain compatibility with ANTs workflows, making it easy to transition existing scripts and pipelines.
 
-## Available Tools
+### Available Tools
 
-### `fireantsRegistration`
+### `fireantsRegistration [--help]`
 
 The main registration tool, equivalent to ANTs' `antsRegistration`. This tool provides a complete pipeline for medical image registration with support for rigid, affine, and deformable (SyN/Greedy) transformations.
 

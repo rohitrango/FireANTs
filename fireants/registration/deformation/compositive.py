@@ -26,11 +26,11 @@ from fireants.io.image import Image, BatchedImages
 from fireants.utils.imageutils import scaling_and_squaring, _find_integrator_n
 from fireants.types import devicetype
 from fireants.losses.cc import gaussian_1d, separable_filtering
-from fireants.utils.util import grad_smoothing_hook
+from fireants.utils.util import grad_smoothing_hook, get_min_dim
 from fireants.utils.imageutils import jacobian
 from fireants.registration.optimizers.sgd import WarpSGD
 from fireants.registration.optimizers.adam import WarpAdam
-from fireants.utils.globals import MIN_IMG_SIZE
+from fireants.utils.globals import MIN_IMG_SIZE, MIN_IMG_SHARDED_SIZE
 
 from logging import getLogger
 from copy import deepcopy
@@ -58,11 +58,12 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
         self.device = fixed_images.device
         if optimizer_lr > 1:
             getLogger("CompositiveWarp").warning(f'optimizer_lr is {optimizer_lr}, which is very high. Unexpected registration may occur.')
-
+        self.min_dim = get_min_dim(spatial_dims)
+        
         # define warp and register it as a parameter
         # set size
         if init_scale > 1:
-            spatial_dims = [max(int(s / init_scale), MIN_IMG_SIZE) for s in spatial_dims]
+            spatial_dims = [max(int(s / init_scale), self.min_dim) for s in spatial_dims]
         warp = torch.zeros([num_images, *spatial_dims, self.n_dims], dtype=dtype, device=fixed_images.device)  # [N, HWD, dims]
         self.register_parameter('warp', nn.Parameter(warp))
 

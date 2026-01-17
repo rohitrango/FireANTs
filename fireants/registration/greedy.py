@@ -165,7 +165,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         if shape is None:
             shape = moving_images.shape if use_moving_shape else fixed_images.shape
         else:
-            shape = [moving_arrays.shape[0], 1] + list(shape) if use_moving_shape else [fixed_arrays.shape[0], 1] + list(shape)
+            shape = [moving_arrays.shape[0], 1] + list(shape) if use_moving_shape else [fixed_images.shape[0], 1] + list(shape)
 
         warp = self.warp.get_warp().detach().clone()
         warp_inv = compositive_warp_inverse(moving_images if use_moving_shape else fixed_images, warp, displacement=True)
@@ -277,9 +277,9 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         # multi-scale optimization
         for scale, iters in zip(self.scales, self.iterations):
             self.convergence_monitor.reset()
-            # resize images
-            size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
-            moving_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_size]
+            # resize images 
+            size_down = [max(int(s / scale), self.min_dim) for s in fixed_size]
+            moving_size_down = [max(int(s / scale), self.min_dim) for s in moving_size]
             if self.blur and scale > 1:
                 sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device, dtype=fixed_arrays.dtype)
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]

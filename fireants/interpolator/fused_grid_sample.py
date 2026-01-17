@@ -23,31 +23,11 @@ from torch.nn import functional as F
 import sys
 from typing import Union, Tuple, List, Optional, Dict, Any, Callable
 from fireants.types import ItemOrList
+from fireants.interpolator.grid_sample import get_min_coords3d, get_max_coords3d
 import fireants_fused_ops as ffo
 import logging
 logger = logging.getLogger(__name__)
 
-def get_min_coords3d(Z, Y, X, align_corners):
-    if not align_corners:
-        return -1.0 + 1.0/X, -1.0 + 1.0/Y, -1.0 + 1.0/Z
-    return -1.0, -1.0, -1.0
-
-# ZYX order
-def get_max_coords3d(Z, Y, X, align_corners):
-    if not align_corners:
-        return 1.0 - 1.0/X, 1.0 - 1.0/Y, 1.0 - 1.0/Z
-    return 1.0, 1.0, 1.0
-
-def get_min_coords2d(Y, X, align_corners):
-    if not align_corners:
-        return -1.0 + 1.0/X, -1.0 + 1.0/Y
-    return -1.0, -1.0
-
-# ZYX order
-def get_max_coords2d(Y, X, align_corners):
-    if not align_corners:
-        return 1.0 - 1.0/X, 1.0 - 1.0/Y
-    return 1.0, 1.0
 
 GRID_SAMPLE_INTERPOLATION_MODES = {
     "bilinear": 0,

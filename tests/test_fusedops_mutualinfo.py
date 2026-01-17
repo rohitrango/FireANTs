@@ -31,14 +31,18 @@ def test_fused_mi_correctness():
                 reduction='mean',
                 sigma_ratio=sigma_ratio,
                 normalize_image_if_required=True,
-                approximate_reduction=False
+                approximate_reduction=False,
+                smooth_nr = 1e-5,
+                smooth_dr = 1e-5,
             ).cuda()
             
             loss_baseline = GlobalMutualInformationLoss(
                 kernel_type=kernel_type,
                 num_bins=32,
                 reduction='mean',
-                sigma_ratio=sigma_ratio
+                sigma_ratio=sigma_ratio,
+                smooth_nr = 1e-5,
+                smooth_dr = 1e-5,
             ).cuda()
             
             # Forward pass
@@ -89,14 +93,18 @@ def test_fused_mi_memory_forward():
                 reduction='mean',
                 sigma_ratio=sigma_ratio,
                 normalize_image_if_required=True,
-                approximate_reduction=False
+                approximate_reduction=False,
+                smooth_nr = 1e-5,
+                smooth_dr = 1e-5,
             ).cuda()
             
             loss_baseline = GlobalMutualInformationLoss(
                 kernel_type=kernel_type,
                 num_bins=32,
                 reduction='mean',
-                sigma_ratio=sigma_ratio
+                sigma_ratio=sigma_ratio,
+                smooth_nr = 1e-5,
+                smooth_dr = 1e-5,
             ).cuda()
             
             # Reset memory stats
@@ -156,15 +164,19 @@ def test_fused_mi_memory_backward():
                 num_bins=32,
                 reduction='mean',
                 sigma_ratio=sigma_ratio,
-                normalize_image_if_required=True,
-                approximate_reduction=False
+                normalize_image_if_required=False,
+                approximate_reduction=False,
+                smooth_nr = 1e-5,
+                smooth_dr = 1e-5,
             ).cuda()
             
             loss_baseline = GlobalMutualInformationLoss(
                 kernel_type=kernel_type,
                 num_bins=32,
                 reduction='mean',
-                sigma_ratio=sigma_ratio
+                sigma_ratio=sigma_ratio,
+                smooth_nr = 1e-5,
+                smooth_dr = 1e-5,
             ).cuda()
             
             # Reset memory stats
@@ -233,13 +245,17 @@ def test_fused_mi_num_bins_ablation():
                 kernel_type=kernel_type,
                 num_bins=num_bins,
                 reduction='mean',
-                approximate_reduction=False
+                approximate_reduction=False,
+                smooth_nr = 1e-5,
+                smooth_dr = 1e-5,
             ).cuda()
             
             loss_baseline = GlobalMutualInformationLoss(
                 kernel_type=kernel_type,
                 num_bins=num_bins,
-                reduction='mean'
+                reduction='mean',
+                smooth_nr = 1e-5,
+                smooth_dr = 1e-5,
             ).cuda()
             
             # Reset memory stats

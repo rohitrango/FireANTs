@@ -92,7 +92,7 @@ class GlobalMutualInformationLoss(nn.Module):
         if num_bins <= 0:
             raise ValueError("num_bins must > 0, got {num_bins}")
         # bin_centers = torch.linspace(0.0, 1.0, num_bins) + 0.5 / num_bins  # (num_bins,)
-        bin_centers = torch.arange(num_bins, device=torch.cuda.current_device()) / num_bins + 0.5 / num_bins
+        bin_centers = torch.arange(num_bins, dtype=torch.float32) / num_bins + 0.5 / num_bins
         sigma = torch.mean(bin_centers[1:] - bin_centers[:-1]) * sigma_ratio / 2
         # print(f"sigma: {sigma}, 1/num_bins: {1/num_bins}")
         self.sigma_ratio = sigma_ratio
@@ -244,10 +244,15 @@ class GlobalMutualInformationLoss(nn.Module):
 
 if __name__ == '__main__':
     N = 256
-    img1 = torch.rand(1, 1, N, N, N).cuda()
-    img2 = torch.rand(1, 1, N, N, N).cuda()
+    # Only use CUDA or CPU - MPS has float64 limitations that cause issues
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+    img1 = torch.rand(1, 1, N, N, N, device=device)
+    img2 = torch.rand(1, 1, N, N, N, device=device)
     # loss = torch.jit.script(GlobalMutualInformationLoss('b-spline').cuda())
-    loss = GlobalMutualInformationLoss('b-spline').cuda()
+    loss = GlobalMutualInformationLoss('b-spline').to(device)
     total = 0
     a = time()
     for i in range(10):

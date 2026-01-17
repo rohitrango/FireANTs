@@ -23,6 +23,29 @@ from typing import Optional
 import logging
 logger = logging.getLogger(__name__)
 
+
+def get_min_coords3d(Z, Y, X, align_corners):
+    if not align_corners:
+        return -1.0 + 1.0/X, -1.0 + 1.0/Y, -1.0 + 1.0/Z
+    return -1.0, -1.0, -1.0
+
+# ZYX order
+def get_max_coords3d(Z, Y, X, align_corners):
+    if not align_corners:
+        return 1.0 - 1.0/X, 1.0 - 1.0/Y, 1.0 - 1.0/Z
+    return 1.0, 1.0, 1.0
+
+def get_min_coords2d(Y, X, align_corners):
+    if not align_corners:
+        return -1.0 + 1.0/X, -1.0 + 1.0/Y
+    return -1.0, -1.0
+
+# ZYX order
+def get_max_coords2d(Y, X, align_corners):
+    if not align_corners:
+        return 1.0 - 1.0/X, 1.0 - 1.0/Y
+    return 1.0, 1.0
+
 def torch_grid_sampler_2d(
     input: torch.Tensor,
     affine: Optional[torch.Tensor] = None,

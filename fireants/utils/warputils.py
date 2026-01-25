@@ -112,22 +112,7 @@ def shape_averaging_invwarp(
 
     Here, ref_warp is the actual warp (not displacement field)
     '''
-    from fireants.registration.greedy import GreedyRegistration
-    reg = GreedyRegistration( 
-        scales=scales,
-        iterations=iterations,
-        fixed_images=template_image,
-        moving_images=template_image,
-        loss_type='noop',
-        deformation_type='compositive',
-        optimizer='adam',
-        optimizer_lr=0.5,
-        warp_reg=ShapeAveragingOperator(ref_warp),
-        smooth_grad_sigma=1.0,
-        smooth_warp_sigma=0.25,
-    )
-    reg.optimize()
-    inverse_warp = compositive_warp_inverse(template_image, reg.warp.get_warp(), displacement=True)
+    inverse_warp = compositive_warp_inverse(template_image, ref_warp, displacement=True, scales=scales, iterations=iterations)
     # add the grid to the inverse warp
     return inverse_warp
 

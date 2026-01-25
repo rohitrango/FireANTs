@@ -102,8 +102,9 @@ def main(args):
 
     # get image files (partitioned) for template creation
     image_dataloader = get_image_dataloader(args)
-    image_dp_frac = len(image_dataloader.dataset) * 1.0 / image_dataloader.dataset.total_num_rows  # fraction of images in this dp rank
+    # image_dp_frac = len(image_dataloader.dataset) * 1.0 / image_dataloader.dataset.total_num_rows  # fraction of images in this dp rank
     total_dataset_size = image_dataloader.dataset.total_num_rows
+    image_dp_frac = 1.0 / total_dataset_size   
 
     if args.init_template_path is not None:
         files = args.init_template_path.split(',')
@@ -117,7 +118,7 @@ def main(args):
         # create template from average
         # Run timer
         with Timer('Averaging all images for initial template', logger_zero):
-            init_template = get_average_template(image_dataloader, args)
+            init_template = get_average_template(image_dataloader, args, mode='sum')
             init_template.array = init_template.array * image_dp_frac
             # add template across all processes
             parallel_state.all_reduce_across_dp_ranks(init_template.array, op=torch.distributed.ReduceOp.SUM)
@@ -150,6 +151,8 @@ def main(args):
             batch_data = batch['image']
             batch_size = batch_data.shape[0]
             init_template_batch.broadcast(batch_size)
+
+            print(f"Rank {rank}, batch data (min/mean/max): {batch_data().min()}, {batch_data().mean()}, {batch_data().max()}")
             # register the batch
             moved_images, avg_warp = register_batch(
                 init_template_batch,
@@ -164,9 +167,10 @@ def main(args):
             updated_template_arr = updated_template_arr + moved_images.detach().sum(0, keepdim=True) * image_dp_frac
             del moved_images
         
+        # breakpoint()
         # update template
         parallel_state.all_reduce_across_dp_ranks(updated_template_arr, op=torch.distributed.ReduceOp.SUM)
-        
+
         # perform shape averaging if specified
         if avg_warp is not None:
             avg_warp = avg_warp / total_dataset_size   # we computed sums, so we need to divide by total dataset size
@@ -174,8 +178,9 @@ def main(args):
             # now we have added all the average grid coordinates, take inverse
             init_template_batch.broadcast(1)
             inverse_avg_warp = shape_averaging_invwarp(init_template_batch, avg_warp)
-            updated_template_arr = laplace(updated_template_arr, itk_scale=True, learning_rate=1)
             updated_template_arr = fireants_interpolator(input=updated_template_arr, affine=None, grid=inverse_avg_warp, mode='bilinear', align_corners=True)
+        
+        logger.debug(f"Rank {rank}, updated template (min/mean/max): {updated_template_arr.min()}, {updated_template_arr.mean()}, {updated_template_arr.max()}")
 
         # apply laplacian filter
         for _ in range(args.num_laplacian):

@@ -368,11 +368,13 @@ def compute_inverse_warp_exp(warp, grid, lr=5e-3, iters=200, n=10):
 
 ### Other itk like filters
 class LaplacianFilter(nn.Module):
-    def __init__(self, dims, device=None, spacing=None, itk_scale=True, learning_rate=1):
+    def __init__(self, dims, device=None, spacing=None, itk_scale=True, learning_rate=1, clamp_to_orig_range=False):
         super().__init__()
         self.dims = dims
         self.itk_scale = itk_scale
         self.learning_rate = learning_rate
+        self.clamp_to_orig_range = clamp_to_orig_range
+
         assert dims in [2, 3] 
         if spacing is None:
             spacing = [1.0] * dims
@@ -426,10 +428,17 @@ class LaplacianFilter(nn.Module):
             image_meta = self._scale_image(image)
             # scale the laplacian image
             lap_image = (lap_image - lap_meta['min']) / (lap_meta['max'] - lap_meta['min']) * (image_meta['max'] - image_meta['min']) 
-            scaled_image = image - learning_rate * lap_image
-            # scale it again
-            scaled_meta = self._scale_image(scaled_image)
-            scaled_image = scaled_image - scaled_meta['min']
-            return scaled_image
         else:
-            return image - learning_rate * lap_image
+            pass
+
+        out_image = image - learning_rate * lap_image
+
+        # we have the out_image, clamp it to the original range if specified
+        if self.clamp_to_orig_range:
+            for b in range(out_image.shape[0]):
+                for c in range(out_image.shape[1]):
+                    out_image[b, c] = torch.clamp(out_image[b, c], image_meta['min'][b, c].min(), image_meta['max'][b, c].max())
+        else:
+            pass
+
+        return out_image

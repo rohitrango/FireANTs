@@ -27,6 +27,9 @@ from fireants.registration.abstract import AbstractRegistration
 from typing import Optional
 import SimpleITK as sitk
 
+import logging
+logger = logging.getLogger(__name__)
+
 class Timer:
     def __init__(self, description: str, logger):
         self.description = description
@@ -54,7 +57,13 @@ def normalize(img):
 def add_shape(avg_warp: Optional[torch.Tensor], reg: AbstractRegistration):
     if avg_warp is None:
         return None
-    avg_warp = avg_warp + reg.get_warped_coordinates(reg.fixed_images, reg.moving_images).sum(0, keepdim=True)
+    # params = self.get_warp_parameters(fixed_images, moving_images, shape)
+    params = reg.get_warp_parameters(reg.fixed_images, reg.moving_images)
+    if 'grid' not in params:
+        logger.warning('No grid in warp parameters, skipping shape averaging')
+        return avg_warp
+    # avg_warp = avg_warp + reg.get_warped_coordinates(reg.fixed_images, reg.moving_images).sum(0, keepdim=True)
+    avg_warp = avg_warp + params['grid'].sum(0, keepdim=True)
     return avg_warp
 
 def try_add_to_config(args, key, default):
@@ -147,7 +156,7 @@ def save_additional(reg_obj, init_template_batch, additional_save_batches, batch
         moved_images = reg_obj.evaluate(init_template_batch, moving_batch)
         save_moved(moved_images, add_ids, save_dir, init_template_batch.images[0], f"add_{add_id}")
 
-def get_average_template(image_dataloader, args):
+def get_average_template(image_dataloader, args, mode='mean'):
     '''
     Given a dataloader, get the average template. Also make sure the `torch2phy` is the same for all images.
     '''
@@ -163,7 +172,9 @@ def get_average_template(image_dataloader, args):
             torch2phy = batch['image'].get_torch2phy()
         else:
             assert torch.allclose(torch2phy, batch['image'].get_torch2phy(), atol=1e-4), "`torch2phy` is not the same for all images"
-    out = out / count
+    # if sum, then dont divide by count
+    if mode == 'mean':
+        out = out / count
     # lets get an image and set its torch2phy to the average `torch2phy`
     init_template = image_dataloader.dataset[0]['image']
     init_template.array = out

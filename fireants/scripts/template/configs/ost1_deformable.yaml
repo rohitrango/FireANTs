@@ -1,0 +1,81 @@
+debug: True
+verbose: False
+
+# input params
+image_list_file: /home/sremedi1/projects/ost1_template/fpaths.txt
+image_prefix: null
+image_suffix: null
+num_subjects: null
+
+# template params
+init_template_path: /data/t1w_dataset/train/a4/a4_sub-01566_ses-01_t1w_run-01.nii
+# init_template_path: null
+template_iterations: 5
+normalize_images: False
+save_as_uint8: False
+
+# laplacian params
+num_laplacian: 0
+laplace_params:
+  learning_rate: 0.5
+  itk_scale: true
+
+# shape averaging
+shape_avg: false
+
+# save outputs
+save_dir: ~/projects/ost1_template
+save_every: 1
+save_init_template: true  
+save_moved_images: false
+# no num_subjects: will be the same as the number of subjects used for creation
+save_additional:
+  image_file: []
+  image_prefix: []
+  image_suffix: []
+  is_segmentation: []
+
+# registration params
+batch_size: 8
+
+do_moments: True
+moments:
+  scale: 4
+  moments: 1
+
+# rigid transform
+do_rigid: True
+rigid:
+  iterations: [200, 100, 50]
+  scales: [4, 2, 1]
+  optimizer_lr: 0.003
+  cc_kernel_size: 5
+  progress_bar: ${verbose}
+  loss_type: fusedcc
+
+# affine transform
+do_affine: True
+affine:
+  iterations: [200, 100, 50]
+  scales: [4, 2, 1]
+  optimizer_lr: 0.003
+  cc_kernel_size: 5
+  progress_bar: ${verbose}
+  loss_type: fusedcc
+
+# deformation transform
+do_deform: True
+deform_algo: greedy
+deform:
+  iterations: [200, 100, 50]
+  scales: [4, 2, 1]
+  optimizer_lr: 0.5
+  smooth_warp_sigma: 0.5
+  smooth_grad_sigma: 0.5
+  progress_bar: ${verbose}
+  cc_kernel_size: 5
+  loss_type: fusedcc
+
+# additional params
+tmpdir: null
+last_reg: null

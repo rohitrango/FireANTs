@@ -229,6 +229,8 @@ class GlobalMutualInformationLoss(nn.Module):
             p = p[:, :, coords]
             t = t[:, :, coords]
             mival = self.forward_util(p, t)
+            if len(mival.shape) == 0:
+                mival = mival.unsqueeze(0)
             mivals.append(mival)
         # each item is either (1, c, bin, bin) or (1)
         mivals = torch.cat(mivals, dim=0)

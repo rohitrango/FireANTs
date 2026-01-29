@@ -2,6 +2,10 @@
 set -e
 set -x
 
+# Run from project root (directory containing run_tests.sh)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 # Parse command line arguments
 MODE="default"
 if [[ "$1" == "--all" ]]; then
@@ -10,10 +14,10 @@ elif [[ "$1" == "--distributed-only" ]]; then
     MODE="distributed"
 fi
 
-# Function to run basic tests
+# Function to run basic tests (use python -m pytest for consistent env with manual runs)
 run_basic_tests() {
     echo "Running basic tests..."
-    pytest -v -x tests/test*py
+    python -m pytest -v -x --log-cli-level=INFO tests/test*.py
 }
 
 # Function to run distributed tests
@@ -39,13 +43,16 @@ run_distributed_tests() {
 
 # Run tests based on mode
 if [[ "$MODE" == "all" ]]; then
+    echo "Running all tests..."
     run_basic_tests
     run_distributed_tests
     echo "All tests completed successfully!"
 elif [[ "$MODE" == "distributed" ]]; then
+    echo "Running distributed tests..."
     run_distributed_tests
     echo "Distributed tests completed successfully!"
 else
+    echo "Running basic tests..."
     run_basic_tests
     echo ""
     echo "Basic tests completed successfully!"

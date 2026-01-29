@@ -30,12 +30,16 @@ def get_mask_function(mask1: torch.Tensor, mask2: torch.Tensor, masked_mode: str
 
 def get_tensors_and_mask(image1: torch.Tensor, image2: torch.Tensor, masked_mode: str):
     '''
-    The function assumes the last channel is the mask and the rest is the image
+    The function assumes the last channel is the mask and the rest is the image.
+    When there is only one channel, treat the whole tensor as image and use an
+    all-ones mask so downstream convolutions never see zero channels.
     '''
     c1 = image1.shape[1]
     c2 = image2.shape[1]
-    image1, mask1 = torch.split(image1, [c1-1, 1], dim=1)
-    image2, mask2 = torch.split(image2, [c2-1, 1], dim=1)
+    if c1 <= 1 or c2 <= 1:
+        raise ValueError("Expected at least 2 channels in the image, got 1 or less")
+    image1, mask1 = torch.split(image1, [c1 - 1, 1], dim=1)
+    image2, mask2 = torch.split(image2, [c2 - 1, 1], dim=1)
     mask = get_mask_function(mask1, mask2, masked_mode)
     return image1, image2, mask
 

@@ -132,14 +132,15 @@ class AbstractRegistration(ABC):
 
         # initialize losses
         # track whether we are in masked mode; this is driven by the loss configuration
-        self.masked = False
         if loss_type.startswith("masked_"):
             loss_params['masked'] = True
+            self.masked = True
             loss_type = loss_type.replace("masked_", "")
             logger.info(f"Masked mode specified, will use {loss_type} function with masking if it supports it.")
-        # store masked flag if loss explicitly requested it
-        if loss_params.get('masked', False):
-            self.masked = True
+        else:
+            loss_params['masked'] = False
+            self.masked = False
+            logger.info(f"Masked mode not specified, will not use masking.")
 
         if loss_type == 'mi':
             self.loss_fn = GlobalMutualInformationLoss(kernel_type=mi_kernel_type, reduction=reduction, **loss_params)

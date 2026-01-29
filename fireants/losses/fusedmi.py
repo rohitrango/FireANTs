@@ -184,7 +184,6 @@ class FusedGlobalMutualInformationLoss(nn.Module):
             t = t[:, :, coords].contiguous()  # need contiguity for fused kernel
             mival = self.forward_util(p, t)
             mivals.append(mival)
-            breakpoint()
         # each item is either (1, c, bin, bin) or (1)
         mivals = torch.cat(mivals, dim=0)
         if self.reduction == "mean":

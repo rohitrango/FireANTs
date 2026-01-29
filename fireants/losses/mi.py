@@ -283,7 +283,8 @@ class GlobalMutualInformationLoss(nn.Module):
             pab = torch.bmm(wa.permute(0, 2, 1), wb.to(wa))
             pab, pa, pb = allgather_mi.apply(pab, pa, pb, wa.shape[1])
             # divide by total number of samples (this is not exact but approximate)
-            pab = pab.div(self.world_size * wa.shape[1])
+            world_size = parallel_state.get_grid_parallel_size()
+            pab = pab.div(world_size * wa.shape[1])
             papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))
         else:
             pab = torch.bmm(wa.permute(0, 2, 1), wb.to(wa)).div(wa.shape[1])  # (batch, num_bins, num_bins)

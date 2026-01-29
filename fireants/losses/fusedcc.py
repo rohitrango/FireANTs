@@ -110,6 +110,7 @@ class FusedNCC3d(torch.autograd.Function):
         inp_size = 5*C if not input_too_large else 1
 
         # initialize filters
+        kernel_vol = kernel_size ** 3
         if use_separable:
             filt1 = torch.ones(inp_size, 1, kernel_size, 1, 1, device=input_img.device, dtype=input_img.dtype) / kernel_size
             filt2 = torch.ones(inp_size, 1, 1, kernel_size, 1, device=input_img.device, dtype=input_img.dtype) / kernel_size

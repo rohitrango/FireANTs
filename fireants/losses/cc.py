@@ -282,8 +282,8 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         if not self.masked:
             return self.forward_util(pred, target)
         # masked mode
-        pred, target, mask_tensor = get_tensors_and_mask(pred, target, self.mask_mode)
-        loss = self.forward_util(pred, target)
+        pred_i, target_i, mask_tensor = get_tensors_and_mask(pred, target, self.mask_mode)
+        loss = self.forward_util(pred_i, target_i)
         masked_loss = mask_loss_function(loss, mask_tensor, self.masked_reduction)
         return masked_loss
 

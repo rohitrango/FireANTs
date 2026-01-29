@@ -256,12 +256,24 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             # resize images 
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
             if self.blur and scale > 1:
-                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device, dtype=fixed_arrays.dtype)
+                sigmas = 0.5 * torch.tensor(
+                    [sz / szdown for sz, szdown in zip(fixed_size, size_down)],
+                    device=fixed_arrays.device,
+                    dtype=fixed_arrays.dtype,
+                )
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
-                fixed_image_down = downsample(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
-                moving_image_blur = separable_filtering(moving_arrays, gaussians)
+                fixed_image_down = self._downsample_image_and_mask(
+                    fixed_arrays,
+                    size=size_down,
+                    mode=self.fixed_images.interpolate_mode,
+                    gaussians=gaussians,
+                    align_corners=True,
+                )
+                moving_image_blur = self._smooth_image_not_mask(moving_arrays, gaussians)
             else:
-                fixed_image_down = F.interpolate(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True)
+                fixed_image_down = F.interpolate(
+                    fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True
+                )
                 moving_image_blur = moving_arrays
 
             #### Set size for warp field

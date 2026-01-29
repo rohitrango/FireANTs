@@ -42,7 +42,14 @@ def get_tensors_and_mask(image1: torch.Tensor, image2: torch.Tensor, masked_mode
 def mask_loss_function(loss_tensor: torch.Tensor, mask_tensor: torch.Tensor, reduction: str):
     ''' given the loss function and final mask, compute the loss '''
     if reduction == 'mean':
-        return (loss_tensor * mask_tensor).sum() / (mask_tensor.sum())
+        # sum over all dims except first (batch), then mean over batch
+        weighted_loss = (loss_tensor * mask_tensor)
+        # sum over all dims except batch
+        sum_dims = tuple(range(1, weighted_loss.dim()))
+        loss_sum = weighted_loss.sum(dim=sum_dims)
+        mask_sum = mask_tensor.sum(dim=sum_dims)
+        batch_mean = (loss_sum / (mask_sum + 1e-8)).mean()
+        return batch_mean
     if reduction == "sum":
         return (loss_tensor * mask_tensor).sum()
     raise NotImplementedError(f"reduction type {reduction} is not supported")

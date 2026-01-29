@@ -299,11 +299,27 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
 
             if scale > 1:
                 # blur image
-                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_sharded_size, size_sharded_down)], device=self.device, dtype=fixed_sharded_array.dtype)
+                sigmas = 0.5 * torch.tensor(
+                    [sz / szdown for sz, szdown in zip(fixed_sharded_size, size_sharded_down)],
+                    device=self.device,
+                    dtype=fixed_sharded_array.dtype,
+                )
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
                 # get "downsampled" image
-                fixed_image_down = downsample(fixed_sharded_array, size=size_sharded_down, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
-                moving_image_blur = downsample(moving_sharded_array, size=moving_size_sharded_down, mode=self.moving_images.interpolate_mode, gaussians=gaussians)
+                fixed_image_down = self._downsample_image_and_mask(
+                    fixed_sharded_array,
+                    size=size_sharded_down,
+                    mode=self.fixed_images.interpolate_mode,
+                    gaussians=gaussians,
+                    align_corners=True,
+                )
+                moving_image_blur = self._downsample_image_and_mask(
+                    moving_sharded_array,
+                    size=moving_size_sharded_down,
+                    mode=self.moving_images.interpolate_mode,
+                    gaussians=gaussians,
+                    align_corners=True,
+                )
             else:
                 fixed_image_down = fixed_sharded_array
                 moving_image_blur = moving_sharded_array

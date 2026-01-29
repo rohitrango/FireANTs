@@ -279,14 +279,34 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
             moving_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_size]
             if self.blur and scale > 1:
-                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device, dtype=fixed_arrays.dtype)
+                sigmas = 0.5 * torch.tensor(
+                    [sz / szdown for sz, szdown in zip(fixed_size, size_down)],
+                    device=fixed_arrays.device,
+                    dtype=fixed_arrays.dtype,
+                )
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
-                fixed_image_down = downsample(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
-                moving_image_blur = downsample(moving_arrays, size=moving_size_down, mode=self.moving_images.interpolate_mode, gaussians=gaussians)
+                fixed_image_down = self._downsample_image_and_mask(
+                    fixed_arrays,
+                    size=size_down,
+                    mode=self.fixed_images.interpolate_mode,
+                    gaussians=gaussians,
+                    align_corners=True,
+                )
+                moving_image_blur = self._downsample_image_and_mask(
+                    moving_arrays,
+                    size=moving_size_down,
+                    mode=self.moving_images.interpolate_mode,
+                    gaussians=gaussians,
+                    align_corners=True,
+                )
             else:
                 if scale > 1:
-                    fixed_image_down = F.interpolate(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True)
-                    moving_image_blur = F.interpolate(moving_arrays, size=moving_size_down, mode=self.moving_images.interpolate_mode, align_corners=True)
+                    fixed_image_down = F.interpolate(
+                        fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True
+                    )
+                    moving_image_blur = F.interpolate(
+                        moving_arrays, size=moving_size_down, mode=self.moving_images.interpolate_mode, align_corners=True
+                    )
                 else:
                     fixed_image_down = fixed_arrays
                     moving_image_blur = moving_arrays

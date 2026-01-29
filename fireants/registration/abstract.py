@@ -25,7 +25,8 @@ from typing import Optional, Union
 from fireants.utils.util import ConvergenceMonitor
 from torch.nn import functional as F
 from functools import partial
-from fireants.utils.imageutils import is_torch_float_type
+from fireants.utils.imageutils import is_torch_float_type, downsample 
+from fireants.losses.cc import separable_filtering
 from fireants.interpolator import fireants_interpolator
 from fireants.io.keypoints import BatchedKeypoints
 import logging
@@ -130,10 +131,15 @@ class AbstractRegistration(ABC):
         self.progress_bar = progress_bar        # variable to show or hide progress bar
 
         # initialize losses
+        # track whether we are in masked mode; this is driven by the loss configuration
+        self.masked = False
         if loss_type.startswith("masked_"):
             loss_params['masked'] = True
             loss_type = loss_type.replace("masked_", "")
             logger.info(f"Masked mode specified, will use {loss_type} function with masking if it supports it.")
+        # store masked flag if loss explicitly requested it
+        if loss_params.get('masked', False):
+            self.masked = True
 
         if loss_type == 'mi':
             self.loss_fn = GlobalMutualInformationLoss(kernel_type=mi_kernel_type, reduction=reduction, **loss_params)
@@ -168,6 +174,57 @@ class AbstractRegistration(ABC):
 
     def print_init_msg(self):
         logger.info(f"Registration of type {self.__class__.__name__} initialized with dtype {self.dtype}")
+
+    def _split_image_and_mask_last_channel(self, arrays: torch.Tensor):
+        """Split arrays into (image_channels, mask_channel) if in masked mode.
+
+        Convention: when `self.masked` is True, the last channel is treated as a mask
+        and should not be Gaussian-smoothed. All preceding channels are treated as image.
+
+        Returns:
+            (img, mask): img is the tensor to be smoothed; mask is the last channel (kept unsmoothed),
+            or None if not in masked mode / no explicit mask channel.
+        """
+        if getattr(self, "masked", False) and arrays.shape[1] > 1:
+            return arrays[:, :-1], arrays[:, -1:]
+        return arrays, None
+
+    def _concat_image_and_mask_last_channel(self, img: torch.Tensor, mask: Optional[torch.Tensor]):
+        """Inverse of `_split_image_and_mask_last_channel`."""
+        if mask is None:
+            return img
+        return torch.cat([img, mask], dim=1)
+
+    def _downsample_image_and_mask(
+        self,
+        arrays: torch.Tensor,
+        *,
+        size,
+        mode: str,
+        gaussians=None,
+        align_corners: bool = True,
+    ) -> torch.Tensor:
+        """Downsample arrays while respecting masked-last-channel convention.
+
+        - If `gaussians` is provided, we Gaussian-smooth + downsample the image channels via `downsample`.
+        - The (optional) mask channel is *never* Gaussian-smoothed; it is resized via interpolation only.
+        """
+        img, mask = self._split_image_and_mask_last_channel(arrays)
+        if gaussians is None:
+            img_down = F.interpolate(img, size=size, mode=mode, align_corners=align_corners)
+        else:
+            img_down = downsample(img, size=size, mode=mode, gaussians=gaussians)
+
+        if mask is None:
+            return img_down
+        mask_down = F.interpolate(mask, size=size, mode=mode, align_corners=align_corners)
+        return self._concat_image_and_mask_last_channel(img_down, mask_down)
+
+    def _smooth_image_not_mask(self, arrays: torch.Tensor, gaussians) -> torch.Tensor:
+        """Gaussian-smooth image channels but not the (optional) mask channel."""
+        img, mask = self._split_image_and_mask_last_channel(arrays)
+        img_smooth = separable_filtering(img, gaussians)
+        return self._concat_image_and_mask_last_channel(img_smooth, mask)
 
     @abstractmethod
     def optimize(self):

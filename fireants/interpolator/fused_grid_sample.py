@@ -23,29 +23,11 @@ from torch.nn import functional as F
 import sys
 from typing import Union, Tuple, List, Optional, Dict, Any, Callable
 from fireants.types import ItemOrList
+from fireants.interpolator.grid_sample import get_min_coords3d, get_max_coords3d
 import fireants_fused_ops as ffo
+import logging
+logger = logging.getLogger(__name__)
 
-def get_min_coords3d(Z, Y, X, align_corners):
-    if not align_corners:
-        return -1.0 + 1.0/X, -1.0 + 1.0/Y, -1.0 + 1.0/Z
-    return -1.0, -1.0, -1.0
-
-# ZYX order
-def get_max_coords3d(Z, Y, X, align_corners):
-    if not align_corners:
-        return 1.0 - 1.0/X, 1.0 - 1.0/Y, 1.0 - 1.0/Z
-    return 1.0, 1.0, 1.0
-
-def get_min_coords2d(Y, X, align_corners):
-    if not align_corners:
-        return -1.0 + 1.0/X, -1.0 + 1.0/Y
-    return -1.0, -1.0
-
-# ZYX order
-def get_max_coords2d(Y, X, align_corners):
-    if not align_corners:
-        return 1.0 - 1.0/X, 1.0 - 1.0/Y
-    return 1.0, 1.0
 
 GRID_SAMPLE_INTERPOLATION_MODES = {
     "bilinear": 0,
@@ -155,7 +137,6 @@ class FusedGridSampler3d(torch.autograd.Function):
         # call backward
         ffo.fused_grid_sampler_3d_backward(input, affine, grid, grid_affine, grad_output, input_grad, affine_grad, grid_grad, out_shape[0], out_shape[1], out_shape[2], min_coords[0], min_coords[1], min_coords[2], max_coords[0], max_coords[1], max_coords[2], is_displacement, GRID_SAMPLE_INTERPOLATION_MODES[interpolation_mode], GRID_SAMPLE_PADDING_MODES[padding_mode], align_corners)
         return input_grad, affine_grad, grid_grad, None, None, None, None, None, None, None, None, None
-
 
 class FusedWarpComposer3d(torch.autograd.Function):
     @staticmethod
@@ -293,7 +274,9 @@ def fused_grid_sampler_3d(
     assert grid is None or grid.is_contiguous(), "grid must be contiguous"
     # specify output shape if grid is not provided
     if grid is None:
-        out_shape = out_shape[-3:]
+        if out_shape is None:
+            logger.warning("out_shape is not provided, using input shape")
+        out_shape = out_shape[-3:] if out_shape is not None else (Z, Y, X)
     else:
         out_shape = grid.shape[1:-1]
     output = FusedGridSampler3d.apply(input.contiguous(), affine, grid, grid_affine, output, mode, padding_mode, align_corners, out_shape, min_coords, max_coords, is_displacement)

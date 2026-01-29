@@ -49,7 +49,7 @@ rigid:
   iterations: [200, 100, 25]
   scales: [4, 2, 1]
   progress_bar: ${verbose}
-  loss_type: cc
+  loss_type: fusedcc
 
 # affine transform
 do_affine: False
@@ -57,7 +57,7 @@ affine:
   iterations: [200, 100, 25]
   scales: [4, 2, 1]
   progress_bar: ${verbose}
-  loss_type: cc
+  loss_type: fusedcc
 
 # deformation transform
 do_deform: True

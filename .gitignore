@@ -34,3 +34,4 @@ benchmarks/
 tests/notebooks
 tests/test_results/
 **/*.zip
+fireants/scripts/template/configs/test*.yaml

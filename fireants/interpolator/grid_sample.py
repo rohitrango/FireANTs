@@ -20,6 +20,31 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from typing import Optional
+import logging
+logger = logging.getLogger(__name__)
+
+
+def get_min_coords3d(Z, Y, X, align_corners):
+    if not align_corners:
+        return -1.0 + 1.0/X, -1.0 + 1.0/Y, -1.0 + 1.0/Z
+    return -1.0, -1.0, -1.0
+
+# ZYX order
+def get_max_coords3d(Z, Y, X, align_corners):
+    if not align_corners:
+        return 1.0 - 1.0/X, 1.0 - 1.0/Y, 1.0 - 1.0/Z
+    return 1.0, 1.0, 1.0
+
+def get_min_coords2d(Y, X, align_corners):
+    if not align_corners:
+        return -1.0 + 1.0/X, -1.0 + 1.0/Y
+    return -1.0, -1.0
+
+# ZYX order
+def get_max_coords2d(Y, X, align_corners):
+    if not align_corners:
+        return 1.0 - 1.0/X, 1.0 - 1.0/Y
+    return 1.0, 1.0
 
 def torch_grid_sampler_2d(
     input: torch.Tensor,
@@ -56,6 +81,9 @@ def torch_grid_sampler_2d(
     if grid is None:
         if affine is None:
             raise ValueError("Either grid or affine must be provided")
+        if out_shape is None:
+            logger.warning("out_shape is not provided for affine-only transformation, using input shape")
+            out_shape = (Y, X)
         grid = F.affine_grid(affine, (B, C, *out_shape[-2:]), align_corners=align_corners)
         return F.grid_sample(input, grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
     # Case 2: Full warp field
@@ -105,11 +133,13 @@ def torch_grid_sampler_3d(
     """
     B, C, Z, Y, X = input.shape
 
-
     # Case 1: Affine-only transformation
     if grid is None:
         if affine is None:
             raise ValueError("Either grid or affine must be provided")
+        if out_shape is None:
+            logger.warning("out_shape is not provided for affine-only transformation, using input shape")
+            out_shape = (Z, Y, X)
         grid = F.affine_grid(affine, (B, C, *out_shape[-3:]), align_corners=align_corners)
         ret = F.grid_sample(input, grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
         if output is not None:

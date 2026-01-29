@@ -35,3 +35,4 @@ tests/notebooks
 tests/test_results/
 **/*.zip
 fireants/scripts/template/configs/test*.yaml
+**/.DS_Store

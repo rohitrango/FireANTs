@@ -6,7 +6,7 @@ When only a region of interest (ROI) should drive the registration, you can use 
 
 In this example we align a moving image (axis-aligned square) to a fixed image (same square rotated 45°). A diagonal half-plane mask defines the ROI where we care about the match.
 
-![Fixed, moving, and mask](assets/howto/masked_loss_input.png)
+![](../assets/howto/masked_loss_input.png)
 
 - **Moving image**: axis-aligned square.
 - **Fixed image**: same square rotated 45°.
@@ -69,7 +69,7 @@ When the loss is masked, the optimizer focuses on matching inside the ROI; outsi
 
 Below: **left** — moved image using **masked_cc** (masks concatenated, loss only in ROI); **right** — moved image using **cc** (no masks, same registration settings).
 
-![Masked vs unmasked result](assets/howto/masked_loss_comparison.png)
+![](../assets/howto/masked_loss_comparison.png)
 
 With **masked_cc**, alignment in the diagonal ROI is prioritized and the rest of the field is less constrained. With **cc**, the entire image contributes to the loss, so the deformation is influenced everywhere.
 

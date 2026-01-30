@@ -13,11 +13,11 @@ You can attach **keypoints** (landmarks) to images, run affine or deformable reg
 
 This tutorial uses synthetic 2D squares with different half-sizes. The **fixed image** has a larger square (r=32), and the **moving image** has a smaller square (r=24). The 4 corners of each square serve as keypoints.
 
-![Fixed and moving squares with keypoints](assets/howto/keypoint_fidelity_squares.png)
+![](../assets/howto/keypoint_fidelity_squares.png)
 
 The overlaid view below shows both squares together. The dashed green lines connect corresponding keypoints (fixed↔moving), visualizing the initial landmark distance that registration should reduce.
 
-![Overlaid squares showing initial keypoint distance](assets/howto/keypoint_fidelity_overlay.png)
+![](../assets/howto/keypoint_fidelity_overlay.png)
 
 A helper script **`docs/scripts/generate_keypoint_fidelity_plot.py`** generates these figures. Run it from the repo root:
 

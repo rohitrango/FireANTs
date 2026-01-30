@@ -64,7 +64,10 @@ FireANTs provides command-line interface tools similar to the original ANTs tool
 FireANTs includes a powerful template builder for creating anatomical templates from medical images. For detailed instructions, configuration options, and usage examples, see [fireants/scripts/template/README.md](fireants/scripts/template/README.md).
 
 ## 📖 Documentation
-You can also check out the [Documentation](https://fireants.readthedocs.io/en/latest/). Feel free to reach out to me for improvements in the documentation.
+You can also check out the [Documentation](https://fireants.readthedocs.io/en/latest/). Feel free to reach out to me for improvements in the documentation. To build the documentation locally, run the following command from the root of the repository:
+```bash
+mkdocs serve -f docs/mkdocs.yml
+```
 
 ## 📊 Datasets
 In the paper, we use the datasets as following: 

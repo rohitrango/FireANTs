@@ -1,4 +1,3 @@
-
 ''' data structure and utilities to handle keypoints ''' 
 import torch
 from fireants.io.image import Image
@@ -19,6 +18,47 @@ class Keypoints:
             device: devicetype = 'cuda',
             space: str = 'pixel',
     ):
+        """
+        Keypoints stores a set of N keypoint coordinates for a given image, along with associated metadata.
+
+        The keypoints can be represented in one of three coordinate spaces:
+        - 'pixel': (x, y, [z]) indices in image pixel space, where (0,0,[0]) refers to the first pixel/voxel.
+        - 'physical': world coordinates corresponding to real-space units (e.g., millimeters), using image origin, spacing, and direction.
+        - 'torch': torch (PyTorch) coordinate space, typically matching SimpleITK physical space but may have different axis order.
+
+        Parameters
+        ----------
+        keypoints : (N, dims) torch.Tensor or np.ndarray
+            The keypoint locations as a 2D tensor/array, one row per keypoint, columns for spatial dimensions.
+        image : Image
+            Reference Image object, provides metadata for coordinate transforms.
+        device : str or torch.device, optional
+            Device on which to store the keypoints tensor. Default: 'cuda'.
+        space : str, optional
+            Coordinate space for stored keypoints ('pixel', 'physical', or 'torch'). Default: 'pixel'.
+
+        Attributes
+        ----------
+        keypoints : torch.Tensor
+            The underlying keypoints tensor of shape (N, dims).
+        dims : int
+            Number of spatial dimensions (2 for 2D, 3 for 3D).
+        space : str
+            The coordinate space in which keypoints are currently represented.
+        device : str or torch.device
+            Device on which the keypoints tensor is stored.
+        num_keypoints : int
+            Number of keypoints stored.
+
+        Provides utilities for updating, transforming, and converting keypoints between spaces.
+
+        Raises
+        ------
+        AssertionError
+            If `space` is not one of 'pixel', 'physical', or 'torch'.
+            If `keypoints` tensor is not 2D or does not match image dimensionality.
+        """
+
         if isinstance(keypoints, np.ndarray):
             keypoints = torch.from_numpy(keypoints).float().contiguous()
         self.keypoints = keypoints.to(device).float().contiguous()

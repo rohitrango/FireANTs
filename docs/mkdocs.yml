@@ -10,6 +10,7 @@ nav:
   - Custom loss functions: customloss.md
   - How To:
     - Masked losses: howto/masked-losses.md
+    - Keypoint fidelity: howto/keypoint-fidelity.md
   - CLI Tools: cli.md
   - Template construction: template.md
   - Advanced concepts:

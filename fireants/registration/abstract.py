@@ -1,5 +1,5 @@
-# Copyright (c) 2025 Rohit Jena. All rights reserved.
-# 
+# Copyright (c) 2026 Rohit Jena. All rights reserved.
+#
 # This file is part of FireANTs, distributed under the terms of
 # the FireANTs License version 1.0. A copy of the license can be found
 # in the LICENSE file at the root of this repository.
@@ -7,10 +7,10 @@
 # IMPORTANT: This code is part of FireANTs and its use, reproduction, or
 # distribution must comply with the full license terms, including:
 # - Maintaining all copyright notices and bibliography references
-# - Using only approved (re)-distribution channels 
+# - Using only approved (re)-distribution channels
 # - Proper attribution in derivative works
 #
-# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE
 
 
 from abc import ABC, abstractmethod
@@ -25,8 +25,10 @@ from typing import Optional, Union
 from fireants.utils.util import ConvergenceMonitor
 from torch.nn import functional as F
 from functools import partial
-from fireants.utils.imageutils import is_torch_float_type
+from fireants.utils.imageutils import is_torch_float_type, downsample 
+from fireants.losses.cc import separable_filtering
 from fireants.interpolator import fireants_interpolator
+from fireants.io.keypoints import BatchedKeypoints
 import logging
 
 logger = logging.getLogger(__name__)
@@ -41,8 +43,8 @@ class AbstractRegistration(ABC):
     This abstract class provides the core functionality and interface for image registration,
     handling all the common functionality for all linear and non-linear registration algorithms.
     It handles features like
-        - multi-resolution optimization, 
-        - arbitrary similarity metrics, and 
+        - multi-resolution optimization,
+        - arbitrary similarity metrics, and
         - convergence monitoring.
 
     Args:
@@ -57,7 +59,7 @@ class AbstractRegistration(ABC):
                 Global mutual information between the fixed image and the moved image is measured using Parzen windowing using different kernel types.
                 Mutual information is implemented using the `GlobalMutualInformationLoss` class.
             - 'cc': Cross correlation (default)
-                Local normalized cross correlation between the fixed image and the moved image is measured using a kernel of size `cc_kernel_size`. This is a de-facto standard similarity metric for both linear and non-linear image registration. It also consumes less very little memory than mutual information.  
+                Local normalized cross correlation between the fixed image and the moved image is measured using a kernel of size `cc_kernel_size`. This is a de-facto standard similarity metric for both linear and non-linear image registration. It also consumes less very little memory than mutual information.
                 Cross correlation is implemented using the `LocalNormalizedCrossCorrelationLoss` class.
             - 'mse': Mean squared error
                 Mean squared error is implemented using the `MeanSquaredError` class.
@@ -86,15 +88,15 @@ class AbstractRegistration(ABC):
     """
 
     def __init__(self,
-                scales: List[int], iterations: List[float], 
+                scales: List[int], iterations: List[float],
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
                 mi_kernel_type: str = 'gaussian', cc_kernel_type: str = 'rectangular',
                 custom_loss: nn.Module = None,
                 loss_params: dict = {},
-                cc_kernel_size: int = 3, 
+                cc_kernel_size: int = 3,
                 reduction: str = 'mean',
-                tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
+                tolerance: float = 1e-6, max_tolerance_iters: int = 10,
                 progress_bar: bool = True,
                 dtype: torch.dtype = torch.float32,
                 ) -> None:
@@ -115,7 +117,7 @@ class AbstractRegistration(ABC):
         fsize, msize = self.fixed_images.size(), self.moving_images.size()
         assert (fsize == msize) or (fsize == 1) or (msize == 1), "Number of fixed and moving images must match or broadcastable"
         self.opt_size = max(fsize, msize)
-        
+
         self.tolerance = tolerance
         self.max_tolerance_iters = max_tolerance_iters
         self.convergence_monitor = ConvergenceMonitor(self.max_tolerance_iters, self.tolerance)
@@ -127,15 +129,27 @@ class AbstractRegistration(ABC):
 
         self.dims = self.fixed_images.dims
         self.progress_bar = progress_bar        # variable to show or hide progress bar
+
         # initialize losses
+        # track whether we are in masked mode; this is driven by the loss configuration
+        if loss_type.startswith("masked_"):
+            loss_params['masked'] = True
+            self.masked = True
+            loss_type = loss_type.replace("masked_", "")
+            logger.info(f"Masked mode specified, will use {loss_type} function with masking if it supports it.")
+        else:
+            loss_params['masked'] = False
+            self.masked = False
+            logger.info(f"Masked mode not specified, will not use masking.")
+
         if loss_type == 'mi':
             self.loss_fn = GlobalMutualInformationLoss(kernel_type=mi_kernel_type, reduction=reduction, **loss_params)
         elif loss_type == 'cc':
-            self.loss_fn = LocalNormalizedCrossCorrelationLoss(kernel_type=cc_kernel_type, spatial_dims=self.dims, 
+            self.loss_fn = LocalNormalizedCrossCorrelationLoss(kernel_type=cc_kernel_type, spatial_dims=self.dims,
                                                                kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
         elif loss_type == 'fusedcc':
             from fireants.losses.fusedcc import FusedLocalNormalizedCrossCorrelationLoss
-            self.loss_fn = FusedLocalNormalizedCrossCorrelationLoss(spatial_dims=self.dims, 
+            self.loss_fn = FusedLocalNormalizedCrossCorrelationLoss(spatial_dims=self.dims,
                                                     kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
         elif loss_type == 'fusedmi':
             from fireants.losses.fusedmi import FusedGlobalMutualInformationLoss
@@ -145,11 +159,10 @@ class AbstractRegistration(ABC):
         elif loss_type == 'noop':
             self.loss_fn = NoOp()
         elif loss_type == 'mse':
-            # self.loss_fn = partial(F.mse_loss, reduction=reduction)
-            self.loss_fn = MeanSquaredError(reduction=reduction)
+            self.loss_fn = MeanSquaredError(reduction=reduction, **loss_params)
         else:
             raise ValueError(f"Loss type {loss_type} not supported")
-        
+
         # see if loss can store the iterations
         if hasattr(self.loss_fn, 'set_iterations'):
             logger.info("Setting iterations for loss function")
@@ -163,9 +176,60 @@ class AbstractRegistration(ABC):
     def print_init_msg(self):
         logger.info(f"Registration of type {self.__class__.__name__} initialized with dtype {self.dtype}")
 
+    def _split_image_and_mask_last_channel(self, arrays: torch.Tensor):
+        """Split arrays into (image_channels, mask_channel) if in masked mode.
+
+        Convention: when `self.masked` is True, the last channel is treated as a mask
+        and should not be Gaussian-smoothed. All preceding channels are treated as image.
+
+        Returns:
+            (img, mask): img is the tensor to be smoothed; mask is the last channel (kept unsmoothed),
+            or None if not in masked mode / no explicit mask channel.
+        """
+        if getattr(self, "masked", False) and arrays.shape[1] > 1:
+            return arrays[:, :-1], arrays[:, -1:]
+        return arrays, None
+
+    def _concat_image_and_mask_last_channel(self, img: torch.Tensor, mask: Optional[torch.Tensor]):
+        """Inverse of `_split_image_and_mask_last_channel`."""
+        if mask is None:
+            return img
+        return torch.cat([img, mask], dim=1)
+
+    def _downsample_image_and_mask(
+        self,
+        arrays: torch.Tensor,
+        *,
+        size,
+        mode: str,
+        gaussians=None,
+        align_corners: bool = True,
+    ) -> torch.Tensor:
+        """Downsample arrays while respecting masked-last-channel convention.
+
+        - If `gaussians` is provided, we Gaussian-smooth + downsample the image channels via `downsample`.
+        - The (optional) mask channel is *never* Gaussian-smoothed; it is resized via interpolation only.
+        """
+        img, mask = self._split_image_and_mask_last_channel(arrays)
+        if gaussians is None:
+            img_down = F.interpolate(img, size=size, mode=mode, align_corners=align_corners)
+        else:
+            img_down = downsample(img, size=size, mode=mode, gaussians=gaussians)
+
+        if mask is None:
+            return img_down
+        mask_down = F.interpolate(mask, size=size, mode=mode, align_corners=align_corners)
+        return self._concat_image_and_mask_last_channel(img_down, mask_down)
+
+    def _smooth_image_not_mask(self, arrays: torch.Tensor, gaussians) -> torch.Tensor:
+        """Gaussian-smooth image channels but not the (optional) mask channel."""
+        img, mask = self._split_image_and_mask_last_channel(arrays)
+        img_smooth = separable_filtering(img, gaussians)
+        return self._concat_image_and_mask_last_channel(img_smooth, mask)
+
     @abstractmethod
     def optimize(self):
-        ''' 
+        '''
         Abstract method to perform registration optimization
         '''
         pass
@@ -174,7 +238,7 @@ class AbstractRegistration(ABC):
     def get_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         ''' Get dictionary of parameters to pass into fireants_interpolator '''
         raise NotImplementedError("This method must be implemented by the registration class")
-    
+
     @abstractmethod
     def get_inverse_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         ''' Get dictionary of parameters to pass into fireants_interpolator '''
@@ -246,7 +310,7 @@ class AbstractRegistration(ABC):
             moved_images (Union[BatchedImages, FakeBatchedImages, torch.Tensor]): The moved images to save.
             filenames (Union[str, List[str]]): The filenames to save the moved images to.
             moving_to_fixed (bool, optional): If True, the moving images are saved to the fixed image space. Defaults to True.
-                if False, we are dealing with an image that is moved from fixed space to moving space            
+                if False, we are dealing with an image that is moved from fixed space to moving space
         '''
         if isinstance(moved_images, BatchedImages):
             moved_images_save = FakeBatchedImages(moved_images(), moved_images, ignore_size_match)   # roundabout way to call the fakebatchedimages
@@ -282,8 +346,8 @@ class AbstractRegistration(ABC):
             - Validate registration performance on test images
             - Apply learned transformations to new data
             - Transform auxiliary data (e.g. segmentation masks) using learned parameters
-        
-        All registration classes will implement their own `get_warped_coordinates` method, 
+
+        All registration classes will implement their own `get_warped_coordinates` method,
         which is used to apply the learned transformation to new images.
 
         Args:
@@ -313,3 +377,45 @@ class AbstractRegistration(ABC):
         interpolate_mode = moving_images.get_interpolator_type()
         moved_image = fireants_interpolator(moving_arrays, **moved_coords, mode=interpolate_mode, align_corners=True)  # [N, C, H, W, [D]]
         return moved_image
+
+    def evaluate_keypoints(self, fixed_keypoints: BatchedKeypoints, moving_keypoints: BatchedKeypoints):
+        '''Apply the learned transformation to keypoints in the fixed image space
+
+        This method applies the registration transformation learned during optimization
+        to a set of unordered keypoints in the fixed image space. It can be used to:
+            - Validate registration performance on test images 
+
+        All registration classes will implement their own `get_warped_coordinates` method,
+        which is used to apply the learned transformation to new images.
+
+        Args:
+            fixed_keypoints (BatchedKeypoints): Fixed/reference keypoints that define the target space
+
+        Returns:
+            BatchedKeypoints: The transformed keypoints in the space of the fixed image.
+        '''
+        moved_coords = self.get_warp_parameters(self.fixed_images, self.moving_images)
+        kps_tensor = fixed_keypoints.as_torch_coordinates() # tensor if can_collate, list of tensors otherwise
+        can_collate = fixed_keypoints.can_collate
+        dims = self.dims
+        if can_collate:
+            # kps_tensor is a [B, N, dims] tensor -> unsqueeze to (B, 1, N, dims) or (B, 1, 1, N, dims)
+            kps_tensor_disp = kps_tensor
+            for _ in range(dims - 1):
+                kps_tensor_disp = kps_tensor_disp.unsqueeze(1)
+            # compute displacement first
+            final_coord = 0
+            if 'grid' in moved_coords:
+                # compute u(x_f) and squeeze back
+                final_coord = F.grid_sample(moved_coords['grid'].permute(*self.warp.permute_vtoimg), kps_tensor_disp, mode='bilinear', align_corners=True).permute(*self.warp.permute_imgtov)
+                for _ in range(dims - 1):
+                    final_coord = final_coord.squeeze(1)
+
+            if 'affine' in moved_coords:
+                final_coord = final_coord + BatchedKeypoints.transform_keypoints_batch(moved_coords['affine'], kps_tensor)
+            else:
+                final_coord = final_coord + kps_tensor
+            # final_coord is [B, N, dims] tensor
+            return BatchedKeypoints.from_tensor_and_metadata(final_coord, moving_keypoints, space='torch')
+        else:
+            raise NotImplementedError("Not implemented for non-collated keypoints")

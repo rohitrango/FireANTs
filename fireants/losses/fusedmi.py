@@ -1,5 +1,5 @@
-# Copyright (c) 2025 Rohit Jena. All rights reserved.
-# 
+# Copyright (c) 2026 Rohit Jena. All rights reserved.
+#
 # This file is part of FireANTs, distributed under the terms of
 # the FireANTs License version 1.0. A copy of the license can be found
 # in the LICENSE file at the root of this repository.
@@ -7,10 +7,10 @@
 # IMPORTANT: This code is part of FireANTs and its use, reproduction, or
 # distribution must comply with the full license terms, including:
 # - Maintaining all copyright notices and bibliography references
-# - Using only approved (re)-distribution channels 
+# - Using only approved (re)-distribution channels
 # - Proper attribution in derivative works
 #
-# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE
 
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ import logging
 logger = logging.getLogger(__name__)
 from fireants.registration.distributed import parallel_state
 from fireants.losses.cc import separable_filtering, gaussian_1d
+from fireants.losses.maskedutils import POSSIBLE_MASKED_MODES, DEFAULT_MASK_MODE, get_tensors_and_mask, mask_loss_function
 
 kernel_type_dict = {
     "gaussian": ffo.KernelType.GAUSSIAN,
@@ -42,9 +43,9 @@ def smooth_kernel(pab: torch.Tensor, pa: torch.Tensor, pb: torch.Tensor, gaussia
     pab = separable_filtering(pab, gaussian)
     pab /= pab.sum(dim=(-1, -2), keepdim=True)
     pa = separable_filtering(pa, gaussian)
-    pa /= pa.sum(dim=(-1, -2), keepdim=True)
+    pa /= pa.sum(dim=(-1), keepdim=True)
     pb = separable_filtering(pb, gaussian)
-    pb /= pb.sum(dim=(-1, -2), keepdim=True)
+    pb /= pb.sum(dim=(-1), keepdim=True)
     return pab, pa, pb
 
 smooth_kernel_compile = torch.compile(smooth_kernel)
@@ -55,9 +56,9 @@ class MI_histogram_kernel(torch.autograd.Function):
     def forward(ctx, input_img, target_img, num_bins, kernel_type, minval, maxval, sigma_ratio, approximate_reduction, torch_compile):
         # compute histograms
         pab, pa, pb = ffo.mutual_information_histogram_fwd(input_img, target_img, num_bins, kernel_type, minval, maxval, sigma_ratio, approximate_reduction)
-        # smooth kernel 
+        # smooth kernel
         if approximate_reduction:
-            sigma_ratio_tensor = torch.tensor(sigma_ratio/2.0, device=input_img.device, dtype=input_img.dtype) 
+            sigma_ratio_tensor = torch.tensor(sigma_ratio/2.0, device=input_img.device, dtype=input_img.dtype)
             gaussian = gaussian_1d(sigma_ratio_tensor)
             pab, pa, pb = smooth_kernel_compile(pab, pa, pb, gaussian) if torch_compile else smooth_kernel(pab, pa, pb, gaussian)
             # pab = separable_filtering(pab, gaussian_1d(sigma_ratio_tensor))
@@ -70,12 +71,12 @@ class MI_histogram_kernel(torch.autograd.Function):
         ctx.num_bins = num_bins
         ctx.kernel_type = kernel_type
         # save
-        ctx.save_for_backward(input_img, target_img) 
+        ctx.save_for_backward(input_img, target_img)
         ctx.minval = minval
         ctx.maxval = maxval
         ctx.sigma_ratio = sigma_ratio
         return pab, pa, pb
-    
+
     @staticmethod
     def backward(ctx, grad_pab, grad_pa, grad_pb):
         input_img, target_img = ctx.saved_tensors  #
@@ -110,13 +111,16 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         self,
         kernel_type: str = "gaussian",
         num_bins: int = 32,
-        reduction: str = "mean", 
+        reduction: str = "mean",
         normalize_image_if_required: bool = True,
         smooth_nr: float = 1e-5,
         smooth_dr: float = 1e-5,
         sigma_ratio: float = 1.0,
         approximate_reduction: bool = True,
         torch_compile: bool = False,
+        # mask parameters
+        masked: bool = False,
+        mask_mode: str = DEFAULT_MASK_MODE,
     ) -> None:
         """
         Args:
@@ -140,7 +144,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         self.num_bins = num_bins
         self.smooth_nr = float(smooth_nr)
         self.smooth_dr = float(smooth_dr)
-        self.reduction = reduction 
+        self.reduction = reduction
         self.normalize_image_if_required = normalize_image_if_required
         self.warned = False
         self.sigma_ratio = sigma_ratio
@@ -148,12 +152,47 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         self.torch_compile = torch_compile
         if self.torch_compile:
             self.get_mi_from_dist = torch.compile(self.get_mi_from_dist)
-
+        # masked
+        self.masked = masked
+        self.mask_mode = mask_mode
+        self.masked_reduction = reduction
+        assert mask_mode in POSSIBLE_MASKED_MODES
 
     def get_image_padding(self) -> int:
         return 0
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        wrapper around masked versions
+        """
+        if not self.masked:
+            return self.forward_util(pred, target)
+        # masked mode
+        pred, target, mask = get_tensors_and_mask(pred, target, self.mask_mode)
+        # since different batches can have different number of samples, we have to run this batchwise :(
+        batch_size = pred.shape[0]
+        mivals = []
+        for i in range(batch_size):
+            p = pred[i:i+1].flatten(2)  # (1, c, n)
+            t = target[i:i+1].flatten(2) # (1, c, n)
+            m = mask[i:i+1].reshape(-1)  # (n)
+            coords = torch.nonzero(m >= 0.5, as_tuple=True)[0]
+            if coords.nelement() <= 0:
+                raise ValueError("encountered zero mask, cannot compute mutual information")
+            # sample positive examples
+            p = p[:, :, coords].contiguous()
+            t = t[:, :, coords].contiguous()  # need contiguity for fused kernel
+            mival = self.forward_util(p, t)
+            mivals.append(mival)
+        # each item is either (1, c, bin, bin) or (1)
+        mivals = torch.cat(mivals, dim=0)
+        if self.reduction == "mean":
+            return torch.mean(mivals)
+        if self.reduction == "sum":
+            return torch.sum(mivals)
+        return mivals
+
+    def forward_util(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
         Args:
             pred: the shape should be B[NDHW].
@@ -175,7 +214,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
                 self.warned = True
             normalize = True
         # check if we should normalize
-        if normalize: 
+        if normalize:
             if self.normalize_image_if_required:
                 # pred = (pred - minval) / (maxval - minval)
                 # target = (target - minval) / (maxval - minval)
@@ -188,11 +227,11 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         # check if shapes are same
         if target.shape != pred.shape:
             raise ValueError(f"ground truth has differing shape ({target.shape}) from pred ({pred.shape})")
-        
+
         # flip order
         if not pred.requires_grad and target.requires_grad:
             pred, target = target, pred
-        
+
         num_samples = pred.flatten(2).shape[2]
         # get histograms
         pab, pa, pb = MI_histogram_kernel.apply(pred, target, self.num_bins, self.kernel_type, minval, maxval, self.sigma_ratio, self.approximate_reduction, self.torch_compile)
@@ -204,14 +243,16 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         '''
         if parallel_state.is_initialized() and parallel_state.get_grid_parallel_size() > 1:
             pab, pa, pb = allgather_mi.apply(pab, pa, pb, num_samples)
-            # divide by total number of samples (this is not exact but approximate)
-            papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))
+            #papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))
+            #papb = torch.bmm(pa[..., None].permute(0, 1, 3, 2), pb[..., None])  # (b, c, n, n)
         else:
-            papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))  # (batch, num_bins, num_bins)
-        
+            pass
+        papb = torch.matmul(pa[..., None], pb[..., None].permute(0, 1, 3, 2).to(pa))  # (b, c, n, n)
+        assert pab.shape == papb.shape
+
         mi = torch.sum(
             pab * torch.log((pab + self.smooth_nr) / (papb + self.smooth_dr) + self.smooth_dr), dim=(-1, -2)
-        )  # (batch)
+        )  # (batch, channel)
 
         if self.reduction == 'sum':
             return torch.sum(mi).neg()  # sum over the batch and channel ndims
@@ -225,8 +266,8 @@ class FusedGlobalMutualInformationLoss(nn.Module):
 
 if __name__ == '__main__':
     N = 256
-    img1 = torch.rand(1, 1, N, N, N).cuda()
-    img2 = torch.rand(1, 1, N, N, N).cuda()
+    img1 = torch.rand(1, 3, N, N, N).cuda()
+    img2 = torch.rand(1, 3, N, N, N).cuda()
     #loss = FusedGlobalMutualInformationLoss('b-spline').cuda()
     loss = FusedGlobalMutualInformationLoss('gaussian', sigma_ratio=2.0).cuda()
     total = 0

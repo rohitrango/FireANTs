@@ -15,13 +15,13 @@ def sample_itk_image_2d():
     spacing = [1.0, 1.0]
     origin = [0.0, 0.0]
     direction = [1.0, 0.0, 0.0, 1.0]  # 2x2 identity matrix flattened
-    
+
     # Create a simple gradient image
     img_array = np.zeros(size[::-1], dtype=np.float32)  # SimpleITK uses [y,x] ordering
     for i in range(size[1]):
         for j in range(size[0]):
             img_array[i,j] = i + j
-            
+
     itk_image = sitk.GetImageFromArray(img_array)
     itk_image.SetSpacing(spacing)
     itk_image.SetOrigin(origin)
@@ -35,14 +35,14 @@ def sample_itk_image_3d():
     spacing = [1.0, 1.0, 1.0]
     origin = [0.0, 0.0, 0.0]
     direction = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]  # 3x3 identity matrix flattened
-    
+
     # Create a simple gradient image
     img_array = np.zeros(size[::-1], dtype=np.float32)  # SimpleITK uses [z,y,x] ordering
     for i in range(size[2]):
         for j in range(size[1]):
             for k in range(size[0]):
                 img_array[i,j,k] = i + j + k
-                
+
     itk_image = sitk.GetImageFromArray(img_array)
     itk_image.SetSpacing(spacing)
     itk_image.SetOrigin(origin)
@@ -57,7 +57,7 @@ def sample_seg_image_3d():
     # Create some segmentation regions
     img_array[10:20, 10:20, 10:20] = 1
     img_array[30:40, 30:40, 30:40] = 2
-    
+
     itk_image = sitk.GetImageFromArray(img_array)
     return itk_image
 
@@ -72,7 +72,7 @@ class TestImage:
         assert img.array.shape[1] == 1  # channels
         assert torch.is_tensor(img.array)
         assert img.device == 'cpu'
-        
+
     def test_init_3d(self, sample_itk_image_3d):
         """Test basic Image initialization with 3D image"""
         img = Image(sample_itk_image_3d, device='cpu')
@@ -82,7 +82,7 @@ class TestImage:
         assert img.array.shape[0] == 1  # batch size
         assert img.array.shape[1] == 1  # channels
         assert torch.is_tensor(img.array)
-        
+
     def test_segmentation(self, sample_seg_image_3d):
         """Test segmentation image handling"""
         img = Image(sample_seg_image_3d, device='cpu', is_segmentation=True)
@@ -94,7 +94,7 @@ class TestImage:
         orig_array = sitk.GetArrayFromImage(sample_seg_image_3d)
         binary_array = (orig_array > 0).astype(np.float32)
         assert np.array_equal(img.array.squeeze().cpu().max(dim=0).values.numpy(), binary_array)
-        
+
     def test_coordinate_transforms(self, sample_itk_image_3d):
         """Test coordinate transformation matrices"""
         img = Image(sample_itk_image_3d, device='cpu')
@@ -103,14 +103,14 @@ class TestImage:
         # Check that they are inverses
         identity = torch.eye(4).unsqueeze(0)
         assert torch.allclose(torch.matmul(img.torch2phy, img.phy2torch), identity)
-        
+
     def test_array_management(self, sample_itk_image_2d):
         """Test array presence and deletion"""
         img = Image(sample_itk_image_2d, device='cpu')
         assert img.is_array_present
         img.delete_array()
         assert not img.is_array_present
-        
+
     def test_device_movement(self, sample_itk_image_2d):
         """Test moving image between devices"""
         if not torch.cuda.is_available():
@@ -132,7 +132,7 @@ class TestBatchedImages:
         assert batch.dims == 2
         assert not batch.broadcasted
         assert batch.interpolate_mode == 'bilinear'
-        
+
     def test_init_multiple(self, sample_itk_image_2d):
         """Test BatchedImages initialization with multiple images"""
         imgs = [Image(sample_itk_image_2d, device='cpu') for _ in range(3)]
@@ -141,7 +141,7 @@ class TestBatchedImages:
         assert batch.dims == 2
         assert not batch.broadcasted
         assert batch.batch_tensor.shape[0] == 3
-        
+
     def test_broadcasting(self, sample_itk_image_2d):
         """Test broadcasting functionality"""
         img = Image(sample_itk_image_2d, device='cpu')
@@ -151,25 +151,25 @@ class TestBatchedImages:
         assert batch.broadcasted
         output = batch()
         assert output.shape[0] == 5
-        
+
     def test_sharding(self, sample_itk_image_3d):
         """Test sharding functionality"""
         # Initialize parallel state for testing
         parallel_state.initialize_parallel_state(data_parallel_size=1, override_torchrun_check=True)
-        
+
         img = Image(sample_itk_image_3d, device='cpu')
         batch = BatchedImages(img)
         assert not batch.is_sharded
-        
+
         # Test sharding along a dimension
         batch._shard_dim(0)  # shard along H dimension, rank 0
         assert batch.is_sharded
         assert hasattr(batch, '_shard_start')
         assert hasattr(batch, '_shard_end')
         assert hasattr(batch, '_dim_to_shard')
-        
+
         # Cleanup
-        parallel_state.cleanup_parallel_state()
+        parallel_state.cleanup_parallel_state(10)
 
 class TestFakeBatchedImages:
     def test_init(self, sample_itk_image_2d):
@@ -177,19 +177,19 @@ class TestFakeBatchedImages:
         img = Image(sample_itk_image_2d, device='cpu')
         batch = BatchedImages(img)
         tensor = torch.randn_like(batch())
-        
+
         fake_batch = FakeBatchedImages(tensor, batch)
         assert fake_batch.is_sharded == batch.is_sharded  # Should be the same as batch sharded status
         assert torch.equal(fake_batch(), tensor)
         assert fake_batch.dims == batch.dims
         assert fake_batch.shape == tensor.shape
-        
+
     def test_metadata_inheritance(self, sample_itk_image_2d):
         """Test that FakeBatchedImages inherits metadata correctly"""
         img = Image(sample_itk_image_2d, device='cpu')
         batch = BatchedImages(img)
         tensor = torch.randn_like(batch())
-        
+
         fake_batch = FakeBatchedImages(tensor, batch)
         assert torch.equal(fake_batch.get_torch2phy(), batch.torch2phy)
         assert torch.equal(fake_batch.get_phy2torch(), batch.phy2torch)
@@ -198,14 +198,14 @@ def test_concat_images(sample_itk_image_2d):
     """Test image concatenation functionality"""
     # Create multiple images
     imgs = [Image(sample_itk_image_2d, device='cpu') for _ in range(3)]
-    
+
     # Test concatenation with optimize_memory=True
     result = concat(*imgs, optimize_memory=True)
     assert result.channels == 3
     assert result.shape[0] == 1
 
     assert not any(img.is_array_present for img in imgs[1:])  # Arrays should be deleted
-    
+
     # Test concatenation with optimize_memory=False
     imgs = [Image(sample_itk_image_2d, device='cpu') for _ in range(3)]
     result = concat(*imgs, optimize_memory=False)

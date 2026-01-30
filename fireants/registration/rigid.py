@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Rohit Jena. All rights reserved.
+# Copyright (c) 2026 Rohit Jena. All rights reserved.
 # 
 # This file is part of FireANTs, distributed under the terms of
 # the FireANTs License version 1.0. A copy of the license can be found
@@ -295,14 +295,33 @@ class RigidRegistration(AbstractRegistration):
             mov_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_arrays.shape[2:]]
             # downsample
             if self.blur and scale > 1:
-                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down)], device=fixed_arrays.device, dtype=moving_arrays.dtype)
+                sigmas = 0.5 * torch.tensor(
+                    [sz / szdown for sz, szdown in zip(fixed_size, size_down)],
+                    device=fixed_arrays.device,
+                    dtype=moving_arrays.dtype,
+                )
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
-                fixed_image_down = downsample(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
-                moving_image_blur = downsample(moving_arrays, size=mov_size_down, mode=self.moving_images.interpolate_mode, gaussians=gaussians)
-                moving_image_blur = separable_filtering(moving_image_blur, gaussians)
+                fixed_image_down = self._downsample_image_and_mask(
+                    fixed_arrays,
+                    size=size_down,
+                    mode=self.fixed_images.interpolate_mode,
+                    gaussians=gaussians,
+                    align_corners=True,
+                )
+                moving_image_blur = self._downsample_image_and_mask(
+                    moving_arrays,
+                    size=mov_size_down,
+                    mode=self.moving_images.interpolate_mode,
+                    gaussians=gaussians,
+                    align_corners=True,
+                )
+                # extra Gaussian smoothing should also ignore the mask channel
+                moving_image_blur = self._smooth_image_not_mask(moving_image_blur, gaussians)
             else:
                 if scale > 1:
-                    fixed_image_down = F.interpolate(fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True)
+                    fixed_image_down = F.interpolate(
+                        fixed_arrays, size=size_down, mode=self.fixed_images.interpolate_mode, align_corners=True
+                    )
                 else:
                     fixed_image_down = fixed_arrays
                 moving_image_blur = moving_arrays

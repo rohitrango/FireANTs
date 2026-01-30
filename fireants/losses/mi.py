@@ -1,5 +1,5 @@
-# Copyright (c) 2025 Rohit Jena. All rights reserved.
-# 
+# Copyright (c) 2026 Rohit Jena. All rights reserved.
+#
 # This file is part of FireANTs, distributed under the terms of
 # the FireANTs License version 1.0. A copy of the license can be found
 # in the LICENSE file at the root of this repository.
@@ -7,10 +7,10 @@
 # IMPORTANT: This code is part of FireANTs and its use, reproduction, or
 # distribution must comply with the full license terms, including:
 # - Maintaining all copyright notices and bibliography references
-# - Using only approved (re)-distribution channels 
+# - Using only approved (re)-distribution channels
 # - Proper attribution in derivative works
 #
-# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE
 
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from torch.nn import functional as F
 from typing import Optional
 import os
 
+from fireants.losses.maskedutils import POSSIBLE_MASKED_MODES, DEFAULT_MASK_MODE, get_tensors_and_mask, mask_loss_function
 from fireants.registration.distributed import parallel_state
 
 class allgather_mi(torch.autograd.Function):
@@ -60,9 +61,11 @@ class GlobalMutualInformationLoss(nn.Module):
         kernel_type: str = "gaussian",
         num_bins: int = 32,
         sigma_ratio: float = 1.0,
-        reduction: str = "mean", 
+        reduction: str = "mean",
         smooth_nr: float = 1e-7,
         smooth_dr: float = 1e-7,
+        masked: bool = False,
+        mask_mode: str = DEFAULT_MASK_MODE,
     ) -> None:
         """
         Args:
@@ -105,12 +108,16 @@ class GlobalMutualInformationLoss(nn.Module):
         elif self.kernel_type == "b-spline":
             self.preterm = 1 / (2 * sigma**2)
             self.bin_centers = bin_centers[None, None, ...]
-        self.reduction = reduction 
+        self.reduction = reduction
 
-        # keep track of worldsize for allgather operation
-        # self.world_size = os.environ.get('WORLD_SIZE', None)
-        # if self.world_size is not None:
-            # self.world_size = int(self.world_size)
+        # masked parameters
+        self.masked_reduction = reduction
+        self.masked = masked
+        self.mask_mode = mask_mode
+        assert mask_mode in POSSIBLE_MASKED_MODES
+        # we actually dont need to perform the commented code below because the "masked aggregation" happens differently in mutual information
+        #if masked:
+            #self.reduction = None
 
         self.smooth_nr = float(smooth_nr)
         self.smooth_dr = float(smooth_dr)
@@ -202,6 +209,62 @@ class GlobalMutualInformationLoss(nn.Module):
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
+        Forward function for masked and unmasked variants: use masked variant with caution
+        """
+        if not self.masked:
+            return self.forward_util(pred, target)
+        # masked mode
+        pred, target, mask = get_tensors_and_mask(pred, target, self.mask_mode)
+        # since different batches can have different number of samples, we have to run this batchwise :(
+        batch_size = pred.shape[0]
+        mivals = []
+        for i in range(batch_size):
+            p = pred[i:i+1].flatten(2)  # (1, c, n)
+            t = target[i:i+1].flatten(2) # (1, c, n)
+            m = mask[i:i+1].reshape(-1)  # (n)
+            coords = torch.nonzero(m >= 0.5, as_tuple=True)[0]
+            if coords.nelement() <= 0:
+                raise ValueError("encountered zero mask, cannot compute mutual information")
+            # sample
+            p = p[:, :, coords]
+            t = t[:, :, coords]
+            mival = self.forward_util(p, t)
+            if len(mival.shape) == 0:
+                mival = mival.unsqueeze(0)
+            mivals.append(mival)
+        # each item is either (1, c, bin, bin) or (1)
+        mivals = torch.cat(mivals, dim=0)
+        if self.reduction == "mean":
+            return torch.mean(mivals)
+        if self.reduction == "sum":
+            return torch.sum(mivals)
+        return mivals
+
+
+    def forward_util(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            pred: the shape should be B[NDHW].
+            target: the shape should be same as the pred shape.
+        Raises:
+            ValueError: When ``self.reduction`` is not one of ["mean", "sum", "none"].
+        """
+        num_channels = pred.shape[1]
+        mivals = []
+        for i in range(num_channels):
+            mivals.append(self.forward_util_singlechannel(pred[:, i:i+1], target[:, i:i+1]))
+        # if reduction is none, we will have (batch, channels, bins, bins) else [1]
+        dim2stack = 1 if self.reduction == "none" else 0
+        mivals = torch.stack(mivals, dim=dim2stack)
+        if self.reduction == "mean":
+            return torch.mean(mivals)
+        elif self.reduction == "sum":
+            return torch.sum(mivals)
+        return mivals
+
+
+    def forward_util_singlechannel(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
         Args:
             pred: the shape should be B[NDHW].
             target: the shape should be same as the pred shape.
@@ -222,12 +285,13 @@ class GlobalMutualInformationLoss(nn.Module):
             pab = torch.bmm(wa.permute(0, 2, 1), wb.to(wa))
             pab, pa, pb = allgather_mi.apply(pab, pa, pb, wa.shape[1])
             # divide by total number of samples (this is not exact but approximate)
-            pab = pab.div(self.world_size * wa.shape[1])
+            world_size = parallel_state.get_grid_parallel_size()
+            pab = pab.div(world_size * wa.shape[1])
             papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))
         else:
             pab = torch.bmm(wa.permute(0, 2, 1), wb.to(wa)).div(wa.shape[1])  # (batch, num_bins, num_bins)
             papb = torch.bmm(pa.permute(0, 2, 1), pb.to(pa))  # (batch, num_bins, num_bins)
-        
+
         mi = torch.sum(
             pab * torch.log((pab + self.smooth_nr) / (papb + self.smooth_dr) + self.smooth_dr), dim=(1, 2)
         )  # (batch)

@@ -7,10 +7,14 @@ nav:
   - Installation: install.md
   - Quickstart: quickstart.md
   - Registration Workflow: architecture.md
-  - Custom loss functions: customloss.md
-  - CLI Tools: cli.md
-  - Template construction: template.md
-  - Advanced concepts:
+  - Interfaces: 
+    - CLI Tools: cli.md
+    - Template construction: template.md
+  - How To:
+    - Evaluate keypoint distances: howto/keypoint-fidelity.md
+    - Use masked losses: howto/masked-losses.md
+    - Implement custom loss functions: customloss.md
+  - Advanced Reading:
     - Image representation: advanced/image.md
     - Riemannian optimization: advanced/riemannian.md
     - Types of image matching: 

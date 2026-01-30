@@ -7,6 +7,11 @@ import subprocess
 import logging
 from pathlib import Path
 import torch.nn.functional as F
+from scipy.ndimage import map_coordinates
+
+# this is the lib used to load the images for scipy transforms
+# important because the image dimensions are reversed w.r.t. simpleitk
+import nibabel as nib
 
 from fireants.registration.greedy import GreedyRegistration
 from fireants.registration.syn import SyNRegistration
@@ -75,6 +80,10 @@ def greedy_registration_results():
     # Save transformation field
     reg.save_as_ants_transforms(str(output_dir / f"warp_field_greedy.{ext}"))
 
+    # save as scipy transforms (test both npz and nifti)
+    reg.save_as_scipy_transforms(str(output_dir / f"scipy_warp_field_greedy.npz"))
+    reg.save_as_scipy_transforms(str(output_dir / f"scipy_warp_field_greedy.nii.gz"))
+
     return {
         'reg': reg,
         'fixed_batch': fixed_batch,
@@ -87,6 +96,8 @@ def greedy_registration_results():
         'fixed_path': fixed_image_path,
         'moving_path': moving_image_path,
         'transform_path': str(output_dir / f"warp_field_greedy.{ext}"),
+        'scipy_transform_path_npz': str(output_dir / f"scipy_warp_field_greedy.npz"),
+        'scipy_transform_path_nii': str(output_dir / f"scipy_warp_field_greedy.nii.gz"),
     }
 
 class TestGreedyRegistration:
@@ -140,6 +151,61 @@ class TestGreedyRegistration:
         rel_error = np.mean(np.abs(ants_array - moved_array) / (np.abs(moved_array) + 1e-6))
         logger.info(f"Relative error: {rel_error:.4f}")
         assert rel_error < 0.005, f"Transform consistency check failed. Relative error: {rel_error:.4f}"
+    
+    def test_scipy_transform_consistency_npz(self, greedy_registration_results):
+        """ Test that the saved scipy transforms give consistent results."""
+        # Apply transform using antsApplyTransforms
+        fixed_path = greedy_registration_results['fixed_path']
+        moving_path = greedy_registration_results['moving_path']
+        transform_path = greedy_registration_results['scipy_transform_path_npz']
+
+        # load the scipy transform
+        scipy_disp = np.load(transform_path, allow_pickle=True)['arr_0'].astype(np.float32)
+        fixed_image_nib = nib.load(fixed_path).get_fdata()
+        moving_image_nib = nib.load(moving_path).get_fdata()
+        D, H, W = fixed_image_nib.shape
+        identity = np.meshgrid(np.arange(D), np.arange(H), np.arange(W), indexing='ij')
+        # warped image
+        scipy_array = map_coordinates(moving_image_nib, identity + scipy_disp.transpose(3, 0, 1, 2), order=1)  # XYZ
+        scipy_array = scipy_array.transpose(2, 1, 0)  # from nib to torch
+        moved_array = greedy_registration_results['moved_image'].squeeze().cpu().numpy()
+
+        # Load and compare results
+        logger.info(f"ANTS array min: {scipy_array.min()}, max: {scipy_array.max()}")
+        logger.info(f"Moved array min: {moved_array.min()}, max: {moved_array.max()}")
+        
+        # Compare using relative error
+        rel_error = np.mean(np.abs(scipy_array - moved_array) / (np.abs(moved_array) + 1e-6))
+        logger.info(f"Relative error: {rel_error:.4f}")
+        assert rel_error < 0.005, f"Transform consistency check failed. Relative error: {rel_error:.4f}"
+
+    def test_scipy_transform_consistency_nii(self, greedy_registration_results):
+        """ Test that the saved scipy transforms give consistent results."""
+        # Apply transform using antsApplyTransforms
+        fixed_path = greedy_registration_results['fixed_path']
+        moving_path = greedy_registration_results['moving_path']
+        transform_path = greedy_registration_results['scipy_transform_path_nii']
+
+        # load the scipy transform
+        scipy_disp = nib.load(transform_path).get_fdata()
+        fixed_image_nib = nib.load(fixed_path).get_fdata()
+        moving_image_nib = nib.load(moving_path).get_fdata()
+        D, H, W = fixed_image_nib.shape
+        identity = np.meshgrid(np.arange(D), np.arange(H), np.arange(W), indexing='ij')
+        # warped image
+        scipy_array = map_coordinates(moving_image_nib, identity + scipy_disp.transpose(3, 0, 1, 2), order=1)  # XYZ
+        scipy_array = scipy_array.transpose(2, 1, 0)
+        
+        # Load and compare results
+        moved_array = greedy_registration_results['moved_image'].squeeze().cpu().numpy()
+        logger.info(f"ANTS array min: {scipy_array.min()}, max: {scipy_array.max()}")
+        logger.info(f"Moved array min: {moved_array.min()}, max: {moved_array.max()}")
+        
+        # Compare using relative error
+        rel_error = np.mean(np.abs(scipy_array - moved_array) / (np.abs(moved_array) + 1e-6))
+        logger.info(f"Relative error: {rel_error:.4f}")
+        assert rel_error < 0.005, f"Transform consistency check failed. Relative error: {rel_error:.4f}"
+
 
     def test_jacobian_determinant(self, greedy_registration_results):
         """Test that the transformation has positive Jacobian determinant everywhere."""
@@ -262,6 +328,10 @@ def syn_registration_results():
     # Save transformation field
     reg.save_as_ants_transforms(str(output_dir / f"warp_field_syn.{ext}"))
 
+    # save as scipy transforms (test both npz and nifti)
+    reg.save_as_scipy_transforms(str(output_dir / f"scipy_warp_field_syn.npz"))
+    reg.save_as_scipy_transforms(str(output_dir / f"scipy_warp_field_syn.nii.gz"))
+
     return {
         'reg': reg,
         'fixed_batch': fixed_batch,
@@ -274,6 +344,8 @@ def syn_registration_results():
         'fixed_path': fixed_image_path,
         'moving_path': moving_image_path,
         'transform_path': str(output_dir / f"warp_field_syn.{ext}"),
+        'scipy_transform_path_npz': str(output_dir / f"scipy_warp_field_syn.npz"),
+        'scipy_transform_path_nii': str(output_dir / f"scipy_warp_field_syn.nii.gz"),
     }
 
 class TestSyNRegistration:
@@ -325,6 +397,60 @@ class TestSyNRegistration:
         
         # Compare using relative error
         rel_error = np.mean(np.abs(ants_array - moved_array) / (np.abs(moved_array) + 1e-6))
+        logger.info(f"Relative error: {rel_error:.4f}")
+        assert rel_error < 0.005, f"Transform consistency check failed. Relative error: {rel_error:.4f}"
+
+    def test_scipy_transform_consistency_npz(self, greedy_registration_results):
+        """ Test that the saved scipy transforms give consistent results."""
+        # Apply transform using antsApplyTransforms
+        fixed_path = greedy_registration_results['fixed_path']
+        moving_path = greedy_registration_results['moving_path']
+        transform_path = greedy_registration_results['scipy_transform_path_npz']
+
+        # load the scipy transform
+        scipy_disp = np.load(transform_path, allow_pickle=True)['arr_0'].astype(np.float32)
+        fixed_image_nib = nib.load(fixed_path).get_fdata()
+        moving_image_nib = nib.load(moving_path).get_fdata()
+        D, H, W = fixed_image_nib.shape
+        identity = np.meshgrid(np.arange(D), np.arange(H), np.arange(W), indexing='ij')
+        # warped image
+        scipy_array = map_coordinates(moving_image_nib, identity + scipy_disp.transpose(3, 0, 1, 2), order=1)  # XYZ
+        scipy_array = scipy_array.transpose(2, 1, 0)
+        
+        # Load and compare results
+        moved_array = greedy_registration_results['moved_image'].squeeze().cpu().numpy()
+        logger.info(f"ANTS array min: {scipy_array.min()}, max: {scipy_array.max()}")
+        logger.info(f"Moved array min: {moved_array.min()}, max: {moved_array.max()}")
+        
+        # Compare using relative error
+        rel_error = np.mean(np.abs(scipy_array - moved_array) / (np.abs(moved_array) + 1e-6))
+        logger.info(f"Relative error: {rel_error:.4f}")
+        assert rel_error < 0.005, f"Transform consistency check failed. Relative error: {rel_error:.4f}"
+
+    def test_scipy_transform_consistency_nii(self, greedy_registration_results):
+        """ Test that the saved scipy transforms give consistent results."""
+        # Apply transform using antsApplyTransforms
+        fixed_path = greedy_registration_results['fixed_path']
+        moving_path = greedy_registration_results['moving_path']
+        transform_path = greedy_registration_results['scipy_transform_path_nii']
+
+        # load the scipy transform
+        scipy_disp = nib.load(transform_path).get_fdata()
+        fixed_image_nib = nib.load(fixed_path).get_fdata()
+        moving_image_nib = nib.load(moving_path).get_fdata()
+        D, H, W = fixed_image_nib.shape
+        identity = np.meshgrid(np.arange(D), np.arange(H), np.arange(W), indexing='ij')
+        # warped image
+        scipy_array = map_coordinates(moving_image_nib, identity + scipy_disp.transpose(3, 0, 1, 2), order=1)  # XYZ
+        scipy_array = scipy_array.transpose(2, 1, 0)
+        
+        # Load and compare results
+        moved_array = greedy_registration_results['moved_image'].squeeze().cpu().numpy()
+        logger.info(f"ANTS array min: {scipy_array.min()}, max: {scipy_array.max()}")
+        logger.info(f"Moved array min: {moved_array.min()}, max: {moved_array.max()}")
+        
+        # Compare using relative error
+        rel_error = np.mean(np.abs(scipy_array - moved_array) / (np.abs(moved_array) + 1e-6))
         logger.info(f"Relative error: {rel_error:.4f}")
         assert rel_error < 0.005, f"Transform consistency check failed. Relative error: {rel_error:.4f}"
 

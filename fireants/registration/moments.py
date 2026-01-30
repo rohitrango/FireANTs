@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Rohit Jena. All rights reserved.
+# Copyright (c) 2026 Rohit Jena. All rights reserved.
 # 
 # This file is part of FireANTs, distributed under the terms of
 # the FireANTs License version 1.0. A copy of the license can be found
@@ -175,17 +175,42 @@ class MomentsRegistration(AbstractRegistration):
             # downsample
             if self.blur:
                 # blur and downsample for higher scale
-                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(fixed_size, size_down_f)], device=fixed_arrays.device, dtype=fixed_arrays.dtype)
+                sigmas = 0.5 * torch.tensor(
+                    [sz / szdown for sz, szdown in zip(fixed_size, size_down_f)],
+                    device=fixed_arrays.device,
+                    dtype=fixed_arrays.dtype,
+                )
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
-                fixed_arrays = downsample(fixed_arrays, size=size_down_f, mode=self.fixed_images.interpolate_mode, gaussians=gaussians)
+                fixed_arrays = self._downsample_image_and_mask(
+                    fixed_arrays,
+                    size=size_down_f,
+                    mode=self.fixed_images.interpolate_mode,
+                    gaussians=gaussians,
+                    align_corners=True,
+                )
+
                 # same for moving images
-                sigmas = 0.5 * torch.tensor([sz/szdown for sz, szdown in zip(moving_size, size_down_m)], device=moving_arrays.device, dtype=moving_arrays.dtype)
+                sigmas = 0.5 * torch.tensor(
+                    [sz / szdown for sz, szdown in zip(moving_size, size_down_m)],
+                    device=moving_arrays.device,
+                    dtype=moving_arrays.dtype,
+                )
                 gaussians = [gaussian_1d(s, truncated=2) for s in sigmas]
-                moving_arrays = downsample(moving_arrays, size=size_down_m, mode=self.moving_images.interpolate_mode, gaussians=gaussians)
+                moving_arrays = self._downsample_image_and_mask(
+                    moving_arrays,
+                    size=size_down_m,
+                    mode=self.moving_images.interpolate_mode,
+                    gaussians=gaussians,
+                    align_corners=True,
+                )
             else:
                 # just downsample
-                fixed_arrays = F.interpolate(fixed_arrays, size=size_down_f, mode=self.fixed_images.interpolate_mode, align_corners=True)
-                moving_arrays = F.interpolate(moving_arrays, size=size_down_m, mode=self.moving_images.interpolate_mode, align_corners=True)
+                fixed_arrays = F.interpolate(
+                    fixed_arrays, size=size_down_f, mode=self.fixed_images.interpolate_mode, align_corners=True
+                )
+                moving_arrays = F.interpolate(
+                    moving_arrays, size=size_down_m, mode=self.moving_images.interpolate_mode, align_corners=True
+                )
         return fixed_arrays, moving_arrays
 
     def get_rigid_transl_init(self):
@@ -199,6 +224,13 @@ class MomentsRegistration(AbstractRegistration):
             raise ValueError("Optimize rigid registration first.")
         return self.Rf
     
+    def get_rigid_init_dict(self):
+        ''' convenience wrapper for getting the rigid initialization as a dictionary '''
+        return {
+            "init_translation": self.get_rigid_transl_init(),
+            "init_moment": self.get_rigid_moment_init(),
+        }
+    
     def get_affine_init(self):
         if not self.optimized:
             raise ValueError("Optimize rigid registration first.")
@@ -207,6 +239,12 @@ class MomentsRegistration(AbstractRegistration):
         aff[:, :, :-1] = Rf
         aff[:, :, -1] = tf
         return aff.to(self.dtype)
+    
+    def get_affine_init_dict(self):
+        ''' convenience wrapper for getting the affine initialization as a dictionary '''
+        return {
+            "init_rigid": self.get_affine_init()
+        }
     
     def save_as_ants_transforms(self, filenames: Union[str, List[str]]):
         ''' 

@@ -1,5 +1,5 @@
-# Copyright (c) 2025 Rohit Jena. All rights reserved.
-# 
+# Copyright (c) 2026 Rohit Jena. All rights reserved.
+#
 # This file is part of FireANTs, distributed under the terms of
 # the FireANTs License version 1.0. A copy of the license can be found
 # in the LICENSE file at the root of this repository.
@@ -7,10 +7,10 @@
 # IMPORTANT: This code is part of FireANTs and its use, reproduction, or
 # distribution must comply with the full license terms, including:
 # - Maintaining all copyright notices and bibliography references
-# - Using only approved (re)-distribution channels 
+# - Using only approved (re)-distribution channels
 # - Proper attribution in derivative works
 #
-# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE
 
 
 '''
@@ -23,6 +23,7 @@ from torch import nn
 from torch.nn import functional as F
 from typing import List
 from fireants.types import ItemOrList
+from fireants.losses.maskedutils import POSSIBLE_MASKED_MODES, DEFAULT_MASK_MODE, get_tensors_and_mask, mask_loss_function
 
 # @torch.jit.script
 def gaussian_1d(
@@ -162,7 +163,7 @@ def separable_filtering(x: torch.Tensor, kernels: ItemOrList[torch.Tensor], mode
     spatial_dims = len(x.shape) - 2
     if isinstance(kernels, torch.Tensor):
         kernels = [kernels] * spatial_dims
-    
+
     # run one conv if kernel is small
     _kernels = [s.to(x) for s in kernels]
 
@@ -216,6 +217,8 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         unsigned: bool = True,
         use_separable_override: bool = True,
         checkpointing: bool = False,
+        masked: bool = False,
+        mask_mode: str = DEFAULT_MASK_MODE,
     ) -> None:
         """
         Args:
@@ -231,12 +234,17 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
             smooth_dr: a small constant added to the denominator to avoid nan.
             split: do we want to split computation across 2 GPUs? (if pred and target are on different GPUs)
                 default: False (assumes they are on same device and big enough to fit on one GPU)
+            masked: do we want to use a masked cross correlation function? If True, then the last channel is the binary or soft mask
         """
         super().__init__()
         self.ndim = spatial_dims
         if self.ndim not in {1, 2, 3}:
             raise ValueError(f"Unsupported ndim: {self.ndim}-d, only 1-d, 2-d, and 3-d inputs are supported")
+        # set reduction and masked_reduction
         self.reduction = reduction
+        self.masked_reduction = reduction
+        if masked:
+            self.reduction = "none"
         self.unsigned = unsigned
 
         self.kernel_size = kernel_size
@@ -253,6 +261,10 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         self.smooth_dr = float(smooth_dr)
         self.checkpointing = checkpointing
         self.use_separable_override = use_separable_override
+        # masked loss parameters
+        self.masked = masked
+        self.mask_mode = mask_mode
+        assert mask_mode in POSSIBLE_MASKED_MODES
 
     def get_image_padding(self) -> int:
         return (self.kernel_size - 1) // 2
@@ -262,8 +274,21 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         for _ in range(self.ndim - 1):
             vol = torch.matmul(vol.unsqueeze(-1), self.kernel.unsqueeze(0))
         return vol, torch.sum(vol)
-    
+
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        '''
+        the main forward function that branches depending on the masked parameter
+        '''
+        if not self.masked:
+            return self.forward_util(pred, target)
+        # masked mode
+        pred_i, target_i, mask_tensor = get_tensors_and_mask(pred, target, self.mask_mode)
+        loss = self.forward_util(pred_i, target_i)
+        masked_loss = mask_loss_function(loss, mask_tensor, self.masked_reduction)
+        return masked_loss
+
+
+    def forward_util(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
         Args:
             pred: the shape should be BNH[WD].
@@ -291,7 +316,7 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
             def sum_filter(target, kernels_t):
                 t_sum = separable_filtering(target, kernels=kernels_t, use_separable_override=self.use_separable_override)
                 return t_sum
-            
+
             if checkpointing:
                 t_sum = checkpoint(sum_filter, target, kernels_t, use_reentrant=False)
                 p_sum = checkpoint(sum_filter, pred, kernels_p, use_reentrant=False)
@@ -311,17 +336,17 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
             # the following is actually squared ncc
             def cross_filter(tp_sum, p_sum, t_sum, kernel_vol):
                 return tp_sum.to(pred) - p_sum * t_sum.to(pred)/kernel_vol  # on pred device
-            
+
             if checkpointing:
                 cross = checkpoint(cross_filter, tp_sum, p_sum, t_sum, kernel_vol, use_reentrant=False)
             else:
                 cross = cross_filter(tp_sum, p_sum, t_sum, kernel_vol)
-            
+
             def var_filter(t2sum, tsum, kernel_vol):
                 return torch.max(
                     t2sum - tsum * tsum / kernel_vol, torch.as_tensor(self.smooth_dr, dtype=t2sum.dtype, device=t2sum.device)
                 ).to(pred)
-            
+
             if checkpointing:
                 t_var = checkpoint(var_filter, t2_sum, t_sum, kernel_vol, use_reentrant=False)
                 p_var = checkpoint(var_filter, p2_sum, p_sum, kernel_vol, use_reentrant=False)
@@ -347,7 +372,7 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
                 else:
                     ncc = ncc_filter(cross, t_var, p_var)
             return ncc
-        
+
         ncc = cc_checkpoint_fn(target, pred, self.kernel, self.kernel_vol, checkpointing=self.checkpointing)
         # clamp (dont really need this because the offending pixels are very sparse)
         ncc = ncc.clamp(min=-1, max=1)
@@ -362,7 +387,7 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
 
 
 if __name__ == '__main__':
-    N = 160  
+    N = 160
     img1 = torch.rand(1, 1, N, N, N).cuda()
     img2 = torch.rand(1, 1, N, N, N).cuda()
     # loss = torch.jit.script(LocalNormalizedCrossCorrelationLoss(3, kernel_type='rectangular', reduction='mean')).cuda()
@@ -372,7 +397,7 @@ if __name__ == '__main__':
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.empty_cache()
         mem = torch.cuda.memory_allocated()
-        # 
+        #
         loss = LocalNormalizedCrossCorrelationLoss(3, kernel_type='rectangular', reduction='mean', use_separable_override=separable_override).cuda()
         if use_jit_version:
             loss = torch.compile(loss)

@@ -13,6 +13,7 @@ nav:
   - How To:
     - Evaluate keypoint distances: howto/keypoint-fidelity.md
     - Use masked losses: howto/masked-losses.md
+    - Use moments matching with scaling: howto/moments-scaling.md
     - Implement custom loss functions: customloss.md
   - Advanced Reading:
     - Image representation: advanced/image.md

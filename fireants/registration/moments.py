@@ -42,7 +42,6 @@ class MomentsRegistration(AbstractRegistration):
     def __init__(self, scale: float, 
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 # moment matching params
-                scaling: bool = False,
                 blur: bool = True, 
                 moments: int = 1,       # can be 1 or 2
                 orientation: str = "rot",           # set to either rot, antirot, or none
@@ -53,6 +52,7 @@ class MomentsRegistration(AbstractRegistration):
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
                 cc_kernel_size: int = 3,
                 custom_loss: nn.Module = None, 
+                perform_scaling: bool = False,
                 **kwargs
                 ) -> None:
         super().__init__(scales=[scale], iterations=[1], fixed_images=fixed_images, moving_images=moving_images, 
@@ -70,7 +70,7 @@ class MomentsRegistration(AbstractRegistration):
         assert orientation in ['rot', 'antirot', 'both'], "Orientation should be either rot, antirot, or both (None)"
         # set device and dims
         device = fixed_images.device
-        self.scaling = scaling
+        self.perform_scaling = perform_scaling
         self.moments = moments
         self.orientation = orientation
         self.dims = self.moving_images.dims
@@ -94,7 +94,7 @@ class MomentsRegistration(AbstractRegistration):
                     M[:, j, i] = Mij
         return M.to(self.dtype)
     
-    def find_best_detmat_2d(self, U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m):
+    def find_best_detmat_2d(self, U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m, scale_factor):
         '''
         Find best determinant matrix for 2D
         '''
@@ -109,9 +109,9 @@ class MomentsRegistration(AbstractRegistration):
             oris = antirot
         else:
             oris = rot + antirot
-        return self._get_best_orientation(U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m, oris)
+        return self._get_best_orientation(U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m, oris, scale_factor)
     
-    def find_best_detmat_3d(self, U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m):
+    def find_best_detmat_3d(self, U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m, scale_factor):
         ''' 
         Find best determinant matrix for 3D 
         '''
@@ -128,12 +128,15 @@ class MomentsRegistration(AbstractRegistration):
             oris = antirot
         else:
             oris = rot + antirot
-        return self._get_best_orientation(U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m, oris)
+        return self._get_best_orientation(U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m, oris, scale_factor)
     
-    def _get_best_orientation(self, U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m, oris):
+    def _get_best_orientation(self, U_f, U_m, fixed_arrays, moving_arrays, com_f, com_m, xyz_f, xyz_m, oris, scale_factor):
         '''
         Get best orientation for 2D/3D 
         this is a helper function for find_best_detmat_2d and find_best_detmat_3d which return the best orientation matrix 
+        
+        Args:
+            scale_factor: [N, d, d] scaling matrix to incorporate when checking for best match
         '''
         oris = np.array(oris)   # [confs, d, d]
         oris = torch.tensor(oris, device=fixed_arrays.device).unsqueeze(1).expand(-1, self.opt_size, -1, -1)       # [confs, N, d, d]
@@ -146,8 +149,8 @@ class MomentsRegistration(AbstractRegistration):
 
         # for each orientation, compute R, t and find best metric
         for ori_id, ori in enumerate(oris):
-            # compute R, t
-            R = (U_f @ ori @ U_m).to(fixed_arrays.device)   # [N, d, d]
+            # compute R with scale_factor: R = (U_f @ ori @ scale_factor @ U_m)^T
+            R = (U_f @ ori @ scale_factor @ U_m).to(fixed_arrays.device)   # [N, d, d]
             R = R.transpose(-1, -2)
             moved_coords_m = torch.einsum('ntd, n...d->n...t', R, xyz_f) + com_m[:, None]  # [N, S, d]
             moved_coords_m = torch.einsum('ntd, n...d->n...t', moving_p2t[:, :-1, :-1], moved_coords_m) + moving_p2t[:, :-1, -1].unsqueeze(1)
@@ -333,6 +336,13 @@ class MomentsRegistration(AbstractRegistration):
             # calculate rotation matrix
             U_f, S_f, Vh_f = torch.linalg.svd(M_f)
             U_m, S_m, Vh_m = torch.linalg.svd(M_m)
+
+            # scaling factor
+            if self.perform_scaling:
+                scale_factor = torch.sqrt(torch.diag_embed(S_m / (S_f + 1e-8)))
+            else:
+                scale_factor = torch.eye(self.dims, device=self.fixed_images.device, dtype=self.dtype).unsqueeze(0).repeat(self.opt_size, 1, 1)
+
             # transpose U_m since the solution is U_f * U_m^T
             U_m = U_m.transpose(-1, -2).to(U_f.device)
             # calculate det
@@ -340,18 +350,16 @@ class MomentsRegistration(AbstractRegistration):
             detmat = torch.eye(self.dims, device=self.fixed_images.device, dtype=self.dtype).unsqueeze(0).repeat(self.opt_size, 1, 1)
             detmat[:, -1, -1] = det.to(self.dtype)
             U_f = U_f @ detmat
-            if self.scaling:
-                raise NotImplementedError("Scaling not implemented for 2nd order moments.")
-            # find best rotmat
+            # find best rotmat (pass scale_factor to use scaling information when checking for best match)
             if self.dims == 3:
-                detmat = self.find_best_detmat_3d(U_f, U_m, fixed_arrays_imgview, moving_arrays_imgview, com_f, com_m, xyz_f, xyz_m)
+                detmat = self.find_best_detmat_3d(U_f, U_m, fixed_arrays_imgview, moving_arrays_imgview, com_f, com_m, xyz_f, xyz_m, scale_factor)
             elif self.dims == 2:
-                detmat = self.find_best_detmat_2d(U_f, U_m, fixed_arrays_imgview, moving_arrays_imgview, com_f, com_m, xyz_f, xyz_m)
+                detmat = self.find_best_detmat_2d(U_f, U_m, fixed_arrays_imgview, moving_arrays_imgview, com_f, com_m, xyz_f, xyz_m, scale_factor)
 
             ### note that we calculated x_f = \phi(x_m) but registration is done to warp x_m = \psi(x_f) 
             ### so \psi = \phi^{-1}
             # calculate rotation
-            Rf = (U_f @ detmat @ U_m).to(self.fixed_images.device)
+            Rf = (U_f @ detmat @ scale_factor @ U_m).to(self.fixed_images.device)
             Rf = Rf.transpose(-1, -2)
             self.Rf = Rf
             self.tf = com_m.to(com_f.device) - (com_f[:, None] @ (Rf.transpose(-1, -2))).squeeze(1)
@@ -375,7 +383,6 @@ class MomentsRegistration(AbstractRegistration):
             'affine': affine_inv,
             'out_shape': shape
         }
-        
 
     def get_warp_parameters(self, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], shape=None):
         fixed_t2p = fixed_images.get_torch2phy()

@@ -736,6 +736,7 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         self.iterations = iterations
 
     def set_current_scale_and_iterations(self, scale, iters):
+        logger.info(f"setting current scale and iterations to {scale} and {iters}")
         if self.kernel_size_list:
             idx = self.scales.index(scale)
             self.kernel_size = self.kernel_size_list[idx]

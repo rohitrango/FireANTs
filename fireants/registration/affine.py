@@ -235,6 +235,9 @@ class AffineRegistration(AbstractRegistration):
         for scale, iters in zip(self.scales, self.iterations):
             self.convergence_monitor.reset()
             prev_loss = np.inf
+            # notify loss function of scale change if it supports it
+            if hasattr(self.loss_fn, 'set_current_scale_and_iterations'):
+                self.loss_fn.set_current_scale_and_iterations(scale, iters)
             # downsample fixed array and retrieve coords
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
             mov_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_arrays.shape[2:]]

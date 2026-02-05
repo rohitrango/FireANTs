@@ -92,7 +92,7 @@ class DistributedGreedyRegistration(AbstractRegistration, DeformableMixin):
         smooth_warp_sigma (float): Smoothing sigma for warp field
 
     """
-    def __init__(self, scales: List[int], iterations: List[float], 
+    def __init__(self, scales: List[float], iterations: List[int], 
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
                 deformation_type: str = 'compositive',

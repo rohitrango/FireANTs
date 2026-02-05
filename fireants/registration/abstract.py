@@ -88,7 +88,7 @@ class AbstractRegistration(ABC):
     """
 
     def __init__(self,
-                scales: List[int], iterations: List[float],
+                scales: List[float], iterations: List[int],
                 fixed_images: BatchedImages, moving_images: BatchedImages,
                 loss_type: str = "cc",
                 mi_kernel_type: str = 'gaussian', cc_kernel_type: str = 'rectangular',

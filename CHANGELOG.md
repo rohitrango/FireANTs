@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Data type mismatch**: Fixed data type mismatch in several registration classes (abstract.py, distributedgreedy.py, greedy.py, syn.py). Reference: #77
+
 ### Added
 
 - **Masked losses**: Support for region-of-interest (ROI) driven registration using masked variants of CC and MSE.

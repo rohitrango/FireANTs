@@ -277,6 +277,9 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
         # multi-scale optimization
         for scale, iters in zip(self.scales, self.iterations):
             self.convergence_monitor.reset()
+            # notify loss function of scale change if it supports it
+            if hasattr(self.loss_fn, 'set_current_scale_and_iterations'):
+                self.loss_fn.set_current_scale_and_iterations(scale, iters)
             # resize images
             size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
             moving_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_size]

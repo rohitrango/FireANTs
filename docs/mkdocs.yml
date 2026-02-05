@@ -18,6 +18,7 @@ nav:
   - Advanced Reading:
     - Image representation: advanced/image.md
     - Riemannian optimization: advanced/riemannian.md
+    - Scale-aware stateful losses: advanced/scale-aware-losses.md
     - Types of image matching: 
       - Moment matching: advanced/moments.md
       - Rigid/affine matching: advanced/rigidaffine.md

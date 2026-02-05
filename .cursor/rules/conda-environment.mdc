@@ -1,0 +1,43 @@
+---
+description: Use conda environment "fireants" for pytest, python scripts, and pip commands
+alwaysApply: true
+---
+
+# Conda Environment Requirement
+
+All pytest, Python scripts, and pip commands MUST be executed from the conda environment named "fireants".
+
+## Rules
+
+- **pytest**: Always activate the "fireants" conda environment before running pytest commands
+- **Python scripts**: All Python scripts should be run with the "fireants" conda environment activated
+- **pip**: All pip install/upgrade/uninstall commands must be executed in the "fireants" conda environment
+
+## Examples
+
+```bash
+# ✅ GOOD - Activate environment first
+conda activate fireants
+pytest tests/test_basic_registration.py
+
+# ✅ GOOD - Run Python script with environment activated
+conda activate fireants
+python scripts/evaluate_metrics.py
+
+# ✅ GOOD - Install packages in the correct environment
+conda activate fireants
+pip install some-package
+
+# ❌ BAD - Running without activating the environment
+pytest tests/test_basic_registration.py
+
+# ❌ BAD - Installing packages without the environment activated
+pip install some-package
+```
+
+## Implementation
+
+When running any pytest, Python script, or pip command:
+1. Ensure the "fireants" conda environment is activated
+2. If not activated, use `conda activate fireants` before executing the command
+3. For terminal commands, prefix with `conda run -n fireants` if direct activation isn't possible

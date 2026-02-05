@@ -49,9 +49,6 @@ from fireants.registration.distributed import parallel_state
 logger = logging.getLogger("build_template")
 logger.setLevel(logging.INFO)
 
-# Disable cudnn for now due to a bug
-torch.backends.cudnn.enabled = False
-
 def setup_distributed(world_size):
     '''
     Setup distributed training

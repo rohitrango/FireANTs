@@ -15,8 +15,12 @@ dependencies = [
     "nibabel",
     "numpy", "scipy", "scikit-image", "matplotlib",
     "typing", "tqdm", "pandas", "hydra-core",
-    "pytest"
+    "pytest",
+    "portalocker"
 ]
+
+[project.scripts]
+fireantsRegistration = "cli.fireantsRegistration:main"
 
 [build-system]
 requires = ["hatchling>=1.21.0"]
@@ -26,4 +30,4 @@ build-backend = "hatchling.build"
 exclude = ["docker*", "notepad*", "fused_ops*", "tutorials*"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["fireants"]
+packages = ["fireants", "cli"]

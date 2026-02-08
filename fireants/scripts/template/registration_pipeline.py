@@ -21,6 +21,7 @@ from fireants.registration.syn import SyNRegistration
 from fireants.io.image import BatchedImages
 
 import os
+import gc
 import torch
 from typing import Optional, List
 from omegaconf import DictConfig
@@ -28,6 +29,11 @@ from logging import Logger
 
 from fireants.scripts.template.template_helpers import add_shape
 from fireants.io.image import FakeBatchedImages
+
+def hard_gc():
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 def register_batch(
         init_template_batch: BatchedImages, 
@@ -62,6 +68,7 @@ def register_batch(
         init_moment_rigid = moments.get_rigid_moment_init()
         init_moment_transl = moments.get_rigid_transl_init()
         init_rigid = moments.get_affine_init()      # for initializing affine if rigid is skipped
+        hard_gc()
 
     if args.do_rigid:
         logger.debug("Running rigid registration")
@@ -73,13 +80,15 @@ def register_batch(
         rigid.optimize()
         init_rigid = rigid.get_rigid_matrix()
         if args.last_reg == 'rigid':
-            moved_images = rigid.evaluate(init_template_batch, moving_images_batch)
+            with torch.no_grad():
+                moved_images = rigid.evaluate(init_template_batch, moving_images_batch)
             # save the transformed images (todo: change this to some other save format)
             if is_last_epoch and args.save_moved_images:
                 FakeBatchedImages(moved_images, init_template_batch).write_image(moved_file_names)
             # save shape
             avg_warp = add_shape(avg_warp, rigid)
         del rigid
+        hard_gc()
     
     if args.do_affine:
         logger.debug("Running affine registration")
@@ -90,12 +99,14 @@ def register_batch(
         affine.optimize()
         init_affine = affine.get_affine_matrix()
         if args.last_reg == 'affine':
-            moved_images = affine.evaluate(init_template_batch, moving_images_batch)
+            with torch.no_grad():
+                moved_images = affine.evaluate(init_template_batch, moving_images_batch)
             if is_last_epoch and args.save_moved_images:
                 FakeBatchedImages(moved_images, init_template_batch).write_image(args.save_dir)
             # save shape
             avg_warp = add_shape(avg_warp, affine)
         del affine
+        hard_gc()
     
     if args.do_deform:
         logger.debug("Running deformable registration with {}".format(args.deform_algo))
@@ -108,11 +119,13 @@ def register_batch(
         )
         # no need to check for last reg here, there is nothing beyond deformable
         deform.optimize()
-        moved_images = deform.evaluate(init_template_batch, moving_images_batch)
+        with torch.no_grad():
+            moved_images = deform.evaluate(init_template_batch, moving_images_batch)
         if is_last_epoch and args.save_moved_images:
             FakeBatchedImages(moved_images, init_template_batch).write_image(moved_file_names)
         # save shape
         avg_warp = add_shape(avg_warp, deform)
         del deform
+        hard_gc()
 
     return moved_images, avg_warp

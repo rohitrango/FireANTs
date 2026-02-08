@@ -161,7 +161,9 @@ def main(args):
                 is_last_epoch,
             )
             # add it to the template
-            updated_template_arr = updated_template_arr + moved_images.detach().sum(0, keepdim=True) * image_dp_frac
+            with torch.no_grad():
+                updated_template_arr.add_(moved_images.detach().mean(0, keepdim=True), alpha=image_dp_frac)
+            # updated_template_arr = updated_template_arr + moved_images.detach().mean(0, keepdim=True) * image_dp_frac
             del moved_images
         
         # update template

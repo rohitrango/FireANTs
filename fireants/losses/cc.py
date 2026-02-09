@@ -25,6 +25,9 @@ from typing import List
 from fireants.types import ItemOrList
 from fireants.losses.maskedutils import POSSIBLE_MASKED_MODES, DEFAULT_MASK_MODE, get_tensors_and_mask, mask_loss_function
 
+import logging
+logger = logging.getLogger(__name__)
+
 # @torch.jit.script
 def gaussian_1d(
     sigma: torch.Tensor, truncated: float = 4.0, approx: str = "erf", normalize: bool = True

@@ -32,6 +32,7 @@ import itertools
 import logging
 logger = logging.getLogger(__name__)
 
+
 MAX_INT32_NUMEL = 2**31 - 1
 
 reduction_table = {

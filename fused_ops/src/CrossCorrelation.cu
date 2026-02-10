@@ -172,14 +172,11 @@ template <typename scalar_t, typename index_t>
 __global__ void cc3d_bwd_modify_interm_v1_kernel(
     scalar_t* __restrict__ interm, scalar_t* __restrict__ input_img, scalar_t* __restrict__ target_img, 
     scalar_t* __restrict__ grad_input_img, scalar_t* __restrict__ grad_target_img, scalar_t* __restrict__ grad_output,
-    index_t kernel_size, float nr, float dr, Reduction reduction, bool compute_grad_input, bool compute_grad_target,
+    index_t kernel_volume, float nr, float dr, Reduction reduction, bool compute_grad_input, bool compute_grad_target,
     index_t batch_size, index_t n_out_channels, index_t height, index_t width, index_t depth, scalar_t grad_output_val) {
 
     // define opmath type
     using opmath_t = at::opmath_type<scalar_t>;
-
-    float kernel_volume = (float)kernel_size;
-    kernel_volume = powf(kernel_volume, 3);
 
     // input image dimensions
     index_t n = batch_size * n_out_channels * height * width * depth;
@@ -343,7 +340,7 @@ torch::Tensor cc3d_fwd_interm_v1(torch::Tensor intermediates, int64_t kernel_vol
 torch::Tensor cc3d_bwd_modify_interm_v1(torch::Tensor intermediates, torch::Tensor input_img, torch::Tensor target_img, 
     torch::Tensor grad_output, 
     std::optional<torch::Tensor> grad_input_img, std::optional<torch::Tensor> grad_target_img, 
-    int64_t kernel_size, float nr, float dr, Reduction reduction) {
+    int64_t kernel_size, int64_t kernel_volume, float nr, float dr, Reduction reduction) {
     /*
     intermediates: [batch_size, 5*n_channels, height, width, depth]
        * note that intermediates contains 5 blocks 
@@ -419,7 +416,7 @@ torch::Tensor cc3d_bwd_modify_interm_v1(torch::Tensor intermediates, torch::Tens
             cc3d_bwd_modify_interm_v1_kernel<scalar_t><<<gridSize, blockSize, 0, stream>>>(
                 intermediates.data_ptr<scalar_t>(), input_img.data_ptr<scalar_t>(), target_img.data_ptr<scalar_t>(),  
                 grad_input_img_ptr, grad_target_img_ptr, grad_output.data_ptr<scalar_t>(),
-                static_cast<int>(kernel_size), nr, dr, reduction, compute_grad_input, compute_grad_target,
+                static_cast<int>(kernel_volume), nr, dr, reduction, compute_grad_input, compute_grad_target,
                 static_cast<int>(batch_size), static_cast<int>(n_out_channels), static_cast<int>(height), static_cast<int>(width), static_cast<int>(depth), grad_output_val);
             C10_CUDA_KERNEL_LAUNCH_CHECK();
         }

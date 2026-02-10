@@ -25,6 +25,9 @@ from typing import List
 from fireants.types import ItemOrList
 from fireants.losses.maskedutils import POSSIBLE_MASKED_MODES, DEFAULT_MASK_MODE, get_tensors_and_mask, mask_loss_function
 
+import logging
+logger = logging.getLogger(__name__)
+
 # @torch.jit.script
 def gaussian_1d(
     sigma: torch.Tensor, truncated: float = 4.0, approx: str = "erf", normalize: bool = True
@@ -209,7 +212,7 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
     def __init__(
         self,
         spatial_dims: int = 3,
-        kernel_size: int = 3,
+        kernel_size: ItemOrList[int] = 3,
         kernel_type: str = "rectangular",
         reduction: str = "mean",
         smooth_nr: float = 1e-5,   # careful: perform degrades when this parameter is set to 0
@@ -223,7 +226,8 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         """
         Args:
             spatial_dims: number of spatial dimensions, {``1``, ``2``, ``3``}. Defaults to 3.
-            kernel_size: kernel spatial size, must be odd.
+            kernel_size: kernel spatial size, must be odd. Can be a single int or a list of ints
+                (one per scale when used with multi-scale registration).
             kernel_type: {``"rectangular"``, ``"triangular"``, ``"gaussian"``}. Defaults to ``"rectangular"``.
             reduction: {``"none"``, ``"mean"``, ``"sum"``}
                 Specifies the reduction to apply to the output. Defaults to ``"mean"``.
@@ -247,16 +251,15 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
             self.reduction = "none"
         self.unsigned = unsigned
 
-        self.kernel_size = kernel_size
+        # support kernel_size as int or list
+        self.kernel_size_list = kernel_size if isinstance(kernel_size, (list, tuple)) else None
+        self.kernel_size = kernel_size[0] if isinstance(kernel_size, (list, tuple)) else kernel_size
         if self.kernel_size % 2 == 0:
             raise ValueError(f"kernel_size must be odd, got {self.kernel_size}")
 
         # _kernel = look_up_option(kernel_type, kernel_dict)
-        _kernel = kernel_dict[kernel_type]
-        self.kernel = _kernel(self.kernel_size)
-        self.kernel = self.kernel / self.kernel.sum()
-        self.kernel.requires_grad = False
-        self.kernel_nd, self.kernel_vol = self.get_kernel_vol()   # get nD kernel and its volume
+        self.kernel_type = kernel_type
+        self._update_kernel(self.kernel_size)
         self.smooth_nr = float(smooth_nr)
         self.smooth_dr = float(smooth_dr)
         self.checkpointing = checkpointing
@@ -265,6 +268,63 @@ class LocalNormalizedCrossCorrelationLoss(nn.Module):
         self.masked = masked
         self.mask_mode = mask_mode
         assert mask_mode in POSSIBLE_MASKED_MODES
+        # scale and iteration tracking
+        self.scales = None
+        self.iterations = None
+
+    def _update_kernel(self, kernel_size: int) -> None:
+        """
+        Update the kernel based on a new kernel size.
+        
+        Args:
+            kernel_size: the new kernel size (must be odd)
+        """
+        if kernel_size % 2 == 0:
+            raise ValueError(f"kernel_size must be odd, got {kernel_size}")
+        self.kernel_size = kernel_size
+        _kernel_fn = kernel_dict[self.kernel_type]
+        self.kernel = _kernel_fn(self.kernel_size)
+        self.kernel = self.kernel / self.kernel.sum()
+        self.kernel.requires_grad = False
+        self.kernel_nd, self.kernel_vol = self.get_kernel_vol()
+
+    def set_scales(self, scales: List) -> None:
+        """
+        Set the scales for multi-scale registration.
+        Called at initialization of abstract registration.
+        
+        Args:
+            scales: list of scales used in registration
+        """
+        self.scales = scales
+        if self.kernel_size_list:
+            assert len(self.kernel_size_list) == len(self.scales), \
+                f"kernel_size_list must have the same length as scales, got {len(self.kernel_size_list)} vs {len(self.scales)}"
+
+    def set_iterations(self, iterations: List[int]) -> None:
+        """
+        Set the iterations for multi-scale registration.
+        Called at initialization of abstract registration.
+        
+        Args:
+            iterations: list of iteration counts per scale
+        """
+        self.iterations = iterations
+
+    def set_current_scale_and_iterations(self, scale, iters: int) -> None:
+        """
+        Set the current scale and iteration count, updating kernel size if using kernel_size_list.
+        
+        Args:
+            scale: the current scale
+            iters: the current iteration count
+        """
+        logger.info(f"setting current scale and iterations to {scale} and {iters}")
+        if self.kernel_size_list and self.scales is not None:
+            idx = self.scales.index(scale)
+            new_kernel_size = self.kernel_size_list[idx]
+            if new_kernel_size != self.kernel_size:
+                self._update_kernel(new_kernel_size)
 
     def get_image_padding(self) -> int:
         return (self.kernel_size - 1) // 2

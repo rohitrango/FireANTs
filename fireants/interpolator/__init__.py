@@ -29,6 +29,7 @@ try:
     FFO_AVAILABLE = True
     # safe to import fused grid sampler
     from fireants.interpolator.fused_grid_sample import fused_grid_sampler_3d, fused_warp_composer_3d, fused_affine_warp_3d
+    from fireants.interpolator.fused_grid_sample import fused_grid_sampler_2d
 except ImportError:
     logger.warning("Fused operations not available, compile the fused ops to use them")
     FFO_AVAILABLE = False
@@ -58,7 +59,7 @@ class GridSampleDispatcher:
     def _setup_registry(self) -> None:
         """Set up the function registry with appropriate implementations."""
         # Set up FFO backend
-        self._registry[True]['grid_sample_2d'] = torch_grid_sampler_2d  # TODO: add fused grid sampler 2d
+        self._registry[True]['grid_sample_2d'] = fused_grid_sampler_2d
         self._registry[True]['grid_sample_3d'] = fused_grid_sampler_3d
         self._registry[True]['warp_composer_2d'] = torch_warp_composer_2d  # TODO: add fused warp composer 2d
         self._registry[True]['warp_composer_3d'] = fused_warp_composer_3d

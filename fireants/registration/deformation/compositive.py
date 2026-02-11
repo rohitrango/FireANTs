@@ -30,7 +30,9 @@ from fireants.utils.util import grad_smoothing_hook
 from fireants.utils.imageutils import jacobian
 from fireants.registration.optimizers.sgd import WarpSGD
 from fireants.registration.optimizers.adam import WarpAdam
+from fireants.registration.optimizers.levenberg import WarpLevenbergMarquardt
 from fireants.utils.globals import MIN_IMG_SIZE
+from typing import Optional
 
 from logging import getLogger
 from copy import deepcopy
@@ -87,6 +89,8 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
             self.optimizer = WarpSGD(self.warp, lr=optimizer_lr, dtype=dtype, **oparams)
         elif optimizer == 'adam':
             self.optimizer = WarpAdam(self.warp, lr=optimizer_lr, dtype=dtype, **oparams)
+        elif optimizer == 'levenberg':
+            self.optimizer = WarpLevenbergMarquardt(self.warp, lr=optimizer_lr, dtype=dtype, **oparams)
         else:
             raise NotImplementedError(f'Optimizer {optimizer} not implemented')
     
@@ -106,8 +110,8 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
         ''' set the gradient to zero (or None) '''
         self.optimizer.zero_grad()
     
-    def step(self):
-        self.optimizer.step()
+    def step(self, loss: Optional[torch.Tensor] = None):
+        self.optimizer.step(loss)
 
     def get_warp(self):
         ''' return warp function '''

@@ -347,7 +347,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                 if self.progress_bar:
                     pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))
                 # optimize the velocity field
-                self.warp.step()
+                self.warp.step(loss)
                 # check for convergence
                 if self.convergence_monitor.converged(loss.item()):
                     break

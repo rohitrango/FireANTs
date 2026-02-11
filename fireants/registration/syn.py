@@ -322,8 +322,8 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                 if self.progress_bar:
                     pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))
                 # optimize the deformations
-                self.fwd_warp.step()
-                self.rev_warp.step()
+                self.fwd_warp.step(loss)
+                self.rev_warp.step(loss)
                 if self.convergence_monitor.converged(loss.item()):
                     break
 

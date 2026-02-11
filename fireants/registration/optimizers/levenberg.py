@@ -12,8 +12,7 @@
 #
 # For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
 
-
-''' class for SGD for compositive warps '''
+''' class for Levenberg-Marquardt for compositive warps '''
 import torch
 from torch.nn import functional as F
 # from fireants.utils.imageutils import compute_inverse_warp_displacement
@@ -24,6 +23,7 @@ from fireants.registration.distributed.utils import add_distributed_padding, cro
 import logging
 logger = logging.getLogger(__name__)
 from fireants.registration.distributed import parallel_state
+from fireants.registration.optimizers.adam import _get_smoothing_wrapper
 from typing import Optional
 
 import os
@@ -31,48 +31,15 @@ import logging
 logger = logging.getLogger(__name__)
 USE_NO_GP = bool(int(os.environ.get('USE_NO_GP', '0').lower()))
 
-def adam_update_fused_baseline(grad, exp_avg, exp_avg_sq, beta1, beta2, eps):
-    grad.copy_(exp_avg / (beta1) / (exp_avg_sq / (beta2)).sqrt().add_(eps))
-
-try:
-    import fireants_fused_ops as ffo
-    adam_update_fused = ffo.adam_update_fused
-except ImportError:
-    logger.warning("Fused ops not found, using baseline implementation")
-    adam_update_fused = adam_update_fused_baseline
-
-## Function for smoothing
-def _get_smoothing_wrapper(optimizer):
+class WarpLevenbergMarquardt:
     ''' 
-    Get wrapper for smoothing
-    '''
-    gp_group = parallel_state.get_parallel_state().get_current_gp_group() if parallel_state.is_initialized() else [0]
-    gp_size = len(gp_group)
-
-    if gp_size <= 1:
-        def smoothing_wrapper_nodist(tensor, kernels, padding=0):
-            # tensor is a warp field
-            tensor = separable_filtering(tensor.permute(*optimizer.permute_vtoimg).contiguous(), kernels).permute(*optimizer.permute_imgtov).contiguous()
-            return tensor
-        return smoothing_wrapper_nodist
-    else:
-        # write a distributed version
-        def smoothing_wrapper_dist(tensor, kernels, padding=0):
-            if padding > 0:
-                tensor = add_distributed_padding(tensor, padding, optimizer.dim_to_shard-1) # 2 will be added to dim_to_shard anyway
-            tensor = separable_filtering(tensor.permute(*optimizer.permute_vtoimg).contiguous(), kernels).permute(*optimizer.permute_imgtov).contiguous()
-            if padding > 0:
-                tensor = crop_distributed_padding(tensor, padding, optimizer.dim_to_shard-1)
-            return tensor
-        return smoothing_wrapper_dist
-
-class WarpAdam:
-    ''' at the moment we only support a single warp function 
-    also supports multi-scale (by simply interpolating to the target size)
     shape of warp = [B, H, W, [D], dims]
     '''
     def __init__(self, warp, lr, 
-                 beta1=0.9, beta2=0.99, weight_decay=0, eps=1e-8,
+                 lambda_init=1,
+                 lambda_increase_factor=2.0,
+                 lambda_decrease_factor=0.7,
+                 weight_decay=0, eps=1e-8,
                  scaledown=False, multiply_jacobian=False,
                  smoothing_gaussians=None, 
                  grad_gaussians=None,
@@ -85,10 +52,6 @@ class WarpAdam:
                  dtype: torch.dtype = torch.float32):
         # init
         self.dtype = dtype
-        if beta1 < 0.0 or beta1 >= 1.0:
-            raise ValueError("Invalid beta1 value: {}".format(beta1))
-        if beta2 < 0.0 or beta2 >= 1.0:
-            raise ValueError("Invalid beta2 value: {}".format(beta2))
         if weight_decay < 0.0:
             raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
         if lr < 0.0:
@@ -100,8 +63,6 @@ class WarpAdam:
         self.freeform = freeform
         self.lr = lr
         self.eps = eps
-        self.beta1 = beta1
-        self.beta2 = beta2
         self.step_t = 0    # initialize step to 0
         self.weight_decay = weight_decay
         self.multiply_jacobian = multiply_jacobian
@@ -109,7 +70,6 @@ class WarpAdam:
         self.scaledown = scaledown   # if true, the scale the gradient even if norm is below 1
         # offload params
         self.device = warp.device
-        self.adam_update_kernel = adam_update_fused if self.device.type == 'cuda' else adam_update_fused_baseline
         self.offload = offload
         # warp grad params
         self.exp_avg = torch.zeros_like(warp, device=self.device if not self.offload else 'cpu')
@@ -124,6 +84,14 @@ class WarpAdam:
         # gaussian smoothing parameters (if any)
         self.smoothing_gaussians = smoothing_gaussians
         self.grad_gaussians = grad_gaussians            # unused
+        # Levenberg-Marquardt parameters
+        self.lambda_init = lambda_init
+        # last loss to change lambda if needed
+        self.last_loss = None
+        self.lambda_increase_factor = lambda_increase_factor
+        self.lambda_decrease_factor = lambda_decrease_factor
+        assert self.lambda_increase_factor > 1.0, "lambda_increase_factor must be greater than 1.0"
+        assert self.lambda_decrease_factor < 1.0, "lambda_decrease_factor must be less than 1.0"
         # distributed params
         self.rank = rank
         self.dim_to_shard = dim_to_shard
@@ -142,41 +110,21 @@ class WarpAdam:
     
     def cleanup(self):
         # manually clean up
-        del self.exp_avg
-        del self.exp_avg_sq
         del self.grid
     
     def set_data_and_size(self, warp, size, grid_copy=None):
         ''' change the optimization variables sizes '''
         self.warp = warp
-        mode = 'bilinear' if self.n_dims == 2 else 'trilinear'
-
         # check size to upsample if not already in correct size
         if any([s != size[i] for i, s in enumerate(self.exp_avg.shape[1:-1])]):
-            if self.offload:
-                self.exp_avg = self.exp_avg.to(self.device)
-                self.exp_avg_sq = self.exp_avg_sq.to(self.device)
-
             # if resetting, we dont need to interpolate at all
             if self.reset:
-                logger.info("Resetting optimizer")
-                warp_size = [self.batch_size, *size, self.n_dims]
-                self.exp_avg = torch.zeros(warp_size, device=self.device if not self.offload else 'cpu')
-                self.exp_avg_sq = torch.zeros(warp_size, device=self.device if not self.offload else 'cpu')
-            else:
-                self.exp_avg = F.interpolate(self.exp_avg.detach().permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True, 
-                                    ).permute(*self.permute_imgtov)
-                self.exp_avg_sq = F.interpolate(self.exp_avg_sq.detach().permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True, 
-                                    ).permute(*self.permute_imgtov)
-            
-            # offload it back to CPU
-            if self.offload:
-                self.exp_avg = self.exp_avg.to('cpu')
-                self.exp_avg_sq = self.exp_avg_sq.to('cpu')
-
+                logger.info("nothing to reset in optimizer")
+        # set new half resolution
         self.half_resolution = 1.0/(max(warp.shape[1:-1]) - 1)
         self.initialize_grid(size, grid_copy=grid_copy)
-        # print(self.warp.shape, warpinv)
+        # reset last loss for new scale
+        self.last_loss = None
     
     def initialize_grid(self, size, grid_copy=None):
         ''' initialize the grid (so that we can use it independent of the grid elsewhere) '''
@@ -208,6 +156,15 @@ class WarpAdam:
     
     def step(self, loss: Optional[torch.Tensor] = None):
         ''' check for momentum, and other things '''
+        # update the lambda
+        if self.last_loss is not None:
+            if loss.item() > self.last_loss:   # loss increased, increase lambda
+                self.lambda_init *= self.lambda_increase_factor
+            else:
+                self.lambda_init *= self.lambda_decrease_factor
+        self.last_loss = loss.item()
+
+        # get the gradient
         grad = self.warp.grad.data
         if self.multiply_jacobian:
             grad = self.augment_jacobian(grad)
@@ -217,29 +174,11 @@ class WarpAdam:
         # compute moments
         self.step_t += 1
 
-        # we onload this to GPU
-        if self.offload:
-            # torch.cuda.synchronize()
-            # move to device
-            self.exp_avg = self.exp_avg.to(self.device)
-            self.exp_avg_sq = self.exp_avg_sq.to(self.device)
-
-        self.exp_avg.mul_(self.beta1).add_(grad, alpha=1-self.beta1)
-        self.exp_avg_sq.mul_(self.beta2).addcmul_(grad, grad.conj(), value=1-self.beta2)
-        # bias correction
-        beta_correction1 = 1 - self.beta1 ** self.step_t
-        beta_correction2 = 1 - self.beta2 ** self.step_t
-
-        # adam_update_fused(grad, self.exp_avg, self.exp_avg_sq, beta_correction1, beta_correction2, self.eps)
-        self.adam_update_kernel(grad, self.exp_avg, self.exp_avg_sq, beta_correction1, beta_correction2, self.eps)
-
-        # we offload this to CPU
-        if self.offload:
-            # torch.cuda.synchronize()
-            # move to device
-            self.exp_avg = self.exp_avg.to('cpu')
-            self.exp_avg_sq = self.exp_avg_sq.to('cpu')
-            torch.cuda.empty_cache()
+        # compute damped hessian
+        h = grad[..., None] * grad[..., None, :]  # [..., dims, dims]
+        h.add_(self.lambda_init * torch.eye(self.n_dims, device=self.device), alpha=1.0)
+        h = torch.linalg.inv(h)
+        grad = torch.einsum('...ij,...j->...i', h, grad)
 
         # denom = (self.exp_avg_sq / beta_correction2).sqrt().add_(self.eps)
         # get updated gradient (this will be normalized and passed in)
@@ -251,7 +190,6 @@ class WarpAdam:
         # renormalize and update warp
         if self.freeform:
             grad.mul_(-self.lr)
-            # self.warp.data.copy_(grad + self.warp.data)
             self.warp.data.add_(grad)
             if self.smoothing_gaussians is not None:
                 self.warp.data = self.smoothing_wrapper(self.warp.data, self.smoothing_gaussians, self.padding_smoothing)

@@ -345,6 +345,58 @@ class FusedAffineWarp3d(torch.autograd.Function):
         # return gradients
         return grad_affine, grad_grid, None, None, None
 
+class FusedWarpComposer2d(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, affine, grid, align_corners, min_coords, max_coords, output):
+        # check input sizes
+        '''
+        input: [B, H, W, 2]
+        affine: [B, 2, 3]
+        grid: [B, H, W, 2]
+        align_corners: bool
+        min_coords: tuple (xmin, ymin)
+        max_coords: tuple (xmax, ymax)
+        '''
+        # grid is assumed to be in same shape as input
+        # affine mode, assume output shape is specified
+        H, W = grid.shape[1:-1]
+        # get min and max coords
+        if min_coords is None:
+            min_coords = get_min_coords2d(H, W, align_corners)
+        if max_coords is None:
+            max_coords = get_max_coords2d(H, W, align_corners)
+        # get output
+        output = ffo.fused_grid_composer_2d_forward(input, affine, grid, min_coords[0], min_coords[1], max_coords[0], max_coords[1], align_corners, output)
+        # save everything for backward
+        ctx.save_for_backward(input, affine, grid)
+        ctx.align_corners = align_corners
+        ctx.min_coords = min_coords
+        ctx.max_coords = max_coords
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, affine, grid = ctx.saved_tensors
+        align_corners = ctx.align_corners
+        min_coords = ctx.min_coords
+        max_coords = ctx.max_coords
+        # check if any of the variables require grad
+        input_requires_grad = input.requires_grad
+        affine_requires_grad = affine is not None and affine.requires_grad
+        grid_requires_grad = grid is not None and grid.requires_grad
+        input_grad, affine_grad, grid_grad = None, None, None
+        # initialize gradients
+        if input_requires_grad:
+            input_grad = torch.zeros_like(input)
+        if affine_requires_grad:
+            affine_grad = torch.zeros_like(affine)
+        if grid_requires_grad:
+            grid_grad = torch.zeros_like(grid)
+        # call backward
+        ffo.fused_grid_composer_2d_backward(input, affine, grid, grad_output.contiguous(), input_grad, affine_grad, grid_grad, min_coords[0], min_coords[1], max_coords[0], max_coords[1], align_corners)
+        # return gradients
+        return input_grad, affine_grad, grid_grad, None, None, None, None
+
 
 def fused_grid_sampler_3d(
     input: torch.Tensor,
@@ -447,7 +499,7 @@ def fused_warp_composer_3d(
     output: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
-    Computes u \circ (Ax + v)
+    Computes $$u \\circ (Ax + v)$$
     
     Args:
         u: Input tensor of shape [B, Z, Y, X, 3]
@@ -464,6 +516,36 @@ def fused_warp_composer_3d(
     if output is not None:
         assert output.is_contiguous(), "output must be contiguous"
     output = FusedWarpComposer3d.apply(u, affine, v, align_corners, min_coords, max_coords, output)
+    return output
+
+def fused_warp_composer_2d(
+    u: torch.Tensor,
+    affine: Optional[torch.Tensor] = None,
+    v: torch.Tensor = None,
+    align_corners: bool = True,
+    min_coords: Optional[torch.Tensor] = None,
+    max_coords: Optional[torch.Tensor] = None,
+    grid: Optional[torch.Tensor] = None,
+    output: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """
+    Computes u ∘ (Ax + v) in 2D
+    
+    Args:
+        u: Input tensor of shape [B, H, W, 2]
+        affine: Affine matrix of shape [B, 2, 3]
+        v: Optional grid tensor of shape [B, H, W, 2]
+        align_corners: Whether to align corners
+        grid: Optional grid tensor [B, H, W, 2] (compatibility parameter, not used)
+    Returns:
+        Sampled tensor of shape [B, H, W, 2]
+    """
+    assert u.is_contiguous(), "input must be contiguous"
+    assert affine is None or affine.is_contiguous(), "affine must be contiguous"
+    assert v.is_contiguous(), "grid must be contiguous"    
+    if output is not None:
+        assert output.is_contiguous(), "output must be contiguous"
+    output = FusedWarpComposer2d.apply(u, affine, v, align_corners, min_coords, max_coords, output)
     return output
 
 def fused_affine_warp_3d(

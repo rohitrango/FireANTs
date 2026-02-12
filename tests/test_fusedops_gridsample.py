@@ -1,5 +1,7 @@
-import torch
 import pytest
+pytest.importorskip("fireants_fused_ops")
+
+import torch
 from time import time
 from torch import nn
 from torch.nn import functional as F

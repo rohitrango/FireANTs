@@ -34,6 +34,7 @@ except ImportError:
     logger.warning("Fused operations not available, compile the fused ops to use them")
     FFO_AVAILABLE = False
     ffo = None
+    fused_grid_sampler_2d = None
     fused_grid_sampler_3d = None
     fused_warp_composer_3d = None
     fused_affine_warp_3d = None

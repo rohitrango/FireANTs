@@ -84,10 +84,11 @@ def torch_grid_sampler_2d(
         if out_shape is None:
             logger.warning("out_shape is not provided for affine-only transformation, using input shape")
             out_shape = (Y, X)
-        grid = F.affine_grid(affine, (B, C, *out_shape[-2:]), align_corners=align_corners)
+        grid = F.affine_grid(affine, (B, C, *out_shape[-2:]), align_corners=align_corners).to(input.dtype)
         return F.grid_sample(input, grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
     # Case 2: Full warp field
     if not is_displacement:
+        grid = grid.to(input.dtype)
         return F.grid_sample(input, grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
     # Case 3: Displacement field
     out_shape = grid.shape[1:-1]
@@ -95,9 +96,9 @@ def torch_grid_sampler_2d(
     if affine is None:
         affine = torch.eye(2, 3, device=input.device)[None].expand(B, -1, -1)
     # Create base grid
-    base_grid = F.affine_grid(affine, (B, C, *out_shape[-2:]), align_corners=align_corners)
+    base_grid = F.affine_grid(affine, (B, C, *out_shape[-2:]), align_corners=align_corners).to(input.dtype)
     # Add displacement
-    base_grid = base_grid + grid
+    base_grid = base_grid + grid.to(input.dtype)
     return F.grid_sample(input, base_grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
 
 def torch_grid_sampler_3d(
@@ -140,7 +141,7 @@ def torch_grid_sampler_3d(
         if out_shape is None:
             logger.warning("out_shape is not provided for affine-only transformation, using input shape")
             out_shape = (Z, Y, X)
-        grid = F.affine_grid(affine, (B, C, *out_shape[-3:]), align_corners=align_corners)
+        grid = F.affine_grid(affine, (B, C, *out_shape[-3:]), align_corners=align_corners).to(input.dtype)
         ret = F.grid_sample(input, grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
         if output is not None:
             output.add_(ret)
@@ -153,6 +154,7 @@ def torch_grid_sampler_3d(
 
     # Case 2: Full warp field
     if not is_displacement:
+        grid = grid.to(input.dtype)
         ret = F.grid_sample(input, grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
         if output is not None:
             output.add_(ret)
@@ -164,9 +166,9 @@ def torch_grid_sampler_3d(
     if affine is None:
         affine = torch.eye(3, 4, device=input.device)[None].expand(B, -1, -1)
     # Create base grid
-    base_grid = F.affine_grid(affine, (B, C, *out_shape[-3:]), align_corners=align_corners)
+    base_grid = F.affine_grid(affine, (B, C, *out_shape[-3:]), align_corners=align_corners).to(input.dtype)
     # Add displacement
-    base_grid = base_grid + grid
+    base_grid = base_grid + grid.to(input.dtype)
     ret = F.grid_sample(input, base_grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)
     if output is not None:
         output.add_(ret)
@@ -206,8 +208,9 @@ def torch_warp_composer_2d(
     if grid is None:
         if affine is None:
             affine = torch.eye(2, 3, device=u.device)[None].expand(B, -1, -1)
-        grid = F.affine_grid(affine, [B, 1] + list(v.shape[1:-1]), align_corners=align_corners)
-    ret = F.grid_sample(u.permute(0, 3, 1, 2), grid + v, mode=mode, padding_mode=padding_mode, align_corners=align_corners).permute(0, 2, 3, 1)
+        grid = F.affine_grid(affine, [B, 1] + list(v.shape[1:-1]), align_corners=align_corners).to(u.dtype)
+    sample_grid = (grid + v).to(u.dtype)
+    ret = F.grid_sample(u.permute(0, 3, 1, 2), sample_grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners).permute(0, 2, 3, 1)
     # add inplace if specified (adam update step)
     if output is not None:
         output.add_(ret)
@@ -244,8 +247,9 @@ def torch_warp_composer_3d(
     if grid is None:
         if affine is None:
             affine = torch.eye(3, 4, device=u.device)[None].expand(B, -1, -1)
-        grid = F.affine_grid(affine, [B, 1] + list(v.shape[1:-1]), align_corners=align_corners)
-    ret = F.grid_sample(u.permute(0, 4, 1, 2, 3), grid + v, mode=mode, padding_mode=padding_mode, align_corners=align_corners).permute(0, 2, 3, 4, 1)
+        grid = F.affine_grid(affine, [B, 1] + list(v.shape[1:-1]), align_corners=align_corners).to(u.dtype)
+    sample_grid = (grid + v).to(u.dtype)
+    ret = F.grid_sample(u.permute(0, 4, 1, 2, 3), sample_grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners).permute(0, 2, 3, 4, 1)
     if output is not None:  
         output.add_(ret)
     else:

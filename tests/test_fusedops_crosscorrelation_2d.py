@@ -1,5 +1,7 @@
-import torch
 import pytest
+pytest.importorskip("fireants_fused_ops")
+
+import torch
 from time import time
 from fireants.losses.cc import LocalNormalizedCrossCorrelationLoss
 from fireants.tests.cc_mem_test import fast_lncc

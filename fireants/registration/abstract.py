@@ -148,12 +148,21 @@ class AbstractRegistration(ABC):
             self.loss_fn = LocalNormalizedCrossCorrelationLoss(kernel_type=cc_kernel_type, spatial_dims=self.dims,
                                                                kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
         elif loss_type == 'fusedcc':
-            from fireants.losses.fusedcc import FusedLocalNormalizedCrossCorrelationLoss
-            self.loss_fn = FusedLocalNormalizedCrossCorrelationLoss(spatial_dims=self.dims,
-                                                    kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
+            try:
+                from fireants.losses.fusedcc import FusedLocalNormalizedCrossCorrelationLoss
+                self.loss_fn = FusedLocalNormalizedCrossCorrelationLoss(spatial_dims=self.dims,
+                                                        kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
+            except ImportError:
+                logger.warning("fireants_fused_ops not available, falling back to non-fused LocalNormalizedCrossCorrelationLoss")
+                self.loss_fn = LocalNormalizedCrossCorrelationLoss(kernel_type=cc_kernel_type, spatial_dims=self.dims,
+                                                                   kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
         elif loss_type == 'fusedmi':
-            from fireants.losses.fusedmi import FusedGlobalMutualInformationLoss
-            self.loss_fn = FusedGlobalMutualInformationLoss(kernel_type=mi_kernel_type, reduction=reduction, **loss_params)
+            try:
+                from fireants.losses.fusedmi import FusedGlobalMutualInformationLoss
+                self.loss_fn = FusedGlobalMutualInformationLoss(kernel_type=mi_kernel_type, reduction=reduction, **loss_params)
+            except ImportError:
+                logger.warning("fireants_fused_ops not available, falling back to non-fused GlobalMutualInformationLoss")
+                self.loss_fn = GlobalMutualInformationLoss(kernel_type=mi_kernel_type, reduction=reduction, **loss_params)
         elif loss_type == 'custom':
             self.loss_fn = custom_loss
         elif loss_type == 'noop':

@@ -13,8 +13,10 @@
 # For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
 
 
-import torch
 import pytest
+pytest.importorskip("fireants_fused_ops")
+
+import torch
 from time import time
 import itertools
 import gc

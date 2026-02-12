@@ -1164,3 +1164,805 @@ void fused_grid_sampler_3d_backward_impl(
         grad_affine.value().copy_(grad_affine_collect.sum(1));
     }
 }
+
+// ============================================================
+// 2D fused grid sampler (B, C, H, W) with optional affine and displacement
+// ============================================================
+
+template<typename scalar_t, typename index_t>
+__forceinline__ __device__
+void safe_add_2d_oneoffset(
+                scalar_t *data,
+                int h, int w,
+                int H, int W,
+                scalar_t delta,
+                const index_t NC_offset,
+                const index_t memory_span) {
+  if (within_bounds_2d(h, w, H, W)) {
+    gpuAtomicAdd(data + NC_offset + w + W * h, delta);
+  }
+}
+
+template <typename scalar_t, typename grid_t, typename index_t>
+C10_LAUNCH_BOUNDS_1(BLOCKSIZE_3D)
+__global__ void fused_grid_sampler_2d_forward_kernel(
+    const index_t count,
+    const scalar_t* input,
+    const grid_t* grid,
+    const grid_t* affine_2d,
+    const grid_t* affine_2d_pregrid,
+    const index_t N,
+    const index_t C,
+    const index_t Hi,
+    const index_t Wi,
+    const index_t H,
+    const index_t W,
+    const float grid_xmin,
+    const float grid_ymin,
+    const float grid_xmax,
+    const float grid_ymax,
+    const bool is_displacement,
+    scalar_t* output,
+    const GridSamplerInterpolation interpolation_mode,
+    const GridSamplerPadding padding_mode,
+    const bool align_corners,
+    const bool broadcast_input,
+    const bool broadcast_affine_2d,
+    const bool broadcast_grid,
+    const bool broadcast_affine_2d_pregrid
+    ) {
+
+    using opmath_t = at::opmath_type<scalar_t>;
+    using gridmath_t = at::opmath_type<grid_t>;
+
+    CUDA_KERNEL_LOOP_TYPE(index, count, index_t) {
+        const index_t w = index % W;
+        const index_t h = (index / W) % H;
+        const index_t n = index / (H * W);
+        const index_t grid_offset = 2 * (w + W * (h + H * (broadcast_grid ? 0 : n)));
+
+        gridmath_t ix = 0, iy = 0;
+        gridmath_t x = 0, y = 0;
+
+        if (!grid) {
+            const grid_t* affine_2d_ptr = affine_2d + (broadcast_affine_2d ? 0 : (6 * n));
+            ix = w * (grid_xmax - grid_xmin) / (W - 1) + grid_xmin;
+            iy = h * (grid_ymax - grid_ymin) / (H - 1) + grid_ymin;
+            x = affine_2d_ptr[0] * ix + affine_2d_ptr[1] * iy + affine_2d_ptr[2];
+            y = affine_2d_ptr[3] * ix + affine_2d_ptr[4] * iy + affine_2d_ptr[5];
+        } else {
+            grid_t dx = grid[grid_offset];
+            grid_t dy = grid[grid_offset + 1];
+            grid_t i_dx, i_dy;
+
+            if (affine_2d_pregrid) {
+                const grid_t* affine_2d_pregrid_ptr = affine_2d_pregrid + (broadcast_affine_2d_pregrid ? 0 : (4 * n));
+                i_dx = affine_2d_pregrid_ptr[0] * dx + affine_2d_pregrid_ptr[1] * dy;
+                i_dy = affine_2d_pregrid_ptr[2] * dx + affine_2d_pregrid_ptr[3] * dy;
+            } else {
+                i_dx = dx;
+                i_dy = dy;
+            }
+
+            if (is_displacement) {
+                ix = w * (grid_xmax - grid_xmin) / (W - 1) + grid_xmin;
+                iy = h * (grid_ymax - grid_ymin) / (H - 1) + grid_ymin;
+                if (affine_2d) {
+                    const grid_t* affine_2d_ptr = affine_2d + (broadcast_affine_2d ? 0 : (6 * n));
+                    x = affine_2d_ptr[0] * ix + affine_2d_ptr[1] * iy + affine_2d_ptr[2];
+                    y = affine_2d_ptr[3] * ix + affine_2d_ptr[4] * iy + affine_2d_ptr[5];
+                } else {
+                    x = ix;
+                    y = iy;
+                }
+                x += i_dx;
+                y += i_dy;
+            } else {
+                x = i_dx;
+                y = i_dy;
+            }
+        }
+
+        ix = grid_sampler_compute_source_index(x, Wi, padding_mode, align_corners);
+        iy = grid_sampler_compute_source_index(y, Hi, padding_mode, align_corners);
+
+        if (interpolation_mode == GridSamplerInterpolation::Bilinear) {
+            index_t ix_w = static_cast<index_t>(::floor(ix));
+            index_t iy_n = static_cast<index_t>(::floor(iy));
+            index_t ix_e = ix_w + 1;
+            index_t iy_s = iy_n + 1;
+
+            scalar_t nw = (ix_e - ix) * (iy_s - iy);
+            scalar_t ne = (ix - ix_w) * (iy_s - iy);
+            scalar_t sw = (ix_e - ix) * (iy - iy_n);
+            scalar_t se = (ix - ix_w) * (iy - iy_n);
+
+            index_t out_sC = H * W;
+            index_t inp_sC = Hi * Wi;
+
+            const scalar_t* inp_ptr_NC = input + (broadcast_input ? 0 : (n * (C * inp_sC)));
+            scalar_t* out_ptr_NCHW = output + (w + W * (h + H * C * n));
+
+            for (index_t c = 0; c < C; ++c, inp_ptr_NC += inp_sC, out_ptr_NCHW += out_sC) {
+                opmath_t out_acc = 0;
+                if (within_bounds_2d(iy_n, ix_w, Hi, Wi)) {
+                    out_acc += inp_ptr_NC[ix_w + Wi * iy_n] * nw;
+                }
+                if (within_bounds_2d(iy_n, ix_e, Hi, Wi)) {
+                    out_acc += inp_ptr_NC[ix_e + Wi * iy_n] * ne;
+                }
+                if (within_bounds_2d(iy_s, ix_w, Hi, Wi)) {
+                    out_acc += inp_ptr_NC[ix_w + Wi * iy_s] * sw;
+                }
+                if (within_bounds_2d(iy_s, ix_e, Hi, Wi)) {
+                    out_acc += inp_ptr_NC[ix_e + Wi * iy_s] * se;
+                }
+                *out_ptr_NCHW += out_acc;
+            }
+        } else if (interpolation_mode == GridSamplerInterpolation::Nearest) {
+            index_t ix_nearest = static_cast<index_t>(std::nearbyint(ix));
+            index_t iy_nearest = static_cast<index_t>(std::nearbyint(iy));
+
+            index_t out_sC = H * W;
+            index_t inp_sC = Hi * Wi;
+
+            const scalar_t* inp_ptr_NC = input + (broadcast_input ? 0 : (n * (C * inp_sC)));
+            scalar_t* out_ptr_NCHW = output + (w + W * (h + H * C * n));
+
+            for (index_t c = 0; c < C; ++c, inp_ptr_NC += inp_sC, out_ptr_NCHW += out_sC) {
+                if (within_bounds_2d(iy_nearest, ix_nearest, Hi, Wi)) {
+                    *out_ptr_NCHW += inp_ptr_NC[ix_nearest + Wi * iy_nearest];
+                } else {
+                    *out_ptr_NCHW += static_cast<scalar_t>(0);
+                }
+            }
+        }
+    }
+}
+
+template <typename scalar_t, typename grid_t, typename index_t>
+C10_LAUNCH_BOUNDS_1(BLOCKSIZE_3D)
+__global__ void fused_grid_sampler_2d_backward_kernel(
+        const index_t count, /* H * W */
+        const scalar_t* input,
+        const grid_t* grid,
+        const grid_t* affine_2d,
+        const grid_t* affine_2d_pregrid,
+        const scalar_t* grad_output,
+        scalar_t* grad_input,
+        grid_t* grad_affine_collect,
+        grid_t* grad_grid,
+        const index_t N,
+        const index_t C,
+        const index_t Hi,
+        const index_t Wi,
+        const index_t H,
+        const index_t W,
+        const float grid_xmin,
+        const float grid_ymin,
+        const float grid_xmax,
+        const float grid_ymax,
+        const bool is_displacement,
+        const GridSamplerInterpolation interpolation_mode,
+        const GridSamplerPadding padding_mode,
+        const bool align_corners,
+        const bool broadcast_input,
+        const bool broadcast_affine_2d,
+        const bool broadcast_grid,
+        const bool broadcast_affine_2d_pregrid
+    ) {
+
+    const index_t n = blockIdx.y;
+
+    using opmath_t = at::opmath_type<scalar_t>;
+    using gridmath_t = at::opmath_type<grid_t>;
+
+    gridmath_t _affine_grad_[6];
+    #pragma unroll
+    for (index_t i = 0; i < 6; ++i) {
+        _affine_grad_[i] = 0;
+    }
+
+    __shared__ gridmath_t _affine_grad_shared_[BLOCKSIZE_3D];
+    _affine_grad_shared_[threadIdx.x] = 0;
+
+    gridmath_t _affine_map_[6];
+    if (affine_2d) {
+        const index_t offset = broadcast_affine_2d ? 0 : (6 * n);
+        #pragma unroll
+        for (index_t i = 0; i < 6; ++i) {
+            _affine_map_[i] = affine_2d[offset + i];
+        }
+    }
+
+    CUDA_KERNEL_LOOP_TYPE(index, count, index_t) {
+        const index_t w = index % W;
+        const index_t h = (index / W) % H;
+        const index_t grid_offset = 2 * (w + W * (h + H * (broadcast_grid ? 0 : n)));
+
+        gridmath_t pax, pay;
+        gridmath_t ix, iy;
+        gridmath_t x, y;
+
+        if (!grid) {
+            ix = w * (grid_xmax - grid_xmin) / (W - 1) + grid_xmin;
+            iy = h * (grid_ymax - grid_ymin) / (H - 1) + grid_ymin;
+            pax = ix;
+            pay = iy;
+            x = _affine_map_[0] * ix + _affine_map_[1] * iy + _affine_map_[2];
+            y = _affine_map_[3] * ix + _affine_map_[4] * iy + _affine_map_[5];
+        } else {
+            grid_t dx = grid[grid_offset];
+            grid_t dy = grid[grid_offset + 1];
+            grid_t i_dx, i_dy;
+            if (affine_2d_pregrid) {
+                const grid_t* affine_2d_pregrid_ptr = affine_2d_pregrid + (broadcast_affine_2d_pregrid ? 0 : (4 * n));
+                i_dx = affine_2d_pregrid_ptr[0] * dx + affine_2d_pregrid_ptr[1] * dy;
+                i_dy = affine_2d_pregrid_ptr[2] * dx + affine_2d_pregrid_ptr[3] * dy;
+            } else {
+                i_dx = dx;
+                i_dy = dy;
+            }
+
+            if (is_displacement) {
+                ix = w * (grid_xmax - grid_xmin) / (W - 1) + grid_xmin;
+                iy = h * (grid_ymax - grid_ymin) / (H - 1) + grid_ymin;
+                pax = ix;
+                pay = iy;
+                if (affine_2d) {
+                    x = _affine_map_[0] * ix + _affine_map_[1] * iy + _affine_map_[2];
+                    y = _affine_map_[3] * ix + _affine_map_[4] * iy + _affine_map_[5];
+                } else {
+                    x = ix;
+                    y = iy;
+                }
+
+                if (grid) {
+                    const index_t grid_size = 2 * H * W * (broadcast_grid ? 1 : N);
+                    if (grid_offset + 1 < grid_size) {
+                        x += i_dx;
+                        y += i_dy;
+                    }
+                }
+            } else {
+                if (grid) {
+                    const index_t grid_size = 2 * H * W * (broadcast_grid ? 1 : N);
+                    if (grid_offset + 1 < grid_size) {
+                        x = i_dx;
+                        y = i_dy;
+                    }
+                }
+            }
+        }
+
+        gridmath_t gix_mult, giy_mult;
+        ix = grid_sampler_compute_source_index_set_grad(x, Wi, padding_mode, align_corners, &gix_mult);
+        iy = grid_sampler_compute_source_index_set_grad(y, Hi, padding_mode, align_corners, &giy_mult);
+
+        if (interpolation_mode == GridSamplerInterpolation::Bilinear) {
+            index_t ix_w = static_cast<index_t>(std::floor(ix));
+            index_t iy_n = static_cast<index_t>(std::floor(iy));
+
+            index_t ix_e = ix_w + 1;
+            index_t iy_s = iy_n + 1;
+
+            gridmath_t nw = (ix_e - ix) * (iy_s - iy);
+            gridmath_t ne = (ix - ix_w) * (iy_s - iy);
+            gridmath_t sw = (ix_e - ix) * (iy - iy_n);
+            gridmath_t se = (ix - ix_w) * (iy - iy_n);
+
+            gridmath_t gix = static_cast<gridmath_t>(0), giy = static_cast<gridmath_t>(0);
+
+            const scalar_t *gOut_ptr_NCHW = grad_output + w + W * (h + H * (C * n));
+
+            index_t NC_offset = (broadcast_input ? 0 : (n * C * Hi * Wi));
+            const scalar_t *inp_ptr_NC = input + NC_offset;
+            const index_t inp_sC = Hi * Wi;
+            const index_t gInp_sC = Hi * Wi;
+            const index_t gOut_sC = H * W;
+            const index_t grad_input_memory_span = (broadcast_input ? 1 : N) * (C * Hi * Wi);
+
+            for (index_t c = 0; c < C; ++c, gOut_ptr_NCHW += gOut_sC, NC_offset += gInp_sC, inp_ptr_NC += inp_sC) {
+                scalar_t gOut = *gOut_ptr_NCHW;
+
+                if (grad_input) {
+                    safe_add_2d_oneoffset(grad_input, iy_n, ix_w, Hi, Wi, static_cast<scalar_t>(nw) * gOut, NC_offset, grad_input_memory_span);
+                    safe_add_2d_oneoffset(grad_input, iy_n, ix_e, Hi, Wi, static_cast<scalar_t>(ne) * gOut, NC_offset, grad_input_memory_span);
+                    safe_add_2d_oneoffset(grad_input, iy_s, ix_w, Hi, Wi, static_cast<scalar_t>(sw) * gOut, NC_offset, grad_input_memory_span);
+                    safe_add_2d_oneoffset(grad_input, iy_s, ix_e, Hi, Wi, static_cast<scalar_t>(se) * gOut, NC_offset, grad_input_memory_span);
+                }
+
+                gridmath_t gOutGMT = static_cast<gridmath_t>(gOut);
+
+                if (within_bounds_2d(iy_n, ix_w, Hi, Wi)) {
+                    gridmath_t nw_val = static_cast<gridmath_t>(inp_ptr_NC[ix_w + Wi * iy_n]);
+                    gix -= nw_val * (iy_s - iy) * gOutGMT;
+                    giy -= nw_val * (ix_e - ix) * gOutGMT;
+                }
+                if (within_bounds_2d(iy_n, ix_e, Hi, Wi)) {
+                    gridmath_t ne_val = static_cast<gridmath_t>(inp_ptr_NC[ix_e + Wi * iy_n]);
+                    gix += ne_val * (iy_s - iy) * gOutGMT;
+                    giy -= ne_val * (ix - ix_w) * gOutGMT;
+                }
+                if (within_bounds_2d(iy_s, ix_w, Hi, Wi)) {
+                    gridmath_t sw_val = static_cast<gridmath_t>(inp_ptr_NC[ix_w + Wi * iy_s]);
+                    gix -= sw_val * (iy - iy_n) * gOutGMT;
+                    giy += sw_val * (ix_e - ix) * gOutGMT;
+                }
+                if (within_bounds_2d(iy_s, ix_e, Hi, Wi)) {
+                    gridmath_t se_val = static_cast<gridmath_t>(inp_ptr_NC[ix_e + Wi * iy_s]);
+                    gix += se_val * (iy - iy_n) * gOutGMT;
+                    giy += se_val * (ix - ix_w) * gOutGMT;
+                }
+            }
+
+            gix = gix_mult * gix;
+            giy = giy_mult * giy;
+
+            if (grad_affine_collect) {
+                _affine_grad_[0] += gix * pax;
+                _affine_grad_[1] += gix * pay;
+                _affine_grad_[2] += gix;
+                _affine_grad_[3] += giy * pax;
+                _affine_grad_[4] += giy * pay;
+                _affine_grad_[5] += giy;
+            }
+
+            if (affine_2d_pregrid) {
+                const grid_t* affine_2d_pregrid_ptr = affine_2d_pregrid + (broadcast_affine_2d_pregrid ? 0 : (4 * n));
+                gridmath_t pax2 = gix * affine_2d_pregrid_ptr[0] + giy * affine_2d_pregrid_ptr[2];
+                gridmath_t pay2 = gix * affine_2d_pregrid_ptr[1] + giy * affine_2d_pregrid_ptr[3];
+                gix = pax2;
+                giy = pay2;
+            }
+
+            if (grad_grid) {
+                if (broadcast_grid) {
+                    index_t grad_grid_index = 2 * (w + W * h);
+                    gpuAtomicAdd(grad_grid + grad_grid_index, static_cast<grid_t>(gix));
+                    gpuAtomicAdd(grad_grid + grad_grid_index + 1, static_cast<grid_t>(giy));
+                } else {
+                    index_t grad_grid_index = 2 * (w + W * (h + H * n));
+                    grad_grid[grad_grid_index] += static_cast<grid_t>(gix);
+                    grad_grid[grad_grid_index + 1] += static_cast<grid_t>(giy);
+                }
+            }
+        } else if (interpolation_mode == GridSamplerInterpolation::Nearest) {
+            if (grad_input) {
+                auto ix_nearest = static_cast<index_t>(std::nearbyint(ix));
+                auto iy_nearest = static_cast<index_t>(std::nearbyint(iy));
+
+                const scalar_t *gOut_ptr_NCHW = grad_output + w + W * (h + H * (C * n));
+                index_t NC_offset = (broadcast_input ? 0 : (n * C * Hi * Wi));
+                const index_t gInp_sC = Hi * Wi;
+                const index_t gOut_sC = H * W;
+                const index_t grad_input_memory_span = (broadcast_input ? 1 : N) * (C * Hi * Wi);
+
+                for (index_t c = 0; c < C; ++c, gOut_ptr_NCHW += gOut_sC, NC_offset += gInp_sC) {
+                    safe_add_2d_oneoffset(grad_input, iy_nearest, ix_nearest,
+                                             Hi, Wi, *gOut_ptr_NCHW,
+                                             NC_offset, grad_input_memory_span);
+                }
+            }
+        }
+    }
+
+    if (grad_affine_collect) {
+        for (int affid = 0; affid < 6; ++affid) {
+            _affine_grad_shared_[threadIdx.x] = _affine_grad_[affid];
+            __syncthreads();
+
+            for (int tid = BLOCKSIZE_3D / 2; tid > 0; tid /= 2) {
+                if (threadIdx.x < tid) {
+                    _affine_grad_shared_[threadIdx.x] += _affine_grad_shared_[threadIdx.x + tid];
+                }
+                __syncthreads();
+            }
+
+            if (threadIdx.x == 0) {
+                if (broadcast_affine_2d) {
+                    const index_t offset = blockIdx.x * 6 + affid;
+                    gpuAtomicAdd(grad_affine_collect + offset, static_cast<grid_t>(_affine_grad_shared_[0]));
+                } else {
+                    const index_t offset = affid + 6 * (blockIdx.x + gridDim.x * n);
+                    grad_affine_collect[offset] = static_cast<grid_t>(_affine_grad_shared_[0]);
+                }
+            }
+            __syncthreads();
+        }
+    }
+}
+
+torch::Tensor fused_grid_sampler_2d_forward_impl(
+    const torch::Tensor &input,
+    const std::optional<torch::Tensor> affine_2d,
+    const std::optional<torch::Tensor> grid,
+    const std::optional<torch::Tensor> affine_2d_pregrid,
+    std::optional<torch::Tensor> output,
+    const int64_t out_H,
+    const int64_t out_W,
+    const float grid_xmin,
+    const float grid_ymin,
+    const float grid_xmax,
+    const float grid_ymax,
+    const bool is_displacement,
+    int64_t interpolation_mode,
+    int64_t padding_mode,
+    bool align_corners) {
+
+    int64_t H, W;
+
+    TORCH_CHECK(input.dim() == 4, "input must be 4D");
+    TORCH_CHECK(input.device().is_cuda(), "input must be on CUDA");
+    TORCH_CHECK(input.is_contiguous(), "input must be contiguous");
+    TORCH_CHECK(grid.has_value() || affine_2d.has_value(), "one of grid or affine_2d must exist");
+
+    c10::DeviceGuard guard(input.device());
+    at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream(input.device().index());
+    at::cuda::CUDAStreamGuard stream_guard(stream);
+
+    int64_t batch_size_max = input.size(0);
+    if (affine_2d.has_value()) {
+        batch_size_max = std::max(batch_size_max, affine_2d.value().size(0));
+    }
+    if (grid.has_value()) {
+        batch_size_max = std::max(batch_size_max, grid.value().size(0));
+    }
+
+    bool broadcast_input = false, broadcast_affine_2d = false, broadcast_grid = false;
+    bool broadcast_grid_affine_pre = false;
+    if (batch_size_max > 1) {
+        if (input.size(0) == 1) {
+            broadcast_input = true;
+        } else if (input.size(0) != batch_size_max) {
+            TORCH_CHECK(false, "input batch size must match batch size of affine_2d or grid");
+        }
+
+        if (affine_2d.has_value() && affine_2d.value().size(0) == 1) {
+            broadcast_affine_2d = true;
+        } else if (affine_2d.has_value() && affine_2d.value().size(0) != batch_size_max) {
+            TORCH_CHECK(false, "affine_2d batch size must match batch size of input or grid");
+        }
+
+        if (affine_2d_pregrid.has_value() && affine_2d_pregrid.value().size(0) == 1) {
+            broadcast_grid_affine_pre = true;
+        } else if (affine_2d_pregrid.has_value() && affine_2d_pregrid.value().size(0) != batch_size_max) {
+            TORCH_CHECK(false, "affine_2d_pregrid batch size must match batch size of input or affine_2d");
+        }
+
+        if (grid.has_value() && grid.value().size(0) == 1) {
+            broadcast_grid = true;
+        } else if (grid.has_value() && grid.value().size(0) != batch_size_max) {
+            TORCH_CHECK(false, "grid batch size must match batch size of input or affine_2d");
+        }
+    }
+
+    if (grid.has_value()) {
+        check_grid_sampler_common_v2(input, grid.value());
+        check_grid_sampler_2d(input, grid.value());
+        TORCH_CHECK(grid.value().is_contiguous(), "grid must be contiguous");
+        H = grid.value().size(1);
+        W = grid.value().size(2);
+    } else {
+        H = out_H;
+        W = out_W;
+    }
+
+    if (affine_2d.has_value()) {
+        TORCH_CHECK(affine_2d.value().dim() == 3, "affine_2d must be (B, 2, 3)");
+        TORCH_CHECK(affine_2d.value().device().is_cuda(), "affine_2d must be on CUDA");
+        TORCH_CHECK(affine_2d.value().is_contiguous(), "affine_2d must be contiguous");
+        TORCH_CHECK(affine_2d.value().size(1) == 2, "affine_2d must be (B, 2, 3)");
+        TORCH_CHECK(affine_2d.value().size(2) == 3, "affine_2d must be (B, 2, 3)");
+    }
+
+    if (affine_2d_pregrid.has_value()) {
+        TORCH_CHECK(affine_2d_pregrid.value().dim() == 3, "affine_2d_pregrid must be (B, 2, 2)");
+        TORCH_CHECK(affine_2d_pregrid.value().device().is_cuda(), "affine_2d_pregrid must be on CUDA");
+        TORCH_CHECK(affine_2d_pregrid.value().is_contiguous(), "affine_2d_pregrid must be contiguous");
+        TORCH_CHECK(affine_2d_pregrid.value().size(1) == 2, "affine_2d_pregrid must be (B, 2, 2)");
+        TORCH_CHECK(affine_2d_pregrid.value().size(2) == 2, "affine_2d_pregrid must be (B, 2, 2)");
+    }
+
+    int64_t N = batch_size_max;
+    int64_t C = input.size(1);
+    if (output.has_value()) {
+        TORCH_CHECK(output.value().dim() == 4, "output must be 4D");
+        TORCH_CHECK(output.value().device().is_cuda(), "output must be on CUDA");
+        TORCH_CHECK(output.value().is_contiguous(), "output must be contiguous");
+        TORCH_CHECK(output.value().size(0) == batch_size_max, "output must be (B, C, H, W)");
+        TORCH_CHECK(output.value().size(1) == C, "output must be (B, C, H, W)");
+        TORCH_CHECK(output.value().size(2) == H, "output must be (B, C, H, W)");
+        TORCH_CHECK(output.value().size(3) == W, "output must be (B, C, H, W)");
+    } else {
+        output.emplace(torch::zeros({batch_size_max, C, H, W}, input.options()));
+    }
+
+    int64_t count = N * H * W;
+    int64_t Hi = input.size(2);
+    int64_t Wi = input.size(3);
+
+    auto grid_scalar_type = input.scalar_type();
+    if (grid.has_value()) {
+        grid_scalar_type = grid.value().scalar_type();
+    } else if (affine_2d.has_value()) {
+        grid_scalar_type = affine_2d.value().scalar_type();
+    }
+
+    if (count > 0) {
+        AT_DISPATCH_FLOATING_TYPES_AND(
+        at::ScalarType::BFloat16,
+        input.scalar_type(), "fused_grid_sampler_2d_forward_kernel", [&] {
+            using input_t = scalar_t;
+            AT_DISPATCH_FLOATING_TYPES_AND(
+            at::ScalarType::BFloat16,
+            grid_scalar_type, "fused_grid_sampler_2d_forward_kernel_sub", [&] {
+                using grid_t = scalar_t;
+
+                bool grid32bit;
+                if (grid.has_value()) {
+                    grid32bit = canUse32BitIndexMath(grid.value());
+                } else {
+                    grid32bit = true;
+                }
+                if (canUse32BitIndexMath(input) && grid32bit &&
+                    canUse32BitIndexMath(output.value())) {
+                    fused_grid_sampler_2d_forward_kernel<input_t, grid_t>
+                    <<<GET_BLOCKS(count, 512), 512, 0, stream>>>(
+                        static_cast<int>(count),
+                        input.data_ptr<input_t>(),
+                        grid.has_value() ? grid.value().data_ptr<grid_t>() : nullptr,
+                        affine_2d.has_value() ? affine_2d.value().data_ptr<grid_t>() : nullptr,
+                        affine_2d_pregrid.has_value() ? affine_2d_pregrid.value().data_ptr<grid_t>() : nullptr,
+                        static_cast<int>(N), static_cast<int>(C), static_cast<int>(Hi), static_cast<int>(Wi),
+                        static_cast<int>(H), static_cast<int>(W),
+                        grid_xmin, grid_ymin, grid_xmax, grid_ymax,
+                        is_displacement,
+                        output.value().data_ptr<input_t>(),
+                        static_cast<GridSamplerInterpolation>(interpolation_mode),
+                        static_cast<GridSamplerPadding>(padding_mode),
+                        align_corners,
+                        broadcast_input,
+                        broadcast_affine_2d,
+                        broadcast_grid,
+                        broadcast_grid_affine_pre
+                    );
+                    C10_CUDA_KERNEL_LAUNCH_CHECK();
+                } else {
+                    fused_grid_sampler_2d_forward_kernel<input_t, grid_t>
+                    <<<GET_BLOCKS(count, 512), 512, 0, stream>>>(
+                        count,
+                        input.data_ptr<input_t>(),
+                        grid.has_value() ? grid.value().data_ptr<grid_t>() : nullptr,
+                        affine_2d.has_value() ? affine_2d.value().data_ptr<grid_t>() : nullptr,
+                        affine_2d_pregrid.has_value() ? affine_2d_pregrid.value().data_ptr<grid_t>() : nullptr,
+                        N, C, Hi, Wi,
+                        H, W,
+                        grid_xmin, grid_ymin, grid_xmax, grid_ymax,
+                        is_displacement,
+                        output.value().data_ptr<input_t>(),
+                        static_cast<GridSamplerInterpolation>(interpolation_mode),
+                        static_cast<GridSamplerPadding>(padding_mode),
+                        align_corners,
+                        broadcast_input,
+                        broadcast_affine_2d,
+                        broadcast_grid,
+                        broadcast_grid_affine_pre
+                    );
+                    C10_CUDA_KERNEL_LAUNCH_CHECK();
+                }
+            });
+        });
+    }
+    return output.value();
+}
+
+void fused_grid_sampler_2d_backward_impl(
+        const torch::Tensor &input,
+        const std::optional<torch::Tensor> affine_2d,
+        const std::optional<torch::Tensor> grid,
+        const std::optional<torch::Tensor> affine_2d_pregrid,
+        const torch::Tensor &grad_output,
+        const std::optional<torch::Tensor> &grad_input,
+        const std::optional<torch::Tensor> &grad_affine,
+        const std::optional<torch::Tensor> &grad_grid,
+        const int64_t out_H,
+        const int64_t out_W,
+        const float grid_xmin,
+        const float grid_ymin,
+        const float grid_xmax,
+        const float grid_ymax,
+        const bool is_displacement,
+        int64_t interpolation_mode,
+        int64_t padding_mode,
+        bool align_corners) {
+
+        int64_t H, W;
+        TORCH_CHECK(input.dim() == 4, "input must be 4D");
+        TORCH_CHECK(input.device().is_cuda(), "input must be on CUDA");
+        TORCH_CHECK(input.is_contiguous(), "input must be contiguous");
+        TORCH_CHECK(grid.has_value() || affine_2d.has_value(), "one of grid or affine_2d must exist");
+        TORCH_CHECK(grad_input.has_value() || grad_affine.has_value() || grad_grid.has_value(), "at least one of grad_input, grad_affine, grad_grid must exist");
+
+        c10::DeviceGuard guard(input.device());
+        at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream(input.device().index());
+        at::cuda::CUDAStreamGuard stream_guard(stream);
+
+        int64_t batch_size_max = input.size(0);
+        if (affine_2d.has_value()) {
+            batch_size_max = std::max(batch_size_max, affine_2d.value().size(0));
+        }
+        if (grid.has_value()) {
+            batch_size_max = std::max(batch_size_max, grid.value().size(0));
+        }
+        if (affine_2d_pregrid.has_value()) {
+            batch_size_max = std::max(batch_size_max, affine_2d_pregrid.value().size(0));
+        }
+
+        bool broadcast_input = false, broadcast_affine_2d = false, broadcast_grid = false, broadcast_grid_affine_pre = false;
+        if (batch_size_max > 1) {
+            if (input.size(0) == 1) {
+                broadcast_input = true;
+            } else if (input.size(0) != batch_size_max) {
+                TORCH_CHECK(false, "input batch size must match batch size of affine_2d or grid");
+            }
+
+            if (affine_2d.has_value() && affine_2d.value().size(0) == 1) {
+                broadcast_affine_2d = true;
+            } else if (affine_2d.has_value() && affine_2d.value().size(0) != batch_size_max) {
+                TORCH_CHECK(false, "affine_2d batch size must match batch size of input or grid");
+            }
+
+            if (grid.has_value() && grid.value().size(0) == 1) {
+                broadcast_grid = true;
+            } else if (grid.has_value() && grid.value().size(0) != batch_size_max) {
+                TORCH_CHECK(false, "grid batch size must match batch size of input or affine_2d");
+            }
+
+            if (affine_2d_pregrid.has_value() && affine_2d_pregrid.value().size(0) == 1) {
+                broadcast_grid_affine_pre = true;
+            } else if (affine_2d_pregrid.has_value() && affine_2d_pregrid.value().size(0) != batch_size_max) {
+                TORCH_CHECK(false, "affine_2d_pregrid batch size must match batch size of input or grid");
+            }
+        }
+
+        bool input_requires_grad = grad_input.has_value();
+        bool affine_requires_grad = grad_affine.has_value() && affine_2d.has_value();
+        bool grid_requires_grad = grad_grid.has_value() && grid.has_value();
+
+        if (static_cast<GridSamplerInterpolation>(interpolation_mode) == GridSamplerInterpolation::Nearest) {
+            grid_requires_grad = false;
+            affine_requires_grad = false;
+        }
+        if (grid.has_value() && !is_displacement) {
+            affine_requires_grad = false;
+        }
+
+        if (!grid_requires_grad && !affine_requires_grad && !input_requires_grad) {
+            return;
+        }
+
+        if (grid.has_value()) {
+            check_grid_sampler_common_v2(input, grid.value());
+            check_grid_sampler_2d(input, grid.value());
+            TORCH_CHECK(grid.value().is_contiguous(), "grid must be contiguous");
+            H = grid.value().size(1);
+            W = grid.value().size(2);
+        } else {
+            H = out_H;
+            W = out_W;
+        }
+
+        if (affine_2d.has_value()) {
+            TORCH_CHECK(affine_2d.value().dim() == 3, "affine_2d must be (B, 2, 3)");
+            TORCH_CHECK(affine_2d.value().device().is_cuda(), "affine_2d must be on CUDA");
+            TORCH_CHECK(affine_2d.value().is_contiguous(), "affine_2d must be contiguous");
+            TORCH_CHECK(affine_2d.value().size(1) == 2, "affine_2d must be (B, 2, 3)");
+            TORCH_CHECK(affine_2d.value().size(2) == 3, "affine_2d must be (B, 2, 3)");
+        }
+        if (affine_2d_pregrid.has_value()) {
+            TORCH_CHECK(affine_2d_pregrid.value().dim() == 3, "affine_2d_pregrid must be (B, 2, 2)");
+            TORCH_CHECK(affine_2d_pregrid.value().device().is_cuda(), "affine_2d_pregrid must be on CUDA");
+            TORCH_CHECK(affine_2d_pregrid.value().is_contiguous(), "affine_2d_pregrid must be contiguous");
+            TORCH_CHECK(affine_2d_pregrid.value().size(1) == 2, "affine_2d_pregrid must be (B, 2, 2)");
+            TORCH_CHECK(affine_2d_pregrid.value().size(2) == 2, "affine_2d_pregrid must be (B, 2, 2)");
+        }
+
+        int64_t N = batch_size_max;
+        int64_t C = input.size(1);
+
+        int64_t count = H * W;
+        int64_t Hi = input.size(2);
+        int64_t Wi = input.size(3);
+
+        dim3 blockSize3(BLOCKSIZE_3D, 1, 1);
+        int64_t gridSize = GET_BLOCKS(count, BLOCKSIZE_3D);
+        gridSize = std::min(gridSize, static_cast<int64_t>(65536));
+        dim3 gridSize3(gridSize, batch_size_max, 1);
+
+        torch::Tensor grad_affine_collect;
+        if (affine_requires_grad) {
+            grad_affine_collect = torch::zeros({affine_2d.value().size(0), gridSize, 2, 3}, grad_affine.value().options());
+        }
+
+        auto grid_scalar_type = grad_output.scalar_type();
+        if (grid.has_value()) {
+            grid_scalar_type = grid.value().scalar_type();
+        } else if (affine_2d.has_value()) {
+            grid_scalar_type = affine_2d.value().scalar_type();
+        }
+
+        if (count > 0) {
+            AT_DISPATCH_FLOATING_TYPES_AND(
+            at::ScalarType::BFloat16,
+            input.scalar_type(), "fused_grid_sampler_2d_backward_kernel", [&] {
+                using input_t = scalar_t;
+                AT_DISPATCH_FLOATING_TYPES_AND(
+                at::ScalarType::BFloat16, grid_scalar_type, "fused_grid_sampler_2d_backward_kernel_sub", [&] {
+                    using grid_t = scalar_t;
+                    bool grid32bit;
+                    if (grid.has_value()) {
+                        grid32bit = canUse32BitIndexMath(grid.value());
+                    } else {
+                        grid32bit = true;
+                    }
+                    if (canUse32BitIndexMath(input) && grid32bit &&
+                        canUse32BitIndexMath(grad_output)) {
+                        fused_grid_sampler_2d_backward_kernel<input_t, grid_t>
+                        <<<gridSize3, blockSize3, 0, stream>>>(
+                            static_cast<int>(count),
+                            input.data_ptr<input_t>(),
+                            grid.has_value() ? grid.value().data_ptr<grid_t>() : nullptr,
+                            affine_2d.has_value() ? affine_2d.value().data_ptr<grid_t>() : nullptr,
+                            affine_2d_pregrid.has_value() ? affine_2d_pregrid.value().data_ptr<grid_t>() : nullptr,
+                            grad_output.data_ptr<input_t>(),
+                            input_requires_grad ? grad_input.value().data_ptr<input_t>() : nullptr,
+                            affine_requires_grad ? grad_affine_collect.data_ptr<grid_t>() : nullptr,
+                            grid_requires_grad ? grad_grid.value().data_ptr<grid_t>() : nullptr,
+                            static_cast<int>(N), static_cast<int>(C), static_cast<int>(Hi), static_cast<int>(Wi),
+                            static_cast<int>(H), static_cast<int>(W),
+                            grid_xmin, grid_ymin, grid_xmax, grid_ymax,
+                            is_displacement,
+                            static_cast<GridSamplerInterpolation>(interpolation_mode),
+                            static_cast<GridSamplerPadding>(padding_mode),
+                            align_corners,
+                            broadcast_input,
+                            broadcast_affine_2d,
+                            broadcast_grid,
+                            broadcast_grid_affine_pre
+                        );
+                        C10_CUDA_KERNEL_LAUNCH_CHECK();
+                    } else {
+                        fused_grid_sampler_2d_backward_kernel<input_t, grid_t>
+                        <<<gridSize3, blockSize3, 0, stream>>>(
+                            count,
+                            input.data_ptr<input_t>(),
+                            grid.has_value() ? grid.value().data_ptr<grid_t>() : nullptr,
+                            affine_2d.has_value() ? affine_2d.value().data_ptr<grid_t>() : nullptr,
+                            affine_2d_pregrid.has_value() ? affine_2d_pregrid.value().data_ptr<grid_t>() : nullptr,
+                            grad_output.data_ptr<input_t>(),
+                            input_requires_grad ? grad_input.value().data_ptr<input_t>() : nullptr,
+                            affine_requires_grad ? grad_affine_collect.data_ptr<grid_t>() : nullptr,
+                            grid_requires_grad ? grad_grid.value().data_ptr<grid_t>() : nullptr,
+                            N, C, Hi, Wi,
+                            H, W,
+                            grid_xmin, grid_ymin, grid_xmax, grid_ymax,
+                            is_displacement,
+                            static_cast<GridSamplerInterpolation>(interpolation_mode),
+                            static_cast<GridSamplerPadding>(padding_mode),
+                            align_corners,
+                            broadcast_input,
+                            broadcast_affine_2d,
+                            broadcast_grid,
+                            broadcast_grid_affine_pre
+                        );
+                        C10_CUDA_KERNEL_LAUNCH_CHECK();
+                    }
+                });
+        });
+    }
+
+    if (affine_requires_grad) {
+        grad_affine.value().copy_(grad_affine_collect.sum(1));
+    }
+}

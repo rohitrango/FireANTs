@@ -855,3 +855,646 @@ void fused_grid_composer_3d_backward_impl(
         grad_affine.value().copy_(grad_affine_collect.sum(1));
     }
 }
+
+// ============================================================
+// 2D fused grid composer (B, H, W, 2) with optional affine
+// ============================================================
+
+template<typename scalar_t, typename index_t>
+__forceinline__ __device__
+void safe_add_2d_oneoffset_composer(
+                scalar_t *data, 
+                int h, int w,
+                int H, int W,
+                scalar_t delta,
+                const index_t NC_offset,
+                const index_t memory_span) {
+  if (within_bounds_2d(h, w, H, W)) {
+    index_t offset = NC_offset + 2 * (w + W * h);
+      gpuAtomicAdd(data + offset, delta);
+  }
+}
+
+template <typename scalar_t, typename index_t>
+C10_LAUNCH_BOUNDS_1(BLOCKSIZE_3D)
+__global__ void fused_grid_composer_2d_forward_kernel(
+    const index_t count,
+    const scalar_t* input,
+    const scalar_t* grid,
+    const scalar_t* affine_2d,
+    const index_t N,
+    const index_t Hi,
+    const index_t Wi,
+    const index_t H,
+    const index_t W,
+    const float grid_xmin,
+    const float grid_ymin,
+    const float grid_xmax,
+    const float grid_ymax,
+    scalar_t* output,
+    const bool align_corners,
+    const bool broadcast_input,
+    const bool broadcast_affine_2d,
+    const bool broadcast_grid
+    ) {
+
+    using opmath_t = at::opmath_type<scalar_t>;
+    // fix these values
+    const GridSamplerPadding padding_mode = GridSamplerPadding::Zeros;
+
+    CUDA_KERNEL_LOOP_TYPE(index, count, index_t) {
+        const index_t w = index % W;
+        const index_t h = (index / W) % H;
+        const index_t n = index / (H * W);
+        // we have 2 coordinates for each grid point, so we multiply the index by 2
+        const index_t grid_offset = 2 * (w + W * (h + (broadcast_grid ? 0 : (H * n))));
+
+        // this is only affine coordinate
+        opmath_t ix = 0, iy = 0;
+        opmath_t x = 0, y = 0;
+        ix = w * (grid_xmax - grid_xmin) / (W-1) + grid_xmin;
+        iy = h * (grid_ymax - grid_ymin) / (H-1) + grid_ymin;
+        if (!grid) {
+            // if grid is not provided, then affine matrix is multiplied to input coordinate
+            // displacement is ignored
+            // just affine coordiante here, we load the entire affine matrix
+            const scalar_t* affine_2d_ptr = affine_2d + (broadcast_affine_2d ? 0 : (6 * n));
+            // get normalized coordinate
+            x = affine_2d_ptr[0] * ix + affine_2d_ptr[1] * iy + affine_2d_ptr[2];
+            y = affine_2d_ptr[3] * ix + affine_2d_ptr[4] * iy + affine_2d_ptr[5];
+        }
+        else {
+            // grid is provided, load the grid coordinate            // get grid coordinate
+            // apply affine matrix
+            if(affine_2d) {
+                const scalar_t* affine_2d_ptr = affine_2d + (broadcast_affine_2d ? 0 : (6 * n));
+                x = affine_2d_ptr[0] * ix + affine_2d_ptr[1] * iy + affine_2d_ptr[2];
+                y = affine_2d_ptr[3] * ix + affine_2d_ptr[4] * iy + affine_2d_ptr[5];
+            }
+            else {
+                x = ix; y = iy;
+            }
+            // add to displacement
+            x += grid[grid_offset];
+            y += grid[grid_offset + 1];
+        }
+
+        // get the corresponding input x, y co-ordinates from grid
+        ix = grid_sampler_compute_source_index(x, Wi, padding_mode, align_corners);
+        iy = grid_sampler_compute_source_index(y, Hi, padding_mode, align_corners);
+
+        // get corner pixel values from (x, y)
+        // for 2d, we used north-east-south-west
+        index_t ix_nw = static_cast<index_t>(::floor(ix));
+        index_t iy_nw = static_cast<index_t>(::floor(iy));
+
+        index_t ix_ne = ix_nw + 1;
+        index_t iy_ne = iy_nw;
+
+        index_t ix_sw = ix_nw;
+        index_t iy_sw = iy_nw + 1;
+
+        index_t ix_se = ix_nw + 1;
+        index_t iy_se = iy_nw + 1;
+
+        // get surfaces to each neighbor:
+        opmath_t nw = (ix_se - ix)    * (iy_se - iy);
+        opmath_t ne = (ix    - ix_sw) * (iy_sw - iy);
+        opmath_t sw = (ix_ne - ix)    * (iy    - iy_ne);
+        opmath_t se = (ix    - ix_nw) * (iy    - iy_nw);
+
+        // get input and output pointers
+        const scalar_t* inp_ptr_NC = input + (broadcast_input ? 0 : (n * (Hi * Wi * 2)));
+        scalar_t* out_ptr_NCHW = output + 2 * (w + W * (h + H * n)); // add batch, height, width offset
+
+        #pragma unroll
+        for (index_t c = 0; c < 2; ++c, inp_ptr_NC += 1, out_ptr_NCHW += 1) {
+            //   (c, iy_nw, ix_nw) * nw + (c, iy_ne, ix_ne) * ne
+            // + (c, iy_sw, ix_sw) * sw + (c, iy_se, ix_se) * se
+            opmath_t out_acc = 0;
+            if (within_bounds_2d(iy_nw, ix_nw, Hi, Wi)) {
+                out_acc += inp_ptr_NC[2 * (ix_nw + Wi * iy_nw)] * nw;
+            }
+            if (within_bounds_2d(iy_ne, ix_ne, Hi, Wi)) {
+                out_acc += inp_ptr_NC[2 * (ix_ne + Wi * iy_ne)] * ne;
+            }
+            if (within_bounds_2d(iy_sw, ix_sw, Hi, Wi)) {
+                out_acc += inp_ptr_NC[2 * (ix_sw + Wi * iy_sw)] * sw;
+            }
+            if (within_bounds_2d(iy_se, ix_se, Hi, Wi)) {
+                out_acc += inp_ptr_NC[2 * (ix_se + Wi * iy_se)] * se;
+            }
+            *out_ptr_NCHW += out_acc;
+        }
+    }
+}
+
+template <typename scalar_t, typename index_t>
+C10_LAUNCH_BOUNDS_1(BLOCKSIZE_3D)
+__global__ void fused_grid_composer_2d_backward_kernel(
+        const index_t count, /* H * W */
+        const scalar_t* input,
+        const scalar_t* grid,
+        const scalar_t* affine_2d,
+        // grads
+        const scalar_t* grad_output,
+        scalar_t* grad_input,
+        scalar_t* grad_affine_collect,
+        scalar_t* grad_grid,
+        // input size parameters
+        const index_t N,
+        const index_t Hi,
+        const index_t Wi,
+        const index_t H,
+        const index_t W,
+        const float grid_xmin,
+        const float grid_ymin,
+        const float grid_xmax,
+        const float grid_ymax,
+        const bool align_corners,
+        const bool broadcast_input,
+        const bool broadcast_affine_2d,
+        const bool broadcast_grid) {
+
+    // batch index is separated from the other dimensions
+    const index_t n = blockIdx.y;
+
+    // collect affine gradients
+    scalar_t _affine_grad_[6];
+    #pragma unroll
+    for(index_t i = 0; i < 6; ++i) {
+        _affine_grad_[i] = 0;
+    }
+    // shared memory to take affine gradient sum over block
+    __shared__ scalar_t _affine_grad_shared_[BLOCKSIZE_3D];   
+    _affine_grad_shared_[threadIdx.x] = 0;
+
+    const GridSamplerPadding padding_mode = GridSamplerPadding::Zeros;
+
+    // also collect affine map locally to avoid loading multiple times
+    scalar_t _affine_map_[6];
+    if (affine_2d) {
+        const index_t offset = broadcast_affine_2d ? 0 : (6 * n);
+        #pragma unroll
+        for (index_t i = 0; i < 6; ++i) {
+            _affine_map_[i] = affine_2d[offset + i];
+        }
+    }
+
+    // loop over
+    CUDA_KERNEL_LOOP_TYPE(index, count, index_t) {
+        const index_t w = index % W;
+        const index_t h = (index / W) % H;
+        const index_t grid_offset = 2 * (w + W * (h + (broadcast_grid ? 0 : (H * n))));
+
+        // get the corresponding input x, y co-ordinates from grid
+        scalar_t pax, pay;   // pax = pre-affine x
+        scalar_t ix, iy;
+        scalar_t x, y;
+
+        ix = w * (grid_xmax - grid_xmin) / (W-1) + grid_xmin;
+        iy = h * (grid_ymax - grid_ymin) / (H-1) + grid_ymin;        // get grid coordinates  phi = (A? * x + u?)
+        pax = ix; pay = iy;
+        // calculate Ax + grid
+        if(affine_2d) {
+            x = _affine_map_[0] * ix + _affine_map_[1] * iy + _affine_map_[2];
+            y = _affine_map_[3] * ix + _affine_map_[4] * iy + _affine_map_[5];
+        }
+        else {
+            x = ix; y = iy;
+        }
+
+        if (grid) {
+            x += grid[grid_offset];
+            y += grid[grid_offset + 1];
+        }
+
+        // multipliers for gradients on ix, iy
+        scalar_t gix_mult, giy_mult;
+        ix = grid_sampler_compute_source_index_set_grad(x, Wi, padding_mode, align_corners, &gix_mult);
+        iy = grid_sampler_compute_source_index_set_grad(y, Hi, padding_mode, align_corners, &giy_mult);
+
+        // for 2d
+        index_t ix_nw = static_cast<index_t>(std::floor(ix));
+        index_t iy_nw = static_cast<index_t>(std::floor(iy));
+
+        index_t ix_ne = ix_nw + 1;
+        index_t iy_ne = iy_nw;
+
+        index_t ix_sw = ix_nw;
+        index_t iy_sw = iy_nw + 1;
+
+        index_t ix_se = ix_nw + 1;
+        index_t iy_se = iy_nw + 1;
+
+        // get surfaces to each neighbor:
+        scalar_t nw = (ix_se - ix)        * (iy_se - iy);
+        scalar_t ne = (ix        - ix_sw) * (iy_sw - iy);
+        scalar_t sw = (ix_ne - ix)        * (iy        - iy_ne);
+        scalar_t se = (ix        - ix_nw) * (iy        - iy_nw);
+
+        scalar_t gix = static_cast<scalar_t>(0), giy = static_cast<scalar_t>(0);
+        // get grad_output pointer
+        const scalar_t *gOut_ptr_NCHW = grad_output + 2 * (w + W * (h + H * n));
+        // offset for grad_input
+        index_t NC_offset = (broadcast_input ? 0 : (n * 2 * Hi * Wi));
+        const scalar_t *inp_ptr_NC = input + NC_offset;
+        // get offsets to add
+        const index_t grad_input_memory_span = (broadcast_input ? 1 : N) * (2 * Hi * Wi);
+        
+        #pragma unroll
+        for (index_t c = 0; c < 2; ++c, gOut_ptr_NCHW += 1, NC_offset += 1, inp_ptr_NC += 1) {
+            scalar_t gOut = *gOut_ptr_NCHW;
+            // calculate and set grad_input. See Note [Passing pointer and offset to fastAtomicAdd].
+            if (grad_input) {
+                safe_add_2d_oneoffset_composer(grad_input, iy_nw, ix_nw, Hi, Wi, nw * gOut, NC_offset, grad_input_memory_span);
+                safe_add_2d_oneoffset_composer(grad_input, iy_ne, ix_ne, Hi, Wi, ne * gOut, NC_offset, grad_input_memory_span);
+                safe_add_2d_oneoffset_composer(grad_input, iy_sw, ix_sw, Hi, Wi, sw * gOut, NC_offset, grad_input_memory_span);
+                safe_add_2d_oneoffset_composer(grad_input, iy_se, ix_se, Hi, Wi, se * gOut, NC_offset, grad_input_memory_span);
+            }
+            // // calculate grad_grid
+            if (within_bounds_2d(iy_nw, ix_nw, Hi, Wi)) {
+                scalar_t nw_val = inp_ptr_NC[2 * (ix_nw + Wi * iy_nw)];
+                gix -= nw_val * (iy_se - iy)        * gOut;
+                giy -= nw_val * (ix_se - ix)        * gOut;
+            }
+            if (within_bounds_2d(iy_ne, ix_ne, Hi, Wi)) {
+                scalar_t ne_val = inp_ptr_NC[2 * (ix_ne + Wi * iy_ne)];
+                gix += ne_val * (iy_sw - iy)        * gOut;
+                giy -= ne_val * (ix        - ix_sw) * gOut;
+            }
+            if (within_bounds_2d(iy_sw, ix_sw, Hi, Wi)) {
+                scalar_t sw_val = inp_ptr_NC[2 * (ix_sw + Wi * iy_sw)];
+                gix -= sw_val * (iy - iy_ne)        * gOut;
+                giy += sw_val * (ix_ne - ix)        * gOut;
+            }
+            if (within_bounds_2d(iy_se, ix_se, Hi, Wi)) {
+                scalar_t se_val = inp_ptr_NC[2 * (ix_se + Wi * iy_se)];
+                gix += se_val * (iy - iy_nw)        * gOut;
+                giy += se_val * (ix        - ix_nw) * gOut;
+            }
+        }
+
+        // multiply by grad_output multiplier
+        gix = gix_mult * gix;
+        giy = giy_mult * giy;
+
+        // calculate grad_grid
+        if (grad_grid) {
+            if (broadcast_grid) {
+                index_t grad_grid_index = 2 * (w + W * h);
+                gpuAtomicAdd(grad_grid + grad_grid_index, gix);
+                gpuAtomicAdd(grad_grid + grad_grid_index + 1, giy);
+            } 
+            else {
+                index_t grad_grid_index = 2 * (w + W * (h + H * n));
+                grad_grid[grad_grid_index] = gix;
+                grad_grid[grad_grid_index + 1] = giy;
+            }
+        }
+
+        // if affine_2d grad is required
+        if (grad_affine_collect) {
+            // add it to local registers
+            _affine_grad_[0] += gix * pax;
+            _affine_grad_[1] += gix * pay;
+            _affine_grad_[2] += gix;
+            _affine_grad_[3] += giy * pax;
+            _affine_grad_[4] += giy * pay;
+            _affine_grad_[5] += giy;
+        }
+    }
+
+    // // if affine_2d grad is required
+    if (grad_affine_collect) {
+        // add it to local registers
+        #pragma unroll
+        for (int affid = 0; affid < 6; ++affid) {
+            // put it in shared memory to compute the sum over the batch dimension
+            _affine_grad_shared_[threadIdx.x] = _affine_grad_[affid];
+            __syncthreads();
+            
+            // reduce over threads
+            for (int tid = BLOCKSIZE_3D / 2; tid > 0; tid /= 2) {
+                if (threadIdx.x < tid) {
+                    _affine_grad_shared_[threadIdx.x] += _affine_grad_shared_[threadIdx.x + tid];
+                }
+                __syncthreads();
+            }
+            
+            // write to global memory
+            if (threadIdx.x == 0) {
+                // broadcasted, we need to perform safe atomic add to avoid conflicts with other threads along batch dimension
+                if (broadcast_affine_2d) {
+                    const index_t offset = blockIdx.x*6 + affid;
+                    gpuAtomicAdd(grad_affine_collect + offset, _affine_grad_shared_[0]);
+                }
+                else {
+                    const index_t offset = affid + 6 * (blockIdx.x + gridDim.x * n);
+                    grad_affine_collect[offset] = _affine_grad_shared_[0];
+                }
+            }
+        }
+    }
+}
+
+torch::Tensor fused_grid_composer_2d_forward_impl(
+    const torch::Tensor &input, 
+    const std::optional<torch::Tensor> affine_2d,
+    const torch::Tensor grid,
+    const float grid_xmin, 
+    const float grid_ymin,
+    const float grid_xmax,
+    const float grid_ymax,
+    bool align_corners,
+    std::optional<torch::Tensor> output) {
+
+    int64_t H, W;
+    TORCH_CHECK(input.dim() == 4, "input must be 4D");
+    TORCH_CHECK(input.device().is_cuda(), "input must be on CUDA");
+    TORCH_CHECK(input.is_contiguous(), "input must be contiguous");
+    TORCH_CHECK(input.size(3) == 2, "input must have 2 channels");
+
+    // device and stream guards
+    c10::DeviceGuard guard(input.device());
+    at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream(input.device().index());
+    at::cuda::CUDAStreamGuard stream_guard(stream);
+
+    // see if we need to broadcast any variable
+    int64_t batch_size_max = input.size(0);
+    if (affine_2d.has_value()) {
+        batch_size_max = std::max(batch_size_max, affine_2d.value().size(0));
+    }
+    // check grid and inputs
+    check_grid_composer_common_v2(input, grid);
+    batch_size_max = std::max(batch_size_max, grid.size(0));
+
+    // broadcast none by default 
+    bool broadcast_input = false, broadcast_affine_2d = false, broadcast_grid = false;
+    if (batch_size_max > 1) {
+        if (input.size(0) == 1) {
+            broadcast_input = true;
+        } else if (input.size(0) != batch_size_max) {
+            TORCH_CHECK(false, "input batch size must match batch size of affine_2d or grid");
+        }
+
+        // broadcast affine_2d if it exists
+        if (affine_2d.has_value() && affine_2d.value().size(0) == 1) {
+            broadcast_affine_2d = true;
+        } else if (affine_2d.has_value() && affine_2d.value().size(0) != batch_size_max) {  
+            TORCH_CHECK(false, "affine_2d batch size must match batch size of input or grid");
+        }
+        
+        // broadcast grid if it exists
+        if (grid.size(0) == 1) {
+            broadcast_grid = true;
+        } else if (grid.size(0) != batch_size_max) {
+            TORCH_CHECK(false, "grid batch size must match batch size of input or affine_2d");
+        }
+    }
+
+    // H, W will be determined by grid
+    TORCH_CHECK(grid.is_contiguous(), "grid must be contiguous");
+    TORCH_CHECK(grid.size(3) == 2, "grid must have 2 channels");
+    H = grid.size(1);
+    W = grid.size(2);
+
+    if (affine_2d.has_value()) {
+        TORCH_CHECK(affine_2d.value().dim() == 3, "affine_2d must be (B, 2, 3)");
+        TORCH_CHECK(affine_2d.value().device().is_cuda(), "affine_2d must be on CUDA");
+        TORCH_CHECK(affine_2d.value().is_contiguous(), "affine_2d must be contiguous");
+        TORCH_CHECK(affine_2d.value().size(1) == 2, "affine_2d must be (B, 2, 3)");
+        TORCH_CHECK(affine_2d.value().size(2) == 3, "affine_2d must be (B, 2, 3)");
+    }
+
+    // define output
+    int64_t N = batch_size_max;
+    // specify output
+    if (output.has_value()) {
+        TORCH_CHECK(output.value().is_contiguous(), "output must be contiguous");
+        TORCH_CHECK(output.value().size(3) == 2, "output must have 2 channels");
+        TORCH_CHECK(output.value().device().is_cuda(), "output must be on CUDA");
+        TORCH_CHECK(output.value().device() == input.device(), "output must be on the same device as input");
+    } else {
+        output.emplace(torch::zeros({batch_size_max, H, W, 2}, input.options()));
+    }
+
+    // input size parameters
+    int64_t count = N * H * W;
+    // input spatial size parameters
+    int64_t Hi = input.size(1);
+    int64_t Wi = input.size(2);
+
+    if (count > 0) {
+        AT_DISPATCH_FLOATING_TYPES_AND2(
+        at::ScalarType::Half, at::ScalarType::BFloat16,
+        input.scalar_type(), "fused_grid_composer_2d_forward_kernel", [&] {
+            // check if grid is 32-bit
+            if (canUse32BitIndexMath(input) && canUse32BitIndexMath(grid) &&
+                canUse32BitIndexMath(output.value())) {
+                fused_grid_composer_2d_forward_kernel<scalar_t>
+                <<<GET_BLOCKS(count, 512), 512, 0, stream>>>(
+                    static_cast<int>(count),
+                    input.data_ptr<scalar_t>(),
+                    grid.data_ptr<scalar_t>(),
+                    affine_2d.has_value() ? affine_2d.value().data_ptr<scalar_t>() : nullptr,
+                    static_cast<int>(N), static_cast<int>(Hi), static_cast<int>(Wi),
+                    static_cast<int>(H), static_cast<int>(W),
+                    grid_xmin, grid_ymin, grid_xmax, grid_ymax,
+                    // output
+                    output.value().data_ptr<scalar_t>(),
+                    align_corners,
+                    broadcast_input,
+                    broadcast_affine_2d,
+                    broadcast_grid
+                );
+                C10_CUDA_KERNEL_LAUNCH_CHECK();
+            } else {
+                fused_grid_composer_2d_forward_kernel<scalar_t>
+                <<<GET_BLOCKS(count, 512), 512, 0, stream>>>(
+                    count,
+                    input.data_ptr<scalar_t>(),
+                    grid.data_ptr<scalar_t>(),
+                    affine_2d.has_value() ? affine_2d.value().data_ptr<scalar_t>() : nullptr,
+                    N, Hi, Wi,
+                    H, W,
+                    grid_xmin, grid_ymin, grid_xmax, grid_ymax,
+                    output.value().data_ptr<scalar_t>(),
+                    align_corners,
+                    broadcast_input,
+                    broadcast_affine_2d,
+                    broadcast_grid
+                    );
+                C10_CUDA_KERNEL_LAUNCH_CHECK();
+            }
+        });
+    }
+    return output.value();
+}
+
+void fused_grid_composer_2d_backward_impl(
+    const torch::Tensor &input, 
+    const std::optional<torch::Tensor> affine_2d,
+    const torch::Tensor grid,
+    const torch::Tensor &grad_output,
+    const std::optional<torch::Tensor> &grad_input,
+    const std::optional<torch::Tensor> &grad_affine,
+    const std::optional<torch::Tensor> &grad_grid,
+    const float grid_xmin, 
+    const float grid_ymin,
+    const float grid_xmax,
+    const float grid_ymax,
+    bool align_corners) {
+
+    TORCH_CHECK(input.dim() == 4, "input must be 4D");
+    TORCH_CHECK(input.device().is_cuda(), "input must be on CUDA");
+    TORCH_CHECK(input.is_contiguous(), "input must be contiguous");
+    TORCH_CHECK(input.size(3) == 2, "input must have 2 channels");
+
+    TORCH_CHECK(grad_input.has_value() || grad_affine.has_value() || grad_grid.has_value(), "at least one of grad_input, grad_affine, grad_grid must exist");
+
+    // device and stream guards
+    c10::DeviceGuard guard(input.device());
+    at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream(input.device().index());
+    at::cuda::CUDAStreamGuard stream_guard(stream);
+
+    // see if we need to broadcast any variable
+    int64_t batch_size_max = input.size(0);
+    if (affine_2d.has_value()) {
+        batch_size_max = std::max(batch_size_max, affine_2d.value().size(0));
+    }
+    check_grid_composer_common_v2(input, grid);
+    batch_size_max = std::max(batch_size_max, grid.size(0));
+    TORCH_CHECK(grad_output.is_contiguous(), "grad_output must be contiguous");
+
+    // broadcast none by default 
+    bool broadcast_input = false, broadcast_affine_2d = false, broadcast_grid = false;
+    if (batch_size_max > 1) {
+        if (input.size(0) == 1) {
+            broadcast_input = true;
+        } else if (input.size(0) != batch_size_max) {
+            TORCH_CHECK(false, "input batch size must match batch size of affine_2d or grid");
+        }
+
+        // broadcast affine_2d if it exists
+        if (affine_2d.has_value() && affine_2d.value().size(0) == 1) {
+            broadcast_affine_2d = true;
+        } else if (affine_2d.has_value() && affine_2d.value().size(0) != batch_size_max) {  
+            TORCH_CHECK(false, "affine_2d batch size must match batch size of input or grid");
+        }
+        
+        // broadcast grid if it exists
+        if (grid.size(0) == 1) {
+            broadcast_grid = true;
+        } else if (grid.size(0) != batch_size_max) {
+            TORCH_CHECK(false, "grid batch size must match batch size of input or affine_2d");
+        }
+    }
+
+    // determine if we need to compute gradients
+    bool input_requires_grad = grad_input.has_value();
+    bool affine_requires_grad = grad_affine.has_value() && affine_2d.has_value();
+    bool grid_requires_grad = grad_grid.has_value();
+    // if grid is provided and it is a displacement, there are no gradients w.r.t. affine
+    if (!grid_requires_grad && !affine_requires_grad && !input_requires_grad) {
+        // nothing to compute
+        return;
+    }
+
+    // H, W will be determined by grid
+    TORCH_CHECK(grid.is_contiguous(), "grid must be contiguous");
+    TORCH_CHECK(grid.size(3) == 2, "grid must have 2 channels");
+    int64_t H = grid.size(1);
+    int64_t W = grid.size(2);
+
+    if (affine_2d.has_value()) {
+        TORCH_CHECK(affine_2d.value().dim() == 3, "affine_2d must be (B, 2, 3)");
+        TORCH_CHECK(affine_2d.value().device().is_cuda(), "affine_2d must be on CUDA");
+        TORCH_CHECK(affine_2d.value().is_contiguous(), "affine_2d must be contiguous");
+        TORCH_CHECK(affine_2d.value().size(1) == 2, "affine_2d must be (B, 2, 3)");
+        TORCH_CHECK(affine_2d.value().size(2) == 3, "affine_2d must be (B, 2, 3)");
+    }
+
+    // define output
+    int64_t N = batch_size_max;
+    // input size parameters (put batch in a separate dimension)
+    int64_t count = H * W;
+
+    // input spatial size parameters
+    int64_t Hi = input.size(1);
+    int64_t Wi = input.size(2);
+    TORCH_CHECK(input.size(3) == 2, "last dimension should be 2");
+
+    // initialize grid and dim
+    dim3 blockSize3(BLOCKSIZE_3D, 1, 1);
+    int64_t gridSize = GET_BLOCKS(count, BLOCKSIZE_3D);
+    gridSize = std::min(gridSize, static_cast<int64_t>(65536));
+    dim3 gridSize3(gridSize, batch_size_max, 1);
+
+    // intermediate grad affine collector
+    torch::Tensor grad_affine_collect;
+    if (affine_requires_grad) {
+        grad_affine_collect = torch::zeros({affine_2d.value().size(0), gridSize, 2, 3}, grad_affine.value().options());
+    }
+
+    if (count > 0) {
+        AT_DISPATCH_FLOATING_TYPES_AND2(
+        at::ScalarType::Half, at::ScalarType::BFloat16,
+        input.scalar_type(), "fused_grid_composer_2d_backward_kernel", [&] {
+            // check if grid is 32-bit
+            if (canUse32BitIndexMath(input) && canUse32BitIndexMath(grid) &&
+                canUse32BitIndexMath(grad_output)) {
+                fused_grid_composer_2d_backward_kernel<scalar_t>
+                <<<gridSize3, blockSize3, 0, stream>>>(
+                    static_cast<int>(count),
+                    input.data_ptr<scalar_t>(),
+                    grid.data_ptr<scalar_t>(),
+                    affine_2d.has_value() ? affine_2d.value().data_ptr<scalar_t>() : nullptr,
+                    // grads
+                    grad_output.data_ptr<scalar_t>(),
+                    input_requires_grad ? grad_input.value().data_ptr<scalar_t>() : nullptr,
+                    affine_requires_grad ? grad_affine_collect.data_ptr<scalar_t>() : nullptr,
+                    grid_requires_grad ? grad_grid.value().data_ptr<scalar_t>() : nullptr,
+                    // input size parameters
+                    static_cast<int>(N), 
+                    static_cast<int>(Hi), static_cast<int>(Wi),
+                    static_cast<int>(H), static_cast<int>(W),
+                    grid_xmin, grid_ymin, grid_xmax, grid_ymax,
+                    align_corners,
+                    broadcast_input,
+                    broadcast_affine_2d,
+                    broadcast_grid
+                );
+                C10_CUDA_KERNEL_LAUNCH_CHECK();
+            } else {
+                fused_grid_composer_2d_backward_kernel<scalar_t>
+                <<<gridSize3, blockSize3, 0, stream>>>(
+                    count,
+                    input.data_ptr<scalar_t>(),
+                    grid.data_ptr<scalar_t>(),
+                    affine_2d.has_value() ? affine_2d.value().data_ptr<scalar_t>() : nullptr,
+                    // grads
+                    grad_output.data_ptr<scalar_t>(),
+                    input_requires_grad ? grad_input.value().data_ptr<scalar_t>() : nullptr,
+                    affine_requires_grad ? grad_affine_collect.data_ptr<scalar_t>() : nullptr,
+                    grid_requires_grad ? grad_grid.value().data_ptr<scalar_t>() : nullptr,
+                    // input size parameters
+                    N, 
+                    Hi, Wi,
+                    H, W,
+                    grid_xmin, grid_ymin, grid_xmax, grid_ymax,
+                    align_corners,
+                    broadcast_input,
+                    broadcast_affine_2d,
+                    broadcast_grid
+                );
+                C10_CUDA_KERNEL_LAUNCH_CHECK();
+            }
+        });
+    }
+
+    if (affine_requires_grad) {
+        // sum over the batch dimension
+        grad_affine.value().copy_(grad_affine_collect.sum(1));
+    }
+}

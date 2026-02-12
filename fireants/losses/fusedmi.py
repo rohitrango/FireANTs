@@ -121,6 +121,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         # mask parameters
         masked: bool = False,
         mask_mode: str = DEFAULT_MASK_MODE,
+        suppress_logging: bool = False,
     ) -> None:
         """
         Args:
@@ -137,7 +138,9 @@ class FusedGlobalMutualInformationLoss(nn.Module):
             smooth_dr: a small constant added to the denominator to avoid nan.
         """
         super().__init__()
-        logger.info(f"Initializing FusedGlobalMutualInformationLoss with kernel_type={kernel_type}, num_bins={num_bins}, reduction={reduction}, normalize_image_if_required={normalize_image_if_required}, smooth_nr={smooth_nr}, smooth_dr={smooth_dr}, sigma_ratio={sigma_ratio}, approximate_reduction={approximate_reduction}, torch_compile={torch_compile}")
+        self.suppress_logging = suppress_logging
+        if not suppress_logging:
+            logger.info(f"Initializing FusedGlobalMutualInformationLoss with kernel_type={kernel_type}, num_bins={num_bins}, reduction={reduction}, normalize_image_if_required={normalize_image_if_required}, smooth_nr={smooth_nr}, smooth_dr={smooth_dr}, sigma_ratio={sigma_ratio}, approximate_reduction={approximate_reduction}, torch_compile={torch_compile}")
         if num_bins <= 0:
             raise ValueError("num_bins must > 0, got {num_bins}")
         self.kernel_type = kernel_type_dict[kernel_type]
@@ -185,7 +188,7 @@ class FusedGlobalMutualInformationLoss(nn.Module):
             mival = self.forward_util(p, t)
             mivals.append(mival)
         # each item is either (1, c, bin, bin) or (1)
-        mivals = torch.cat(mivals, dim=0)
+        mivals = torch.stack(mivals, dim=0)
         if self.reduction == "mean":
             return torch.mean(mivals)
         if self.reduction == "sum":
@@ -204,13 +207,13 @@ class FusedGlobalMutualInformationLoss(nn.Module):
         maxval = max(pred.max(), target.max()).detach().item()
         normalize = False
         if maxval > 1:
-            if not self.warned:
-                logger.warn("Image values are expected to be in the range [0, 1] - normalizing the images")
+            if not self.warned and not self.suppress_logging:
+                logger.warning("Image values are expected to be in the range [0, 1] - normalizing the images")
                 self.warned = True
             normalize = True
         if minval < 0:
-            if not self.warned:
-                logger.warn("Image values are expected to be in the range [0, 1] - normalizing the images")
+            if not self.warned and not self.suppress_logging:
+                logger.warning("Image values are expected to be in the range [0, 1] - normalizing the images")
                 self.warned = True
             normalize = True
         # check if we should normalize

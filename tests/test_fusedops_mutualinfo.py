@@ -1,5 +1,7 @@
-import torch
 import pytest
+pytest.importorskip("fireants_fused_ops")
+
+import torch
 from time import time
 from fireants.losses.mi import GlobalMutualInformationLoss
 from fireants.losses.fusedmi import FusedGlobalMutualInformationLoss

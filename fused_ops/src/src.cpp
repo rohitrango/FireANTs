@@ -60,6 +60,17 @@ PYBIND11_MODULE(fireants_fused_ops, m) {
         py::arg("out_D"), py::arg("out_H"), py::arg("out_W"), py::arg("grid_xmin"), py::arg("grid_ymin"), py::arg("grid_zmin"), py::arg("grid_xmax"), py::arg("grid_ymax"), py::arg("grid_zmax"),
         py::arg("is_displacement"), py::arg("interpolation_mode"), py::arg("padding_mode"), py::arg("align_corners"));
 
+    // 2D fused grid sampler
+    m.def("fused_grid_sampler_2d_forward", &fused_grid_sampler_2d_forward_impl, "Forward pass for 2D fused grid sample",
+       py::arg("input"), py::arg("affine_2d"), py::arg("grid"), py::arg("affine_2d_pregrid"), py::arg("output"), py::arg("out_H"), py::arg("out_W"),
+       py::arg("grid_xmin"), py::arg("grid_ymin"), py::arg("grid_xmax"), py::arg("grid_ymax"),
+       py::arg("is_displacement"), py::arg("interpolation_mode"), py::arg("padding_mode"), py::arg("align_corners"));
+
+    m.def("fused_grid_sampler_2d_backward", &fused_grid_sampler_2d_backward_impl, "Backward pass for 2D fused grid sample",
+        py::arg("input"), py::arg("affine_2d"), py::arg("grid"), py::arg("affine_2d_pregrid"), py::arg("grad_output"), py::arg("grad_input"), py::arg("grad_affine"), py::arg("grad_grid"),
+        py::arg("out_H"), py::arg("out_W"), py::arg("grid_xmin"), py::arg("grid_ymin"), py::arg("grid_xmax"), py::arg("grid_ymax"),
+        py::arg("is_displacement"), py::arg("interpolation_mode"), py::arg("padding_mode"), py::arg("align_corners"));
+
     // grid composer utils
     m.def("fused_grid_composer_3d_forward", &fused_grid_composer_3d_forward_impl, "Forward pass for fused grid composer",
         py::arg("input"), py::arg("affine_3d"), py::arg("grid"), py::arg("grid_xmin"), py::arg("grid_ymin"), py::arg("grid_zmin"), py::arg("grid_xmax"), py::arg("grid_ymax"), py::arg("grid_zmax"),
@@ -68,6 +79,20 @@ PYBIND11_MODULE(fireants_fused_ops, m) {
     m.def("fused_grid_composer_3d_backward", &fused_grid_composer_3d_backward_impl, "Backward pass for fused grid composer",
         py::arg("input"), py::arg("affine_3d"), py::arg("grid"), py::arg("grad_output"), py::arg("grad_input"), py::arg("grad_affine"), py::arg("grad_grid"),
         py::arg("grid_xmin"), py::arg("grid_ymin"), py::arg("grid_zmin"), py::arg("grid_xmax"), py::arg("grid_ymax"), py::arg("grid_zmax"), py::arg("align_corners"));
+    
+    m.def("fused_grid_composer_2d_forward", &fused_grid_composer_2d_forward_impl, "Forward pass for 2D fused grid composer",
+        py::arg("input"), py::arg("affine_2d"), py::arg("grid"), 
+        py::arg("grid_xmin"), py::arg("grid_ymin"), 
+        py::arg("grid_xmax"), py::arg("grid_ymax"),
+        py::arg("align_corners"), py::arg("output"));
+
+    m.def("fused_grid_composer_2d_backward", &fused_grid_composer_2d_backward_impl, "Backward pass for 2D fused grid composer",
+        py::arg("input"), py::arg("affine_2d"), py::arg("grid"), 
+        py::arg("grad_output"), py::arg("grad_input"), 
+        py::arg("grad_affine"), py::arg("grad_grid"),
+        py::arg("grid_xmin"), py::arg("grid_ymin"), 
+        py::arg("grid_xmax"), py::arg("grid_ymax"), 
+        py::arg("align_corners"));
     
     m.def("fused_warp_create_3d_forward", &fused_warp_create_3d_forward_impl, "Forward pass for fused warp create",
         py::arg("affine"), py::arg("grid"), py::arg("grid_xmin"), py::arg("grid_ymin"), py::arg("grid_zmin"), py::arg("grid_xmax"), py::arg("grid_ymax"), py::arg("grid_zmax"));

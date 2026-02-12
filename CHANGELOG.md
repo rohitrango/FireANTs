@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+### 2026-02-12 - fireants 1.2.0, fireants_fused_ops 1.1.0 - changes
+
+- added grid_sample and warp_composer ops for 2d
+- ran unittests in envs with and without fused_ops
+
+
 ### 2026-02-11 - fireants 1.1.2, fireants_fused_ops 1.0.0 - changes
 
 - added 2d cuda kernels of fused ops grid sampler, warp composer

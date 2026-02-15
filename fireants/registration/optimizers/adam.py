@@ -76,6 +76,7 @@ class WarpAdam:
                  smoothing_gaussians=None, 
                  grad_gaussians=None,
                  freeform=False,
+                 restrict_deformations=None,
                  offload=False,   # try offloading to CPU
                  reset=False,
                  # distributed params
@@ -138,6 +139,13 @@ class WarpAdam:
             self.padding_smoothing = 0
         # get wrapper around smoothing for distributed / not distributed
         self.smoothing_wrapper = _get_smoothing_wrapper(self)
+        # gradient restriction (e.g. to restrict deformations along certain dimensions)
+        if restrict_deformations is None:
+            self.gradient_restriction = lambda x: x
+        else:
+            logger.info(f"Setting restriction to: {restrict_deformations}")
+            self._restrict_deformations = torch.as_tensor(restrict_deformations)
+            self.gradient_restriction = lambda x: x * self._restrict_deformations.to(x.device).to(x.dtype)
     
     def cleanup(self):
         # manually clean up
@@ -213,6 +221,8 @@ class WarpAdam:
         # add weight decay term
         if self.weight_decay > 0:
             grad.add_(self.warp.data, alpha=self.weight_decay)
+        # apply gradient restriction (e.g. restrict deformations along certain dims)
+        grad = self.gradient_restriction(grad)
         # compute moments
         self.step_t += 1
 
@@ -278,4 +288,7 @@ class WarpAdam:
             # smooth result if asked for
             if self.smoothing_gaussians is not None:
                 grad = self.smoothing_wrapper(grad, self.smoothing_gaussians, self.padding_smoothing)
+
+            grad = self.gradient_restriction(grad)
+
             self.warp.data.copy_(grad)

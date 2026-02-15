@@ -32,6 +32,7 @@ class WarpSGD:
                  momentum=0, dampening=0, weight_decay=0, nesterov=False, scaledown=False, multiply_jacobian=False,
                  smoothing_gaussians=None, grad_gaussians=None,
                  freeform=False,
+                 restrict_deformations=None,
                  # distributed params
                  rank: int = 0, 
                  dim_to_shard: int = 0,
@@ -85,6 +86,12 @@ class WarpSGD:
             self.padding_smoothing = 0
         # get wrapper around smoothing for distributed / not distributed
         self.smoothing_wrapper = _get_smoothing_wrapper(self)
+        # gradient restriction (e.g. to restrict deformations along certain dimensions)
+        if restrict_deformations is None:
+            self.gradient_restriction = lambda x: x
+        else:
+            self._restrict_deformations = torch.as_tensor(restrict_deformations)
+            self.gradient_restriction = lambda x: x * self._restrict_deformations.to(x.device).to(x.dtype)
     
     def cleanup(self):
         # manually clean up
@@ -137,6 +144,8 @@ class WarpSGD:
         # add weight decay term
         if self.weight_decay > 0:
             grad.add_(self.warp.data, alpha=self.weight_decay)
+        # apply gradient restriction (e.g. restrict deformations along certain dims)
+        grad = self.gradient_restriction(grad)
         # add momentum
         if self.momentum > 0:
             if self.velocity is None:

@@ -136,6 +136,9 @@ def downsample(image: torch.Tensor, size: List[int], mode: str, sigma: Optional[
     if image.device.type == 'cpu':
         use_fft = False
 
+    if not all([x <= y for x, y in zip(size, image.shape[2:])]):
+        use_fft = False
+
     if use_fft:
         return downsample_fft(image.to(torch.float32), size).to(image.dtype)
 

@@ -257,7 +257,11 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             if hasattr(self.loss_fn, 'set_current_scale_and_iterations'):
                 self.loss_fn.set_current_scale_and_iterations(scale, iters)
             # resize images 
-            size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
+            if scale > 1:
+                size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
+            else:
+                size_down = fixed_size
+
             if self.blur and scale > 1:
                 sigmas = 0.5 * torch.tensor(
                     [sz / szdown for sz, szdown in zip(fixed_size, size_down)],
@@ -291,6 +295,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
                 scale_factor = 1
             else:
                 scale_factor = np.prod(fixed_image_down.shape)
+
             for i in pbar:
                 # set zero grads
                 self.fwd_warp.set_zero_grad()

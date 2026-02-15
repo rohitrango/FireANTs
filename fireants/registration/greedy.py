@@ -281,8 +281,13 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
             if hasattr(self.loss_fn, 'set_current_scale_and_iterations'):
                 self.loss_fn.set_current_scale_and_iterations(scale, iters)
             # resize images
-            size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
-            moving_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_size]
+            if scale > 1:
+                size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
+                moving_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_size]
+            else:
+                size_down = fixed_size
+                moving_size_down = moving_size
+
             if self.blur and scale > 1:
                 sigmas = 0.5 * torch.tensor(
                     [sz / szdown for sz, szdown in zip(fixed_size, size_down)],

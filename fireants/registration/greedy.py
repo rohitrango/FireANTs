@@ -22,7 +22,7 @@ from typing import List, Optional, Union, Callable
 from tqdm import tqdm
 import SimpleITK as sitk
 
-from fireants.utils.globals import MIN_IMG_SIZE
+from fireants.registration.helpers import downsample_size
 from fireants.io.image import BatchedImages, FakeBatchedImages
 from fireants.registration.abstract import AbstractRegistration
 from fireants.registration.deformation.svf import StationaryVelocity
@@ -281,12 +281,8 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
             if hasattr(self.loss_fn, 'set_current_scale_and_iterations'):
                 self.loss_fn.set_current_scale_and_iterations(scale, iters)
             # resize images
-            if scale > 1:
-                size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
-                moving_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_size]
-            else:
-                size_down = fixed_size
-                moving_size_down = moving_size
+            size_down = downsample_size(fixed_size, scale)
+            moving_size_down = downsample_size(moving_size, scale)
 
             if self.blur and scale > 1:
                 sigmas = 0.5 * torch.tensor(

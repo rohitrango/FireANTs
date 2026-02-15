@@ -21,7 +21,7 @@ from torch import nn
 from fireants.io.image import BatchedImages, FakeBatchedImages
 from torch.optim import SGD, Adam
 from torch.nn import functional as F
-from fireants.utils.globals import MIN_IMG_SIZE
+from fireants.registration.helpers import downsample_size
 from fireants.registration.abstract import AbstractRegistration
 from fireants.registration.deformation.compositive import CompositiveWarp
 from fireants.registration.deformation.svf import StationaryVelocity
@@ -256,11 +256,8 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             # notify loss function of scale change if it supports it
             if hasattr(self.loss_fn, 'set_current_scale_and_iterations'):
                 self.loss_fn.set_current_scale_and_iterations(scale, iters)
-            # resize images 
-            if scale > 1:
-                size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
-            else:
-                size_down = fixed_size
+            # resize images
+            size_down = downsample_size(fixed_size, scale)
 
             if self.blur and scale > 1:
                 sigmas = 0.5 * torch.tensor(

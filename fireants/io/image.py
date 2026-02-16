@@ -84,7 +84,7 @@ class Image:
             See `max_seg_label`, `background_seg_label`, `seg_preprocessor` for more details on how to manipulate integer label images.
         max_seg_label (int, optional): Maximum label value for segmentation. Values above this are set to background_seg_label.
             Set to None by default, meaning no label clipping is done.
-        background_seg_label (int, optional): Label value representing background in segmentations. Defaults to 0.
+        background_seg_label (int, optional): Label value representing background in segmentations. Defaults to -1 (background is included as a one-hot label)
         seg_preprocessor (callable, optional): Function to preprocess segmentation arrays. Defaults to identity function.
         orientation (str, optional): Reorient the image to this orientation. Defaults to None.
         spacing (array-like, optional): Custom spacing for the image. If None, uses SimpleITK values.
@@ -106,7 +106,7 @@ class Image:
                  device: devicetype = 'cuda', 
                  dtype: torch.dtype = None,
                  is_segmentation=False, max_seg_label=None, 
-                 background_seg_label=0, seg_preprocessor=lambda x: x,
+                 background_seg_label=-1, seg_preprocessor=lambda x: x,
                  orientation: str = None,
                  winsorize: bool = False,
                  winsorize_percentile: Tuple[float, float] = (1.0, 99.0),

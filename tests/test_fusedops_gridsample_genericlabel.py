@@ -107,6 +107,7 @@ def _baseline_generic_label_2d(
     align_corners: bool = True,
     padding_mode: str = "zeros",
 ):
+    """Baseline: bilinear sample one-hot, then argmax over channels -> (labels [B,1,H,W], weights [B,1,H,W])."""
     weights = fused_grid_sampler_2d(
         onehot,
         affine=affine,
@@ -118,7 +119,10 @@ def _baseline_generic_label_2d(
         out_shape=out_shape,
         is_displacement=is_displacement,
     )
-    return weights, weights
+    maxdata = weights.max(dim=1, keepdim=True)
+    labels = maxdata.indices
+    weights = maxdata.values
+    return labels, weights
 
 
 # --------------- 3D tests ---------------
@@ -191,22 +195,26 @@ def test_fused_generic_label_3d_forward(use_affine, use_grid, is_displacement):
 
 
 def test_fused_generic_label_3d_backward():
-    """3D backward: loss = sum(weights), compare grad affine and grad grid."""
+    """3D backward: loss = sum(weights), compare grad affine and grad grid. Same input as 3D forward."""
     rng = torch.Generator()
     rng.manual_seed(SEED)
-    B, C, Z, Y, X = 1, 5, 10, 12, 14
-    out_shape = (6, 8, 10)
 
-    label_int = torch.randint(0, C, (1, 1, Z, Y, X), generator=rng).long().cuda()
-    onehot = _label_to_onehot_3d(label_int, background_label=-1, max_label=C - 1)
+    # Same synthetic 3D setup as test_fused_generic_label_3d_forward
+    B, Z, Y, X = 1, 12, 14, 16
+    num_classes = 4
+    label_int = torch.randint(0, num_classes, (1, 1, Z, Y, X), generator=rng).long().cuda()
+    onehot = _label_to_onehot_3d(label_int, background_label=-1, max_label=num_classes - 1)
     onehot = onehot.cuda().float()
 
-    affine = torch.eye(3, 4)[None].cuda() + 0.01 * torch.randn(1, 3, 4, generator=rng).cuda()
-    affine = affine.detach().requires_grad_(True)
-    grid = (0.03 * torch.randn(1, *out_shape, 3, generator=rng).cuda()).detach().requires_grad_(True)
-    grid_affine = torch.eye(3, 3)[None].cuda()
+    out_shape = (8, 10, 12)
     align_corners = True
     padding_mode = "zeros"
+
+    aff = torch.linalg.matrix_exp(0.02 * torch.randn(3, 3, generator=rng)).cuda()
+    aff = torch.cat([aff, 0.01 * torch.randn(3, 1, generator=rng).cuda()], dim=1)[None]
+    affine = aff.detach().requires_grad_(True)
+    grid = (0.5 * torch.randn(1, *out_shape, 3, generator=rng).cuda()).detach().requires_grad_(True)
+    grid_affine = torch.eye(3, 3)[None].cuda()
 
     # Baseline: loss = sum(weights), backward
     baseline_labels, baseline_weights = _baseline_generic_label_3d(
@@ -233,52 +241,46 @@ def test_fused_generic_label_3d_backward():
 
     logger.info(f"3D backward loss_baseline={loss_baseline.item()}, loss_fused={loss_fused.item()}")
 
-    logger.info(f"3D backward grad_affine_baseline={grad_affine_baseline}, grad_affine_fused={grad_affine_fused}")
-    logger.info(f"3D backward grad_grid_baseline={grad_grid_baseline}, grad_grid_fused={grad_grid_fused}")
-
     if grad_affine_baseline is not None and grad_affine_fused is not None:
         rel_affine = (torch.abs(grad_affine_fused - grad_affine_baseline) / (1e-6 + torch.abs(grad_affine_baseline))).mean().item()
         logger.info(f"3D backward rel_affine={rel_affine}")
-        assert rel_affine < 1e-2, f"Affine gradient relative error too high: {rel_affine}"
+        assert rel_affine < 1e-4, f"Affine gradient relative error too high: {rel_affine}"
     if grad_grid_baseline is not None and grad_grid_fused is not None:
         rel_grid = (torch.abs(grad_grid_fused - grad_grid_baseline) / (1e-6 + torch.abs(grad_grid_baseline))).mean().item()
         logger.info(f"3D backward rel_grid={rel_grid}")
-        assert rel_grid < 1e-2, f"Grid gradient relative error too high: {rel_grid}"
+        assert rel_grid < 1e-4, f"Grid gradient relative error too high: {rel_grid}"
 
 
 def test_fused_generic_label_3d_from_data_dir():
-    """3D forward/backward using images from tests/test_data/fused_genericlabel if present."""
-    path_3d = os.path.join(FUSED_GENERICLABEL_DATA, "label_3d.nii.gz")
-    if not os.path.isfile(path_3d):
-        path_3d = os.path.join(FUSED_GENERICLABEL_DATA, "label3d.nii.gz")
-    if not os.path.isfile(path_3d):
-        pytest.skip(f"No 3D label found in {FUSED_GENERICLABEL_DATA} (tried label_3d.nii.gz, label3d.nii.gz)")
-
-    label = _load_label_sitk(path_3d)
-    if label.ndim != 5 or label.shape[1] != 1:
-        pytest.skip("Expected 3D label [1, 1, Z, Y, X]")
-    max_label = label.max().item()
-    if max_label < 0:
-        pytest.skip("Label image has no positive labels")
-    onehot = _label_to_onehot_3d(label, background_label=-1, max_label=max_label)
-    onehot = onehot.cuda().float()
-
+    """3D forward/backward with same synthetic input as test_fused_generic_label_3d_forward."""
     rng = torch.Generator()
     rng.manual_seed(SEED)
-    *_, Z, Y, X = onehot.shape
-    out_shape = (Z // 2, Y // 2, X // 2)
-    affine = torch.eye(3, 4)[None].cuda() + 0.01 * torch.randn(1, 3, 4, generator=rng).cuda()
-    affine = affine.detach().requires_grad_(True)
-    grid = 0.02 * torch.randn(1, *out_shape, 3, generator=rng).cuda().detach().requires_grad_(True)
 
-    baseline_weights, baseline_labels = _baseline_generic_label_3d(
-        onehot, affine=affine, grid=grid, grid_affine=torch.eye(3, 3)[None].cuda(),
-        out_shape=out_shape, is_displacement=True, align_corners=True, padding_mode="zeros",
+    # Same synthetic 3D setup as test_fused_generic_label_3d_forward
+    B, Z, Y, X = 1, 12, 14, 16
+    num_classes = 4
+    label_int = torch.randint(0, num_classes, (1, 1, Z, Y, X), generator=rng).long().cuda()
+    onehot = _label_to_onehot_3d(label_int, background_label=-1, max_label=num_classes - 1)
+    onehot = onehot.cuda().float()
+
+    out_shape = (8, 10, 12)
+    align_corners = True
+    padding_mode = "zeros"
+
+    aff = torch.linalg.matrix_exp(0.02 * torch.randn(3, 3, generator=rng)).cuda()
+    aff = torch.cat([aff, 0.01 * torch.randn(3, 1, generator=rng).cuda()], dim=1)[None]
+    affine = aff.detach().requires_grad_(True)
+    grid = (0.5 * torch.randn(1, *out_shape, 3, generator=rng).cuda()).detach().requires_grad_(True)
+    grid_affine = torch.eye(3, 3)[None].cuda()
+
+    baseline_labels, baseline_weights = _baseline_generic_label_3d(
+        onehot, affine=affine, grid=grid, grid_affine=grid_affine,
+        out_shape=out_shape, is_displacement=True, align_corners=align_corners, padding_mode=padding_mode,
     )
     out_labels, out_weights = fused_grid_sampler_3d_generic_label(
-        onehot, affine=affine, grid=grid, grid_affine=torch.eye(3, 3)[None].cuda(),
-        out_shape=out_shape, is_displacement=True, align_corners=True, padding_mode="zeros",
-        return_probs=True,
+        label_int.float(), affine=affine, grid=grid, grid_affine=grid_affine,
+        out_shape=out_shape, is_displacement=True, align_corners=align_corners,
+        padding_mode=padding_mode, return_probs=True,
     )
     label_agree_ratio = (out_labels.long() == baseline_labels.long()).float().mean().item()
     rel_weights = (torch.abs(out_weights - baseline_weights) / (1e-6 + torch.abs(baseline_weights))).mean().item()
@@ -293,8 +295,8 @@ def test_fused_generic_label_3d_from_data_dir():
     out_weights.sum().backward()
     rel_affine = (torch.abs(affine.grad - ga_b) / (1e-6 + torch.abs(ga_b))).mean().item()
     rel_grid = (torch.abs(grid.grad - gg_b) / (1e-6 + torch.abs(gg_b))).mean().item()
-    assert rel_affine < 1e-2
-    assert rel_grid < 1e-2
+    assert rel_affine < 1e-4
+    assert rel_grid < 1e-4
 
 
 # --------------- 2D tests ---------------
@@ -339,12 +341,12 @@ def test_fused_generic_label_2d_forward(use_affine, use_grid, is_displacement):
         align_corners=align_corners, padding_mode=padding_mode,
     )
     out_labels, out_weights = fused_grid_sampler_2d_generic_label(
-        onehot, affine=affine, grid=grid, grid_affine=grid_affine,
+        label_int.float(), affine=affine, grid=grid, grid_affine=grid_affine,
         out_shape=out_shape, is_displacement=is_displacement,
         align_corners=align_corners, padding_mode=padding_mode,
         return_probs=True, background_label=None,
     )
-    assert out_labels.shape == baseline_weights.shape
+    assert out_labels.shape == baseline_labels.shape
     assert out_weights.shape == baseline_weights.shape
     label_agree_ratio = (out_labels.long() == baseline_labels.long()).float().mean().item()
     rel_weights = (torch.abs(out_weights - baseline_weights) / (1e-6 + torch.abs(baseline_weights))).mean().item()
@@ -354,20 +356,30 @@ def test_fused_generic_label_2d_forward(use_affine, use_grid, is_displacement):
 
 
 def test_fused_generic_label_2d_backward():
+    """2D backward: same input as test_fused_generic_label_2d_forward."""
     rng = torch.Generator()
     rng.manual_seed(SEED)
-    B, C, H, W = 1, 3, 20, 24
-    out_shape = (12, 16)
-    onehot = torch.rand(B, C, H, W, generator=rng).cuda()
-    onehot = onehot / (onehot.sum(dim=1, keepdim=True) + 1e-8)
-    affine = torch.eye(2, 3)[None].cuda() + 0.01 * torch.randn(1, 2, 3, generator=rng).cuda()
-    affine = affine.detach().requires_grad_(True)
-    grid = 0.03 * torch.randn(1, *out_shape, 2, generator=rng).cuda().detach().requires_grad_(True)
+
+    # Same synthetic 2D setup as test_fused_generic_label_2d_forward
+    B, H, W = 1, 24, 32
+    num_classes = 3
+    label_int = torch.randint(0, num_classes, (1, 1, H, W), generator=rng).long().cuda()
+    onehot = _label_to_onehot_2d(label_int, background_label=-1, max_label=num_classes - 1)
+    onehot = onehot.cuda().float()
+
+    out_shape = (16, 20)
+    align_corners = True
+    padding_mode = "zeros"
+
+    aff = torch.linalg.matrix_exp(0.02 * torch.randn(2, 2, generator=rng)).cuda()
+    aff = torch.cat([aff, 0.01 * torch.randn(2, 1, generator=rng).cuda()], dim=1)[None]
+    affine = aff.detach().requires_grad_(True)
+    grid = (0.5 * torch.randn(1, *out_shape, 2, generator=rng).cuda()).detach().requires_grad_(True)
     grid_affine = torch.eye(2, 2)[None].cuda()
 
     baseline_labels, baseline_weights = _baseline_generic_label_2d(
         onehot, affine=affine, grid=grid, grid_affine=grid_affine,
-        out_shape=out_shape, is_displacement=True, align_corners=True, padding_mode="zeros",
+        out_shape=out_shape, is_displacement=True, align_corners=align_corners, padding_mode=padding_mode,
     )
     loss_baseline = baseline_weights.sum()
     loss_baseline.backward()
@@ -377,52 +389,51 @@ def test_fused_generic_label_2d_backward():
     grid.grad = None
 
     out_labels, out_weights = fused_grid_sampler_2d_generic_label(
-        onehot, affine=affine, grid=grid, grid_affine=grid_affine,
-        out_shape=out_shape, is_displacement=True, align_corners=True,
-        padding_mode="zeros", return_probs=True,
+        label_int.float(), affine=affine, grid=grid, grid_affine=grid_affine,
+        out_shape=out_shape, is_displacement=True, align_corners=align_corners,
+        padding_mode=padding_mode, return_probs=True,
     )
     loss_fused = out_weights.sum()
     loss_fused.backward()
+
     if grad_affine_baseline is not None and affine.grad is not None:
         rel_affine = (torch.abs(affine.grad - grad_affine_baseline) / (1e-6 + torch.abs(grad_affine_baseline))).mean().item()
-        assert rel_affine < 1e-2
+        assert rel_affine < 1e-4
     if grad_grid_baseline is not None and grid.grad is not None:
         rel_grid = (torch.abs(grid.grad - grad_grid_baseline) / (1e-6 + torch.abs(grad_grid_baseline))).mean().item()
-        assert rel_grid < 1e-2
+        assert rel_grid < 1e-4
 
 
 def test_fused_generic_label_2d_from_data_dir():
-    path_2d = os.path.join(FUSED_GENERICLABEL_DATA, "label_2d.nii.gz")
-    if not os.path.isfile(path_2d):
-        path_2d = os.path.join(FUSED_GENERICLABEL_DATA, "label2d.nii.gz")
-    if not os.path.isfile(path_2d):
-        pytest.skip(f"No 2D label found in {FUSED_GENERICLABEL_DATA}")
-
-    label = _load_label_sitk(path_2d)
-    if label.ndim != 4 or label.shape[1] != 1:
-        pytest.skip("Expected 2D label [1, 1, H, W]")
-    max_label = label.max().item()
-    if max_label < 0:
-        pytest.skip("Label image has no positive labels")
-    onehot = _label_to_onehot_2d(label, background_label=-1, max_label=max_label)
-    onehot = onehot.cuda().float()
-
+    """2D forward/backward with same synthetic input as test_fused_generic_label_2d_forward."""
     rng = torch.Generator()
     rng.manual_seed(SEED)
-    *_, H, W = onehot.shape
-    out_shape = (H // 2, W // 2)
-    affine = torch.eye(2, 3)[None].cuda() + 0.01 * torch.randn(1, 2, 3, generator=rng).cuda()
-    affine = affine.detach().requires_grad_(True)
-    grid = 0.02 * torch.randn(1, *out_shape, 2, generator=rng).cuda().detach().requires_grad_(True)
+
+    # Same synthetic 2D setup as test_fused_generic_label_2d_forward
+    B, H, W = 1, 24, 32
+    num_classes = 3
+    label_int = torch.randint(0, num_classes, (1, 1, H, W), generator=rng).long().cuda()
+    onehot = _label_to_onehot_2d(label_int, background_label=-1, max_label=num_classes - 1)
+    onehot = onehot.cuda().float()
+
+    out_shape = (16, 20)
+    align_corners = True
+    padding_mode = "zeros"
+
+    aff = torch.linalg.matrix_exp(0.02 * torch.randn(2, 2, generator=rng)).cuda()
+    aff = torch.cat([aff, 0.01 * torch.randn(2, 1, generator=rng).cuda()], dim=1)[None]
+    affine = aff.detach().requires_grad_(True)
+    grid = (0.5 * torch.randn(1, *out_shape, 2, generator=rng).cuda()).detach().requires_grad_(True)
+    grid_affine = torch.eye(2, 2)[None].cuda()
 
     baseline_labels, baseline_weights = _baseline_generic_label_2d(
-        onehot, affine=affine, grid=grid, grid_affine=torch.eye(2, 2)[None].cuda(),
-        out_shape=out_shape, is_displacement=True, align_corners=True, padding_mode="zeros",
+        onehot, affine=affine, grid=grid, grid_affine=grid_affine,
+        out_shape=out_shape, is_displacement=True, align_corners=align_corners, padding_mode=padding_mode,
     )
     out_labels, out_weights = fused_grid_sampler_2d_generic_label(
-        onehot, affine=affine, grid=grid, grid_affine=torch.eye(2, 2)[None].cuda(),
-        out_shape=out_shape, is_displacement=True, align_corners=True, padding_mode="zeros",
-        return_probs=True,
+        label_int.float(), affine=affine, grid=grid, grid_affine=grid_affine,
+        out_shape=out_shape, is_displacement=True, align_corners=align_corners,
+        padding_mode=padding_mode, return_probs=True,
     )
     label_agree_ratio = (out_labels.long() == baseline_labels.long()).float().mean().item()
     rel_weights = (torch.abs(out_weights - baseline_weights) / (1e-6 + torch.abs(baseline_weights))).mean().item()
@@ -437,8 +448,8 @@ def test_fused_generic_label_2d_from_data_dir():
     out_weights.sum().backward()
     rel_affine = (torch.abs(affine.grad - ga_b) / (1e-6 + torch.abs(ga_b))).mean().item()
     rel_grid = (torch.abs(grid.grad - gg_b) / (1e-6 + torch.abs(gg_b))).mean().item()
-    assert rel_affine < 1e-2
-    assert rel_grid < 1e-2
+    assert rel_affine < 1e-4
+    assert rel_grid < 1e-4
 
 
 if __name__ == "__main__":

@@ -137,10 +137,10 @@ __global__ void fused_grid_sampler_2d_generic_label_forward_kernel(
     index_t ix_e = ix_w + 1;
     index_t iy_s = iy_n + 1;
 
-    scalar_t nw = (ix_e - ix) * (iy_s - iy);
-    scalar_t ne = (ix - ix_w) * (iy_s - iy);
-    scalar_t sw = (ix_e - ix) * (iy - iy_n);
-    scalar_t se = (ix - ix_w) * (iy - iy_n);
+    gridmath_t nw = (ix_e - ix) * (iy_s - iy);
+    gridmath_t ne = (ix - ix_w) * (iy_s - iy);
+    gridmath_t sw = (ix_e - ix) * (iy - iy_n);
+    gridmath_t se = (ix - ix_w) * (iy - iy_n);
 
     const index_t inp_sC = Hi * Wi;
     const scalar_t* inp_ptr_NC = input + (broadcast_input ? 0 : (n * (C * inp_sC)));
@@ -329,32 +329,33 @@ __global__ void fused_grid_sampler_2d_generic_label_backward_kernel(
         gridmath_t gOutGMT = static_cast<gridmath_t>(gOut);
         if (within_bounds_2d(iy_n, ix_w, Hi, Wi)) {
           scalar_t v = inp_ptr_NC[ix_w + Wi * iy_n];
-          if (v == out_label) {
+          if (fabsf(static_cast<float>(v - out_label)) < 1e-5f) {
             gix -= (iy_s - iy) * gOutGMT;
             giy -= (ix_e - ix) * gOutGMT;
           }
         }
         if (within_bounds_2d(iy_n, ix_e, Hi, Wi)) {
           scalar_t v = inp_ptr_NC[ix_e + Wi * iy_n];
-          if (v == out_label) {
+          if (fabsf(static_cast<float>(v - out_label)) < 1e-5f) {
             gix += (iy_s - iy) * gOutGMT;
             giy -= (ix - ix_w) * gOutGMT;
           }
         }
         if (within_bounds_2d(iy_s, ix_w, Hi, Wi)) {
           scalar_t v = inp_ptr_NC[ix_w + Wi * iy_s];
-          if (v == out_label) {
+          if (fabsf(static_cast<float>(v - out_label)) < 1e-5f) {
             gix -= (iy - iy_n) * gOutGMT;
             giy += (ix_e - ix) * gOutGMT;
           }
         }
         if (within_bounds_2d(iy_s, ix_e, Hi, Wi)) {
           scalar_t v = inp_ptr_NC[ix_e + Wi * iy_s];
-          if (v == out_label) {
+          if (fabsf(static_cast<float>(v - out_label)) < 1e-5f) {
             gix += (iy - iy_n) * gOutGMT;
             giy += (ix - ix_w) * gOutGMT;
           }
         }
+
         gix = gix_mult * gix;
         giy = giy_mult * giy;
 
@@ -747,7 +748,7 @@ __global__ void fused_grid_sampler_3d_generic_label_backward_kernel(
         gridmath_t gOutGMT = static_cast<gridmath_t>(gOut);
         if (within_bounds_3d(iz_tnw, iy_tnw, ix_tnw, Di, Hi, Wi)) {
           scalar_t v = inp_ptr_NC[ix_tnw + Wi * (iy_tnw + Hi * iz_tnw)];
-          if (v == out_label) {
+          if (fabsf(static_cast<float>(v - out_label)) < 1e-5f) {
             gix -= (iy_bse - iy) * (iz_bse - iz) * gOutGMT;
             giy -= (ix_bse - ix) * (iz_bse - iz) * gOutGMT;
             giz -= (ix_bse - ix) * (iy_bse - iy) * gOutGMT;
@@ -755,7 +756,7 @@ __global__ void fused_grid_sampler_3d_generic_label_backward_kernel(
         }
         if (within_bounds_3d(iz_tne, iy_tne, ix_tne, Di, Hi, Wi)) {
           scalar_t v = inp_ptr_NC[ix_tne + Wi * (iy_tne + Hi * iz_tne)];
-          if (v == out_label) {
+          if (fabsf(static_cast<float>(v - out_label)) < 1e-5f) {
             gix += (iy_bsw - iy) * (iz_bsw - iz) * gOutGMT;
             giy -= (ix - ix_bsw) * (iz_bsw - iz) * gOutGMT;
             giz -= (ix - ix_bsw) * (iy_bsw - iy) * gOutGMT;
@@ -763,7 +764,7 @@ __global__ void fused_grid_sampler_3d_generic_label_backward_kernel(
         }
         if (within_bounds_3d(iz_tsw, iy_tsw, ix_tsw, Di, Hi, Wi)) {
           scalar_t v = inp_ptr_NC[ix_tsw + Wi * (iy_tsw + Hi * iz_tsw)];
-          if (v == out_label) {
+          if (fabsf(static_cast<float>(v - out_label)) < 1e-5f) {
             gix -= (iy - iy_bne) * (iz_bne - iz) * gOutGMT;
             giy += (ix_bne - ix) * (iz_bne - iz) * gOutGMT;
             giz -= (ix_bne - ix) * (iy - iy_bne) * gOutGMT;
@@ -771,7 +772,7 @@ __global__ void fused_grid_sampler_3d_generic_label_backward_kernel(
         }
         if (within_bounds_3d(iz_tse, iy_tse, ix_tse, Di, Hi, Wi)) {
           scalar_t v = inp_ptr_NC[ix_tse + Wi * (iy_tse + Hi * iz_tse)];
-          if (v == out_label) {
+          if (fabsf(static_cast<float>(v - out_label)) < 1e-5f) {
             gix += (iy - iy_bnw) * (iz_bnw - iz) * gOutGMT;
             giy += (ix - ix_bnw) * (iz_bnw - iz) * gOutGMT;
             giz -= (ix - ix_bnw) * (iy - iy_bnw) * gOutGMT;
@@ -779,7 +780,7 @@ __global__ void fused_grid_sampler_3d_generic_label_backward_kernel(
         }
         if (within_bounds_3d(iz_bnw, iy_bnw, ix_bnw, Di, Hi, Wi)) {
           scalar_t v = inp_ptr_NC[ix_bnw + Wi * (iy_bnw + Hi * iz_bnw)];
-          if (v == out_label) {
+          if (fabsf(static_cast<float>(v - out_label)) < 1e-5f) {
             gix -= (iy_tse - iy) * (iz - iz_tse) * gOutGMT;
             giy -= (ix_tse - ix) * (iz - iz_tse) * gOutGMT;
             giz += (ix_tse - ix) * (iy_tse - iy) * gOutGMT;
@@ -787,7 +788,7 @@ __global__ void fused_grid_sampler_3d_generic_label_backward_kernel(
         }
         if (within_bounds_3d(iz_bne, iy_bne, ix_bne, Di, Hi, Wi)) {
           scalar_t v = inp_ptr_NC[ix_bne + Wi * (iy_bne + Hi * iz_bne)];
-          if (v == out_label) {
+          if (fabsf(static_cast<float>(v - out_label)) < 1e-5f) {
             gix += (iy_tsw - iy) * (iz - iz_tsw) * gOutGMT;
             giy -= (ix - ix_tsw) * (iz - iz_tsw) * gOutGMT;
             giz += (ix - ix_tsw) * (iy_tsw - iy) * gOutGMT;
@@ -795,7 +796,7 @@ __global__ void fused_grid_sampler_3d_generic_label_backward_kernel(
         }
         if (within_bounds_3d(iz_bsw, iy_bsw, ix_bsw, Di, Hi, Wi)) {
           scalar_t v = inp_ptr_NC[ix_bsw + Wi * (iy_bsw + Hi * iz_bsw)];
-          if (v == out_label) {
+          if (fabsf(static_cast<float>(v - out_label)) < 1e-5f) {
             gix -= (iy - iy_tne) * (iz - iz_tne) * gOutGMT;
             giy += (ix_tne - ix) * (iz - iz_tne) * gOutGMT;
             giz += (ix_tne - ix) * (iy - iy_tne) * gOutGMT;
@@ -803,7 +804,7 @@ __global__ void fused_grid_sampler_3d_generic_label_backward_kernel(
         }
         if (within_bounds_3d(iz_bse, iy_bse, ix_bse, Di, Hi, Wi)) {
           scalar_t v = inp_ptr_NC[ix_bse + Wi * (iy_bse + Hi * iz_bse)];
-          if (v == out_label) {
+          if (fabsf(static_cast<float>(v - out_label)) < 1e-5f) {
             gix += (iy - iy_tnw) * (iz - iz_tnw) * gOutGMT;
             giy += (ix - ix_tnw) * (iz - iz_tnw) * gOutGMT;
             giz += (ix - ix_tnw) * (iy - iy_tnw) * gOutGMT;
@@ -1097,6 +1098,11 @@ void fused_grid_sampler_2d_generic_label_backward_impl(
 
   if (!grid_requires_grad && !affine_requires_grad) return;
 
+  torch::Tensor grad_weight_contig;
+  if (return_weight && grad_weight.has_value()) {
+    grad_weight_contig = grad_weight.value().contiguous();
+  }
+
   int64_t N = batch_size_max;
   int64_t C = input.size(1);
   int64_t Hi = input.size(2);
@@ -1126,7 +1132,7 @@ void fused_grid_sampler_2d_generic_label_backward_impl(
               grid.has_value() ? grid.value().data_ptr<grid_t>() : nullptr,
               affine_2d.has_value() ? affine_2d.value().data_ptr<grid_t>() : nullptr,
               affine_2d_pregrid.has_value() ? affine_2d_pregrid.value().data_ptr<grid_t>() : nullptr,
-              (return_weight && grad_weight.has_value()) ? grad_weight.value().data_ptr<input_t>() : nullptr,
+              grad_weight_contig.defined() ? grad_weight_contig.data_ptr<input_t>() : nullptr,
               affine_requires_grad ? grad_affine_collect.data_ptr<grid_t>() : nullptr,
               grid_requires_grad ? grad_grid.value().data_ptr<grid_t>() : nullptr,
               N, C, Hi, Wi, H, W,
@@ -1379,6 +1385,11 @@ void fused_grid_sampler_3d_generic_label_backward_impl(
 
   if (!grid_requires_grad && !affine_requires_grad) return;
 
+  torch::Tensor grad_weight_contig;
+  if (return_weight && grad_weight.has_value()) {
+    grad_weight_contig = grad_weight.value().contiguous();
+  }
+
   int64_t N = batch_size_max;
   int64_t C = input.size(1);
   int64_t Di = input.size(2);
@@ -1409,7 +1420,7 @@ void fused_grid_sampler_3d_generic_label_backward_impl(
               grid.has_value() ? grid.value().data_ptr<grid_t>() : nullptr,
               affine_3d.has_value() ? affine_3d.value().data_ptr<grid_t>() : nullptr,
               grid_affine.has_value() ? grid_affine.value().data_ptr<grid_t>() : nullptr,
-              (return_weight && grad_weight.has_value()) ? grad_weight.value().data_ptr<input_t>() : nullptr,
+              grad_weight_contig.defined() ? grad_weight_contig.data_ptr<input_t>() : nullptr,
               affine_requires_grad ? grad_affine_collect.data_ptr<grid_t>() : nullptr,
               grid_requires_grad ? grad_grid.value().data_ptr<grid_t>() : nullptr,
               N, C, Di, Hi, Wi, D, H, W,

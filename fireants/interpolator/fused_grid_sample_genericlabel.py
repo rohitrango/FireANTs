@@ -66,7 +66,7 @@ class FusedGridSampler2dGenericLabel(torch.autograd.Function):
         input: [B, C, H, W] one-hot or label weights
         affine: [B, 2, 3] or None
         grid: [B, H, W, 2] or None
-        Returns (output_labels [B, H, W], output_weights [B, C, H, W] or None).
+        Returns (output_labels [B, 1, H, W], output_weights [B, 1, H, W] or None).
         """
         out_labels, out_weights = ffo.fused_grid_sampler_2d_generic_label_forward(
             input,
@@ -108,10 +108,18 @@ class FusedGridSampler2dGenericLabel(torch.autograd.Function):
         align_corners = ctx.align_corners
         return_weight = ctx.return_weight
 
+        # if we don't need to return weights, we can skip the backward pass
+        if not return_weight:
+            return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
+
         affine_requires_grad = affine is not None and affine.requires_grad
         grid_requires_grad = grid is not None and grid.requires_grad
         grad_affine = torch.zeros_like(affine) if (affine is not None and affine_requires_grad) else None
         grad_grid = torch.zeros_like(grid) if (grid is not None and grid_requires_grad) else None
+
+        # Ensure C++ receives a contiguous tensor; use zeros when no upstream grad (so kernel still runs)
+        assert grad_output_weights is not None
+        grad_weight_to_pass = grad_output_weights.contiguous()
 
         ffo.fused_grid_sampler_2d_generic_label_backward(
             input,
@@ -119,7 +127,7 @@ class FusedGridSampler2dGenericLabel(torch.autograd.Function):
             grid,
             grid_affine,
             output_labels,
-            grad_output_weights,
+            grad_weight_to_pass,
             grad_affine,
             grad_grid,
             out_H,
@@ -235,13 +243,16 @@ class FusedGridSampler3dGenericLabel(torch.autograd.Function):
             else None
         )
 
+        assert grad_output_weights is not None
+        grad_weight_to_pass = grad_output_weights.contiguous()
+
         ffo.fused_grid_sampler_3d_generic_label_backward(
             input,
             affine,
             grid,
             grid_affine,
             output_labels,
-            grad_output_weights,
+            grad_weight_to_pass,
             grad_affine,
             grad_grid,
             out_D,
@@ -313,7 +324,7 @@ def fused_grid_sampler_2d_generic_label(
         background_label: Optional background label value.
 
     Returns:
-        (out_labels [B, H, W], out_weights [B, C, H, W] or None).
+        (out_labels [B, 1, H, W], out_weights [B, 1, H, W] or None).
     """
     if grid is None:
         if out_shape is None:

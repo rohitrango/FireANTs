@@ -30,6 +30,10 @@ try:
     # safe to import fused grid sampler
     from fireants.interpolator.fused_grid_sample import fused_grid_sampler_3d, fused_warp_composer_3d, fused_affine_warp_3d
     from fireants.interpolator.fused_grid_sample import fused_grid_sampler_2d, fused_warp_composer_2d
+    from fireants.interpolator.fused_grid_sample_genericlabel import (
+        fused_grid_sampler_2d_generic_label,
+        fused_grid_sampler_3d_generic_label,
+    )
 except ImportError:
     logger.warning("Fused operations not available, compile the fused ops to use them")
     FFO_AVAILABLE = False
@@ -39,6 +43,8 @@ except ImportError:
     fused_warp_composer_3d = None
     fused_affine_warp_3d = None
     fused_warp_composer_2d = None
+    fused_grid_sampler_2d_generic_label = None
+    fused_grid_sampler_3d_generic_label = None
 
 # Get environment variable with default True
 USE_FFO = os.getenv('USE_FFO', 'True').lower() == 'true'
@@ -116,9 +122,21 @@ class GridSampleDispatcher:
     @augment_registry_backend.__func__
     def __call__(self, *args, **kwargs) -> Any:
         """Dispatch to appropriate grid sample implementation."""
-        # print(f"Using FFO: {self._use_ffo}")
+        mode = kwargs.get("mode", "bilinear")
+        if mode == "genericlabel":
+            # Reroute to generic-label fused sampler (single tensor, return_probs=False)
+            if not self._use_ffo or fused_grid_sampler_2d_generic_label is None:
+                raise RuntimeError(
+                    "genericlabel interpolation requires fused ops (FFO). "
+                    "Either compile fused ops or use is_onehot=True for segmentation images."
+                )
+            dim = self._get_image_dim(*args, **kwargs)
+            input_tensor = kwargs.get("input", args[0] if args else None)
+            if dim == 2:
+                return fused_grid_sampler_2d_generic_label(*args, **kwargs)
+            return fused_grid_sampler_3d_generic_label(*args, **kwargs)
+        # otherwise, dispatch to the appropriate grid sample implementation
         dim = self._get_image_dim(*args, **kwargs)
-        # print(f"Dispatching to {f'grid_sample_{dim}d'}")
         return self._registry[self._use_ffo][f'grid_sample_{dim}d'](*args, **kwargs)
     
     @augment_registry_backend.__func__

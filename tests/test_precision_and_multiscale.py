@@ -99,8 +99,8 @@ def baseline_data():
     # Load images
     fixed_image = Image.load_file(fixed_image_path)
     moving_image = Image.load_file(moving_image_path)
-    fixed_seg = Image.load_file(fixed_seg_path, is_segmentation=True)
-    moving_seg = Image.load_file(moving_seg_path, is_segmentation=True)
+    fixed_seg = Image.load_file(fixed_seg_path, is_segmentation=True, is_onehot=True, background_seg_label=0)
+    moving_seg = Image.load_file(moving_seg_path, is_segmentation=True, is_onehot=True, background_seg_label=0)
     
     # Create batched images
     fixed_batch = BatchedImages([fixed_image])

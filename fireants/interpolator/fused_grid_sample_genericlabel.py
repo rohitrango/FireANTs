@@ -300,9 +300,9 @@ def fused_grid_sampler_2d_generic_label(
     max_coords: Optional[Tuple[float, float]] = None,
     out_shape: Optional[Tuple[int, int]] = None,
     is_displacement: bool = True,
-    return_probs: bool = True,
+    return_probs: bool = False,
     background_label: Optional[float] = None,
-) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+) -> Union[torch.Tensor, Tuple[torch.Tensor, Optional[torch.Tensor]]]:
     """
     2D fused generic-label grid sampler.
     Samples a label/one-hot map [B, C, H, W] with optional affine and/or grid;
@@ -320,11 +320,11 @@ def fused_grid_sampler_2d_generic_label(
         max_coords: (xmax, ymax) or None.
         out_shape: (H, W) when grid is None; otherwise inferred from grid.
         is_displacement: Whether grid is a displacement field.
-        return_probs: If True, return (labels, weights); else (labels, None).
+        return_probs: If True, return (labels, weights); else labels only.
         background_label: Optional background label value.
 
     Returns:
-        (out_labels [B, 1, H, W], out_weights [B, 1, H, W] or None).
+        out_labels [B, 1, H, W], or (out_labels, out_weights) when return_probs=True.
     """
     if grid is None:
         if out_shape is None:
@@ -365,7 +365,9 @@ def fused_grid_sampler_2d_generic_label(
         return_probs,
         background_label,
     )
-    return out_labels, out_weights
+    if return_probs:
+        return out_labels, out_weights
+    return out_labels
 
 
 def fused_grid_sampler_3d_generic_label(
@@ -379,9 +381,9 @@ def fused_grid_sampler_3d_generic_label(
     max_coords: Optional[Tuple[float, float, float]] = None,
     out_shape: Optional[Tuple[int, int, int]] = None,
     is_displacement: bool = True,
-    return_probs: bool = True,
+    return_probs: bool = False,
     background_label: Optional[float] = None,
-) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+) -> Union[torch.Tensor, Tuple[torch.Tensor, Optional[torch.Tensor]]]:
     """
     3D fused generic-label grid sampler.
     Samples a label/one-hot map [B, C, D, H, W] with optional affine and/or grid;
@@ -398,11 +400,11 @@ def fused_grid_sampler_3d_generic_label(
         max_coords: (xmax, ymax, zmax) or None.
         out_shape: (D, H, W) when grid is None.
         is_displacement: Whether grid is displacement.
-        return_probs: If True, return (labels, weights).
+        return_probs: If True, return (labels, weights); else labels only.
         background_label: Optional background label.
 
     Returns:
-        (out_labels [B, D, H, W], out_weights [B, C, D, H, W] or None).
+        out_labels [B, D, H, W], or (out_labels, out_weights) when return_probs=True.
     """
     if grid is None:
         if out_shape is None:
@@ -444,4 +446,6 @@ def fused_grid_sampler_3d_generic_label(
         return_probs,
         background_label,
     )
-    return out_labels, out_weights
+    if return_probs:
+        return out_labels, out_weights
+    return out_labels

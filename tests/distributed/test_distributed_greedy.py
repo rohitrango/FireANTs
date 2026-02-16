@@ -54,8 +54,8 @@ def distributed_greedy_registration_results():
 
         fixed_image = Image.load_file(fixed_image_path, device='cpu')
         moving_image = Image.load_file(moving_image_path, device='cpu')
-        fixed_seg = Image.load_file(fixed_seg_path, is_segmentation=True, device='cpu')
-        moving_seg = Image.load_file(moving_seg_path, is_segmentation=True, device='cpu')
+        fixed_seg = Image.load_file(fixed_seg_path, is_segmentation=True, is_onehot=True, background_seg_label=0, device='cpu')
+        moving_seg = Image.load_file(moving_seg_path, is_segmentation=True, is_onehot=True, background_seg_label=0, device='cpu')
 
         # Create BatchedImages objects
         fixed_batch = BatchedImages([fixed_image])
@@ -104,8 +104,8 @@ def distributed_greedy_registration_results():
         results[f"transform_path{suffix}"] = str(output_dir / f"warp_field_distributed_greedy{suffix}.{ext}")
 
     # redefine the images again (unsharded this time)
-    fixed_seg = Image.load_file(fixed_seg_path, is_segmentation=True, device='cpu')
-    moving_seg = Image.load_file(moving_seg_path, is_segmentation=True, device='cpu')
+    fixed_seg = Image.load_file(fixed_seg_path, is_segmentation=True, is_onehot=True, background_seg_label=0, device='cpu')
+    moving_seg = Image.load_file(moving_seg_path, is_segmentation=True, is_onehot=True, background_seg_label=0, device='cpu')
     moving_seg_batch = BatchedImages([moving_seg]).to(parallel_state.get_device())
     fixed_seg_batch = BatchedImages([fixed_seg]).to(parallel_state.get_device())
 

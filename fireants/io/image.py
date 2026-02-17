@@ -146,12 +146,17 @@ class Image:
             if not fi.use_ffo:
                 is_onehot = True
             self.is_onehot = is_onehot
-            array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(int)).to(device).long()
+            array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(int)).float().to(device)
             # preprocess segmentation if provided by user
             array = seg_preprocessor(array)
             if max_seg_label is not None:
                 array[array > max_seg_label] = background_seg_label
-            array = integer_to_onehot(array, background_label=background_seg_label, max_label=max_seg_label, dtype=dtype)[None]  # [1, C, H, W, D]
+            # convert to one-hot encoding
+            if is_onehot:
+                array = integer_to_onehot(array.long(), background_label=background_seg_label, max_label=max_seg_label, dtype=dtype)[None]  # [1, C, H, W, D]
+            else:
+                array = array[None, None]  # [1, 1, H, W, D]
+            # set these values
             self.array = array
             self.channels = array.shape[1]
             self.interpolation_mode = 'genericlabel' if (not is_onehot) else None

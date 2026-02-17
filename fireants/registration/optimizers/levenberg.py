@@ -33,7 +33,6 @@ from functools import partial
 
 USE_NO_GP = bool(int(os.environ.get('USE_NO_GP', '0').lower()))
 
-@torch.compile
 @torch.no_grad()
 def tile_size_one_torch_update(grad: torch.Tensor, lmbda: float) -> torch.Tensor:
     ''' update the gradient for a tile size of 1 '''
@@ -41,9 +40,8 @@ def tile_size_one_torch_update(grad: torch.Tensor, lmbda: float) -> torch.Tensor
     grad.div_(scaling)
     return grad
 
-@torch.compile
 @torch.no_grad()
-def tile_size_n_torch_update(grad: torch.Tensor, lmbda: float, tile_sizes: tuple[int, ...]) -> torch.Tensor:
+def tile_size_n_torch_update(grad: torch.Tensor, lmbda: float, tile_sizes: tuple[int, ...]= (2, 2, 2)) -> torch.Tensor:
     ''' update the gradient for a tile size of n '''
     dims = grad.shape[-1]
     jac = grad[..., None] * grad[..., None, :]  # [..., dims, dims]
@@ -90,10 +88,10 @@ class WarpLevenbergMarquardt:
                  freeform=False,
                  offload=False,   # try offloading to CPU
                  reset=False,
-                 # distributed params
-                 rank: int = 0, 
-                 dim_to_shard: int = 0,
-                 dtype: torch.dtype = torch.float32):
+                # distributed params
+                rank: int = 0, 
+                dim_to_shard: int = 0,
+                dtype: torch.dtype = torch.float32):
         # init
         self.dtype = dtype
         if weight_decay < 0.0:

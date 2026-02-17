@@ -781,18 +781,23 @@ class FusedLocalNormalizedCrossCorrelationLoss(nn.Module):
         if self.ndim == 2:
             # 2D case
             if self.kernel_type == "gaussian":
-                return -FusedNCC2dGaussian.apply(pred, target, self.kernel_size, self.sigma, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
+                val =  -FusedNCC2dGaussian.apply(pred, target, self.kernel_size, self.sigma, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
             elif self.kernel_type == "rectangular":
-                return -FusedNCC2d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
+                val = -FusedNCC2d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
             else:
                 raise ValueError(f"Unsupported kernel type: {self.kernel_type}")
         elif self.ndim == 3:
             # 3D case
             if self.kernel_type == "gaussian":
-                return -FusedNCC3dGaussian.apply(pred, target, self.kernel_size, self.sigma, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
+                val = -FusedNCC3dGaussian.apply(pred, target, self.kernel_size, self.sigma, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
             elif self.kernel_type == "rectangular":
-                return -FusedNCC3d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
+                val = -FusedNCC3d.apply(pred, target, self.kernel_size, self.smooth_nr, self.smooth_dr, self.reduction, self.use_ants_gradient, self.use_separable)
             else:
                 raise ValueError(f"Unsupported kernel type: {self.kernel_type}")
         else:
             raise ValueError(f"Unsupported spatial_dims: {self.ndim}")
+        
+        return val
+            
+
+        

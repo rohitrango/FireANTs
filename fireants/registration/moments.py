@@ -45,6 +45,7 @@ class MomentsRegistration(AbstractRegistration):
                 blur: bool = True, 
                 moments: int = 1,       # can be 1 or 2
                 orientation: str = "rot",           # set to either rot, antirot, or none
+                transl_mode: str = "com",          # "com" (center of mass) or "cof" (center of frame)
                 # loss params
                 loss_type: str = "cc",
                 loss_params: dict = {},
@@ -68,11 +69,14 @@ class MomentsRegistration(AbstractRegistration):
             orientation = 'both'
         orientation = orientation.lower()
         assert orientation in ['rot', 'antirot', 'both'], "Orientation should be either rot, antirot, or both (None)"
+        transl_mode = transl_mode.lower()
+        assert transl_mode in ['com', 'cof'], "transl_mode should be 'com' (center of mass) or 'cof' (center of frame)"
         # set device and dims
         device = fixed_images.device
         self.perform_scaling = perform_scaling
         self.moments = moments
         self.orientation = orientation
+        self.transl_mode = transl_mode
         self.dims = self.moving_images.dims
         # introduce some scaling parameter
         self.blur = blur
@@ -318,9 +322,16 @@ class MomentsRegistration(AbstractRegistration):
         xyz_f = xyz_f.flatten(1, -2)  # [N, H*W*D, dims]
         xyz_m = xyz_m.flatten(1, -2)  # [N, H*W*D, dims]
 
-        # calculate center of mass for fixed and moving images BSC, BS1
-        com_f = (fixed_arrays * xyz_f).sum(dim=1) / fixed_arrays.sum(dim=1)
-        com_m = (moving_arrays * xyz_m).sum(dim=1) / moving_arrays.sum(dim=1)
+        # compute centers for translation (used for both moments=1 and moments=2)
+        if self.transl_mode == "com":
+            # center of mass
+            com_f = (fixed_arrays * xyz_f).sum(dim=1) / fixed_arrays.sum(dim=1)
+            com_m = (moving_arrays * xyz_m).sum(dim=1) / moving_arrays.sum(dim=1)
+        else:
+            # coordinate (0, 0, 0) in torch is the center of the image
+            dims = self.dims
+            com_f = fixed_t2p[:, :dims, -1].to(fixed_arrays.device)
+            com_m = moving_t2p[:, :dims, -1].to(moving_arrays.device)
 
         if self.moments == 1:
             # calculate first order moments

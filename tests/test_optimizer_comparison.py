@@ -9,6 +9,7 @@ from pathlib import Path
 from fireants.registration.greedy import GreedyRegistration
 from fireants.registration.syn import SyNRegistration
 from fireants.io.image import Image, BatchedImages
+from typing import Optional
 
 try:
     from .conftest import dice_loss
@@ -24,7 +25,7 @@ fixed_seg_path = str(test_data_dir / "deformable_seg_1.nii.gz")
 moving_seg_path = str(test_data_dir / "deformable_seg_2.nii.gz")
 
 
-def _run_registration_and_dice(method: str, optimizer: str):
+def _run_registration_and_dice(method: str, optimizer: str, optimizer_params: Optional[dict] = None):
     """Run registration with given method and optimizer; return mean Dice score."""
     fixed_image = Image.load_file(fixed_image_path)
     moving_image = Image.load_file(moving_image_path)
@@ -45,7 +46,10 @@ def _run_registration_and_dice(method: str, optimizer: str):
         optimizer_lr=0.5,
         smooth_warp_sigma=0.25,
         smooth_grad_sigma=0.5,
+        # cc_kernel_size=[15, 11, 7],
     )
+    if optimizer_params is not None:
+        common["optimizer_params"] = optimizer_params
 
     if method == "greedy":
         reg = GreedyRegistration(**common)
@@ -100,10 +104,21 @@ def test_final_dice_score_syn_adam():
 
 def test_final_dice_score_syn_levenberg():
     """Final Dice for SyN registration with Levenberg optimizer."""
-    mean_dice, dice_scores = _run_registration_and_dice("syn", "levenberg")
+    mean_dice, dice_scores = _run_registration_and_dice("syn", "levenberg", optimizer_params={"lambda_init": 1e-1, "lambda_increase_factor": 2.0})
     logger.info("SyN + Levenberg:")
     logger.info(f"  Average Dice score: {mean_dice:.3f}")
     logger.info(f"  Labels with Dice > 0.7: {sum(1 for d in dice_scores if d > 0.7)}")
     logger.info(f"  Labels with Dice > 0.8: {sum(1 for d in dice_scores if d > 0.8)}")
     logger.info(f"  Labels with Dice > 0.9: {sum(1 for d in dice_scores if d > 0.9)}")
     assert mean_dice > 0.75, f"Average Dice score ({mean_dice:.3f}) is below threshold"
+
+
+def test_levenberg_tile_size_comparison():
+    """Compare Levenberg optimizer for tile sizes 1 through 8; print mean Dice only (no assert)."""
+    logger.info("\n--- Levenberg tile size comparison (Greedy) ---")
+    for tile_size in range(1, 9):
+        mean_dice, dice_scores = _run_registration_and_dice(
+            "greedy", "levenberg", optimizer_params={"tile_size": tile_size}
+        )
+        logger.info(f"  tile_size={tile_size}: mean_dice={mean_dice:.4f}")
+    logger.info("--- done ---\n")

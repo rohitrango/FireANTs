@@ -25,20 +25,64 @@ logger = logging.getLogger(__name__)
 from fireants.registration.distributed import parallel_state
 from fireants.registration.optimizers.adam import _get_smoothing_wrapper
 from typing import Optional
-
+import numpy as np
 import os
 import logging
 logger = logging.getLogger(__name__)
+from functools import partial
+
 USE_NO_GP = bool(int(os.environ.get('USE_NO_GP', '0').lower()))
+
+@torch.compile
+@torch.no_grad()
+def tile_size_one_torch_update(grad: torch.Tensor, lmbda: float) -> torch.Tensor:
+    ''' update the gradient for a tile size of 1 '''
+    scaling = grad.norm(p=2, dim=-1, keepdim=True).pow_(2).add_(lmbda)   # grad**2 + lmbda 
+    grad.div_(scaling)
+    return grad
+
+@torch.compile
+@torch.no_grad()
+def tile_size_n_torch_update(grad: torch.Tensor, lmbda: float, tile_sizes: tuple[int, ...]) -> torch.Tensor:
+    ''' update the gradient for a tile size of n '''
+    dims = grad.shape[-1]
+    jac = grad[..., None] * grad[..., None, :]  # [..., dims, dims]
+    if dims == 2:
+        B, H, W, _, _ = jac.shape
+        jac = jac.reshape(B, H, W, -1).permute(0, 3, 1, 2)
+    elif dims == 3:
+        B, H, W, D, _, _ = jac.shape
+        jac = jac.reshape(B, H, W, D, -1).permute(0, 4, 1, 2, 3)
+    else:
+        raise ValueError(f"Invalid dimension: {dims}")
+    # compute filters
+    ones = [torch.ones(s, device=grad.device) for s in tile_sizes]
+    jac = separable_filtering(jac, ones) / np.prod(tile_sizes)
+    # reshape back
+    if dims == 2:
+        jac = jac.permute(0, 2, 3, 1).reshape(B, H, W, 2, 2)
+    elif dims == 3:
+        jac = jac.permute(0, 2, 3, 4, 1).reshape(B, H, W, D, 3, 3)
+    else:
+        raise ValueError(f"Invalid dimension: {dims}")
+    # add identity matrix
+    jac.add_(torch.eye(dims, device=grad.device).mul_(lmbda))
+    # invert 
+    jac = torch.linalg.inv(jac) 
+    grad = torch.einsum('...ij,...j->...i', jac, grad)
+    return grad
 
 class WarpLevenbergMarquardt:
     ''' 
     shape of warp = [B, H, W, [D], dims]
     '''
     def __init__(self, warp, lr, 
-                 lambda_init=1,
-                 lambda_increase_factor=2.0,
+                 # parameters for lambda
+                 lambda_init=1e-1,
+                 lambda_increase_factor=5.0,
                  lambda_decrease_factor=0.7,
+                 tile_size=1,
+                 # other parameters
                  weight_decay=0, eps=1e-8,
                  scaledown=False, multiply_jacobian=False,
                  smoothing_gaussians=None, 
@@ -90,6 +134,9 @@ class WarpLevenbergMarquardt:
         self.last_loss = None
         self.lambda_increase_factor = lambda_increase_factor
         self.lambda_decrease_factor = lambda_decrease_factor
+        self.tile_size = tile_size if isinstance(tile_size, (float, tuple)) else [tile_size] * self.n_dims
+        assert len(self.tile_size) == self.n_dims, "tile_size must be a tuple of length n_dims"
+
         assert self.lambda_increase_factor > 1.0, "lambda_increase_factor must be greater than 1.0"
         assert self.lambda_decrease_factor < 1.0, "lambda_decrease_factor must be less than 1.0"
         # distributed params
@@ -107,6 +154,12 @@ class WarpLevenbergMarquardt:
             self.padding_smoothing = 0
         # get wrapper around smoothing for distributed / not distributed
         self.smoothing_wrapper = _get_smoothing_wrapper(self)
+
+        # update function for tile sizes
+        if np.prod(self.tile_size) == 1:
+            self.update_fn = tile_size_one_torch_update
+        else:
+            self.update_fn = partial(tile_size_n_torch_update, tile_sizes=self.tile_size)
     
     def cleanup(self):
         # manually clean up
@@ -154,6 +207,17 @@ class WarpLevenbergMarquardt:
                 ujac = torch.einsum('bxhwdp,bhwdp->bhwdx', jac, u)
             return ujac
     
+    def compute_lambda_init_if_auto(self, grad):
+        ''' compute the lambda_init if it is auto '''
+        if isinstance(self.lambda_init, (int, float)):
+            return
+        algo = str(self.lambda_init).lower()
+        if algo == 'auto':
+            self.lambda_init = (torch.linalg.norm(grad, ord=2, dim=-1, keepdim=False).pow_(2).mean()).item() 
+        else:
+            raise ValueError(f"lambda_init must be a float or 'auto', got {algo}")
+        logger.info(f"Computed lambda_init as {self.lambda_init} using algorithm '{algo}'")
+
     def step(self, loss: Optional[torch.Tensor] = None):
         ''' check for momentum, and other things '''
         # update the lambda
@@ -175,10 +239,10 @@ class WarpLevenbergMarquardt:
         self.step_t += 1
 
         # compute damped hessian
-        h = grad[..., None] * grad[..., None, :]  # [..., dims, dims]
-        h.add_(self.lambda_init * torch.eye(self.n_dims, device=self.device), alpha=1.0)
-        h = torch.linalg.inv(h)
-        grad = torch.einsum('...ij,...j->...i', h, grad)
+        self.compute_lambda_init_if_auto(grad)
+
+        # update the gradient
+        grad = self.update_fn(grad, self.lambda_init)
 
         # denom = (self.exp_avg_sq / beta_correction2).sqrt().add_(self.eps)
         # get updated gradient (this will be normalized and passed in)

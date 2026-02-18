@@ -30,7 +30,7 @@ from pathlib import Path
 
 from fireants.interpolator import fireants_interpolator
 from fireants.utils.globals import MIN_IMG_SIZE
-from fireants.io.image import BatchedImages
+from fireants.io.image import BatchedImages, FakeBatchedImages
 from fireants.registration.abstract import AbstractRegistration
 from fireants.registration.deformation.svf import StationaryVelocity
 from fireants.registration.deformation.compositive import CompositiveWarp
@@ -54,6 +54,29 @@ class DeformableMixin:
     - moving_images: BatchedImages object containing moving images
     - get_warped_coordinates(): Method to get transformed coordinates
     """
+
+    @torch.no_grad()
+    def get_partial_warped_parameters(reg, fixed_images: Union[BatchedImages, FakeBatchedImages], moving_images: Union[BatchedImages, FakeBatchedImages], fraction: float, shape=None):
+        """Return warp parameters with the grid scaled by a fraction in [0, 1].
+
+        Calls get_warp_parameters then multiplies the returned grid by fraction.
+        Same signature as get_warp_parameters with an additional fraction parameter.
+
+        Args:
+            fixed_images: Fixed/reference images.
+            moving_images: Moving images.
+            fraction: Scale factor for the grid, must be in [0, 1].
+            shape: Optional output shape (passed to get_warp_parameters).
+
+        Returns:
+            Dict with 'affine' and 'grid' keys; 'grid' is the original grid multiplied by fraction.
+        """
+        if not (0 <= fraction <= 1):
+            raise ValueError("fraction must be in [0, 1], got %s" % fraction)
+        params = reg.get_warp_parameters(fixed_images, moving_images, shape=shape)
+        out = dict(params)
+        out["grid"] = params["grid"] * fraction
+        return out
 
     @torch.no_grad()
     def save_as_ants_transforms(reg, filenames: Union[str, List[str]], save_inverse=False):

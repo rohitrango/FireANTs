@@ -221,8 +221,6 @@ class WarpAdam:
         # add weight decay term
         if self.weight_decay > 0:
             grad.add_(self.warp.data, alpha=self.weight_decay)
-        # apply gradient restriction (e.g. restrict deformations along certain dims)
-        grad = self.gradient_restriction(grad)
         # compute moments
         self.step_t += 1
 
@@ -241,6 +239,9 @@ class WarpAdam:
 
         # adam_update_fused(grad, self.exp_avg, self.exp_avg_sq, beta_correction1, beta_correction2, self.eps)
         self.adam_update_kernel(grad, self.exp_avg, self.exp_avg_sq, beta_correction1, beta_correction2, self.eps)
+
+        # apply gradient restriction (e.g. restrict deformations along certain dims)
+        grad = self.gradient_restriction(grad)
 
         # we offload this to CPU
         if self.offload:

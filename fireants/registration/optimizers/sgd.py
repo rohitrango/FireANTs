@@ -144,8 +144,6 @@ class WarpSGD:
         # add weight decay term
         if self.weight_decay > 0:
             grad.add_(self.warp.data, alpha=self.weight_decay)
-        # apply gradient restriction (e.g. restrict deformations along certain dims)
-        grad = self.gradient_restriction(grad)
         # add momentum
         if self.momentum > 0:
             if self.velocity is None:
@@ -160,6 +158,9 @@ class WarpSGD:
             else:
                 # grad = buf
                 grad.copy_(buf)
+        # apply gradient restriction (e.g. restrict deformations along certain dims)
+        grad = self.gradient_restriction(grad)
+
         ## renormalize and update warp (per pixel)
         gradmax = self.eps + grad.norm(p=2, dim=-1, keepdim=True)
         # gradmean = gradmax.flatten(1).mean(1)  # [B,]

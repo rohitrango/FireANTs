@@ -43,9 +43,9 @@ class Subspace2DAffineRegistration(AbstractRegistration):
 
     def __init__(
         self,
-        scale: float,
         fixed_images: BatchedImages,
         moving_images: BatchedImages,
+        scale: Optional[int] = 1,
         loss_type: str = "cc",
         loss_params: Optional[dict] = None,
         mi_kernel_type: str = "gaussian",

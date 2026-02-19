@@ -176,6 +176,13 @@ class Image:
         # also save intermediates just in case (as numpy arrays)
         self._torch2px = torch2px
         self._px2phy = px2phy
+        # keep these as well
+        self.torch2px = torch.from_numpy(self._torch2px).to(device).float().unsqueeze_(0)
+        self.px2torch = torch.inverse(self.torch2px[0]).float().unsqueeze_(0)
+        self.px2phy = torch.from_numpy(self._px2phy).to(device).float().unsqueeze_(0)
+        self.phy2px = torch.inverse(self.px2phy[0]).float().unsqueeze_(0)
+
+        self._px2phy = px2phy
         self.device = device
         
     @classmethod
@@ -286,6 +293,10 @@ class Image:
         del self.phy2torch
         del self._torch2px
         del self._px2phy
+        del self.torch2px
+        del self.px2torch
+        del self.px2phy
+        del self.phy2px
 
 def concat(*images, optimize_memory: bool = True):
     ''' Creates a copy of the images and concatenates them along the channel dimension
@@ -348,6 +359,10 @@ class BatchedImages:
         # create metadata
         self.torch2phy = torch.cat([x.torch2phy for x in self.images], dim=0)
         self.phy2torch = torch.cat([x.phy2torch for x in self.images], dim=0)
+        self.torch2px = torch.cat([x.torch2px for x in self.images], dim=0)
+        self.px2torch = torch.cat([x.px2torch for x in self.images], dim=0)
+        self.px2phy = torch.cat([x.px2phy for x in self.images], dim=0)
+        self.phy2px = torch.cat([x.phy2px for x in self.images], dim=0)
         # sharding info 
         self.is_sharded = False
     
@@ -356,6 +371,10 @@ class BatchedImages:
         self.batch_tensor = self.batch_tensor.to(device_name)
         self.torch2phy = self.torch2phy.to(device_name)
         self.phy2torch = self.phy2torch.to(device_name)
+        self.torch2px = self.torch2px.to(device_name)
+        self.px2torch = self.px2torch.to(device_name)
+        self.px2phy = self.px2phy.to(device_name)
+        self.phy2px = self.phy2px.to(device_name)
     
     def to(self, device_or_dtype: Union[devicetype, torch.dtype]):
         '''

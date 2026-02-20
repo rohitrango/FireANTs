@@ -64,7 +64,9 @@ class RigidRegistration(AbstractRegistration):
         tolerance (float, optional): Convergence tolerance. Default: 1e-6
         max_tolerance_iters (int, optional): Max iterations for convergence. Default: 10
         cc_kernel_size (int, optional): Kernel size for CC loss. Default: 3
-        init_translation (Optional[torch.Tensor], optional): Initial translation. Default: None
+        init_translation (Optional[Union[torch.Tensor, str]], optional): Initial translation. If a tensor, used
+            directly; if the string "cof", set to c_m - c_f (center of moving minus center of fixed in physical space).
+            Default: None
         init_moment (Optional[torch.Tensor], optional): Initial rotation moment. Default: None
         scaling (bool, optional): Whether to optimize scaling parameters. Default: False
         custom_loss (nn.Module, optional): Custom loss module. Default: None
@@ -87,7 +89,7 @@ class RigidRegistration(AbstractRegistration):
                 mi_kernel_type: str = 'gaussian', cc_kernel_type: str = 'rectangular',
                 tolerance: float = 1e-6, max_tolerance_iters: int = 10, 
                 cc_kernel_size: int = 3,
-                init_translation: Optional[torch.Tensor] = None,
+                init_translation: Optional[Union[torch.Tensor, str]] = None,
                 init_moment: Optional[torch.Tensor] = None,
                 scaling: bool = False,
                 custom_loss: nn.Module = None, 
@@ -124,7 +126,15 @@ class RigidRegistration(AbstractRegistration):
         self.blur = blur
         # first three params are so(n) variables, last three are translation
         if init_translation is not None:
-            transl = init_translation.to(device)  # [N, D]
+            if isinstance(init_translation, torch.Tensor):
+                transl = init_translation.to(device)  # [N, D]
+            elif init_translation == "cof":
+                # Center of frame: init translation = c_m - c_f (same as moments.py transl_mode="cof")
+                c_f = self.fixed_images.get_torch2phy()[:, :self.dims, -1].detach().contiguous()
+                c_m = self.moving_images.get_torch2phy()[:, :self.dims, -1].detach().contiguous()
+                transl = (c_m - c_f).to(device)  # [N, D]
+            else:
+                raise ValueError(f"init_translation must be a tensor or 'cof', got {init_translation}")
         else:
             transl = torch.zeros((self.opt_size, fixed_images.dims)).to(device)  # [N, D]
         

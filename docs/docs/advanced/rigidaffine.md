@@ -65,6 +65,29 @@ affine_reg.optimize()
 Checkout the reference for details on more parameters.
 
 
+## Initialization
+
+You can initialize translation (and optionally the linear part) from the **center of frame** (COF) so that the physical centers of the fixed and moving images are aligned before optimization. This uses \(c_m - c_f\) in physical space (same convention as [moment matching](moments.md) with `transl_mode="cof"`).
+
+**Rigid registration** — set initial translation to \(c_m - c_f\) and keep rotation at identity:
+
+```python
+rigid_reg = RigidRegistration(scales, iterations, fixed_batch, moving_batch,
+                              init_translation="cof",  # center-of-frame: c_m - c_f
+                              optimizer=optim, optimizer_lr=lr)
+```
+
+**Affine registration** — set initial translation to \(c_m - c_f\) and the linear part to identity:
+
+```python
+affine_reg = AffineRegistration(scales, iterations, fixed_batch, moving_batch,
+                                init_rigid="cof",  # identity + translation c_m - c_f
+                                optimizer=optim, optimizer_lr=lr)
+```
+
+For more advanced initialization (e.g. from moment matching or subspace methods), pass a tensor to `init_translation` / `init_rigid` as shown in [Composing with other transforms](moments.md#composing-with-other-transforms) and in the [Subspace2D Affine how-to](../howto/subspace2d-affine.md).
+
+
 ## Additional Functionality
 
 * **Dense transformation grid**: Both rigid and affine registration extend the `get_warped_coordinates` method to return a dense coordinate grid of the warp function $\phi(x) = Ax + t$.

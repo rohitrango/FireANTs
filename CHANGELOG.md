@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+### 2026-02-20 - fireants 1.3.0, fireants_fused_ops 1.1.0 - changes
+
+- added new functionality (2d affine registration of binary shapes using subspace based contour matching: useful for stuff like histology to MRI pre-registration
+- makefile with scripts to deploy quicker
+
+
 ### 2026-02-12 - fireants 1.2.0, fireants_fused_ops 1.1.0 - changes
 
 - added grid_sample and warp_composer ops for 2d

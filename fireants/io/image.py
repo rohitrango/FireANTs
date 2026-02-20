@@ -29,6 +29,7 @@ import logging
 from copy import deepcopy
 import os
 from fireants.utils.globals import PERMITTED_ANTS_WARP_EXT
+from fireants.interpolator import fireants_interpolator as fi
 # logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -84,7 +85,8 @@ class Image:
             See `max_seg_label`, `background_seg_label`, `seg_preprocessor` for more details on how to manipulate integer label images.
         max_seg_label (int, optional): Maximum label value for segmentation. Values above this are set to background_seg_label.
             Set to None by default, meaning no label clipping is done.
-        background_seg_label (int, optional): Label value representing background in segmentations. Defaults to 0.
+        background_seg_label (int, optional): Label value representing background in segmentations. Defaults to -1 (background is included as a one-hot label)
+        is_onehot (bool, optional): If True, use one-hot interpolation (bilinear/trilinear on one-hot channels). If False and FFO is available, use generic-label fused sampler. Defaults to False. When FFO is not available, this is forced to True.
         seg_preprocessor (callable, optional): Function to preprocess segmentation arrays. Defaults to identity function.
         orientation (str, optional): Reorient the image to this orientation. Defaults to None.
         spacing (array-like, optional): Custom spacing for the image. If None, uses SimpleITK values.
@@ -106,7 +108,7 @@ class Image:
                  device: devicetype = 'cuda', 
                  dtype: torch.dtype = None,
                  is_segmentation=False, max_seg_label=None, 
-                 background_seg_label=0, seg_preprocessor=lambda x: x,
+                 background_seg_label=-1, is_onehot: bool = False, seg_preprocessor=lambda x: x,
                  orientation: str = None,
                  winsorize: bool = False,
                  winsorize_percentile: Tuple[float, float] = (1.0, 99.0),
@@ -121,11 +123,12 @@ class Image:
         # check for segmentation parameters
         # if `is_segmentation` is False, then just treat this as an image with given dtype
         if not is_segmentation:
+            self.interpolation_mode = None
+            self.is_onehot = False
             itk_img = sitk.GetArrayFromImage(itk_image).astype(float)
             if winsorize:
                 itk_img = winsorize_image(itk_img, winsorize_percentile[0], winsorize_percentile[1])
             self.array = torch.from_numpy(itk_img).to(device, dtype)
-            # self.array = self.array[None, None]   # TODO: Change it to support multichannel images, right now just batchify and add a dummy channel to it
             channels = itk_image.GetNumberOfComponentsPerPixel()
             self.channels = channels
             # assert channels == 1, "Only single channel images supported"
@@ -139,14 +142,24 @@ class Image:
             # add batch dimension
             self.array.unsqueeze_(0)
         else:
-            array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(int)).to(device).long()
+            # When FFO is not available, force one-hot mode so generic-label path is never used
+            if not fi.use_ffo:
+                is_onehot = True
+            self.is_onehot = is_onehot
+            array = torch.from_numpy(sitk.GetArrayFromImage(itk_image).astype(int)).float().to(device)
             # preprocess segmentation if provided by user
             array = seg_preprocessor(array)
             if max_seg_label is not None:
                 array[array > max_seg_label] = background_seg_label
-            array = integer_to_onehot(array, background_label=background_seg_label, max_label=max_seg_label, dtype=dtype)[None]  # [1, C, H, W, D]
+            # convert to one-hot encoding
+            if is_onehot:
+                array = integer_to_onehot(array.long(), background_label=background_seg_label, max_label=max_seg_label, dtype=dtype)[None]  # [1, C, H, W, D]
+            else:
+                array = array[None, None]  # [1, 1, H, W, D]
+            # set these values
             self.array = array
             self.channels = array.shape[1]
+            self.interpolation_mode = 'genericlabel' if (not is_onehot) else None
         # initialize matrix for pixel to physical
         dims = itk_image.GetDimension()
         self.dims = dims
@@ -336,7 +349,12 @@ class BatchedImages:
 
         # set the number of images
         self.n_images = len(self.images)
-        self.interpolate_mode = 'bilinear' if len(self.images[0].shape) == 4 else 'trilinear'
+        # derive the interpolation mode from the first image if it is present, otherwise use bilinear/trilinear
+        first_interp = getattr(self.images[0], 'interpolation_mode', None)
+        if first_interp is not None:
+            self.interpolate_mode = first_interp
+        else:
+            self.interpolate_mode = 'bilinear' if len(self.images[0].shape) == 4 else 'trilinear'
         self.broadcasted = False
         # create a batch tensor
         self.batch_tensor = torch.cat([x.array for x in self.images], dim=0) if self.n_images > 1 else self.images[0].array

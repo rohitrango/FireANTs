@@ -85,7 +85,7 @@ class TestImage:
 
     def test_segmentation(self, sample_seg_image_3d):
         """Test segmentation image handling"""
-        img = Image(sample_seg_image_3d, device='cpu', is_segmentation=True)
+        img = Image(sample_seg_image_3d, device='cpu', is_segmentation=True, is_onehot=True, background_seg_label=0)
         assert img.channels == 2
         assert img.array.shape[1] == 2
         # Check that values are binary (0 or 1)

@@ -40,8 +40,8 @@ def registration_results():
     moving_img = Image.load_file(str(test_data_dir / "oasis_157_image_rotated.nii.gz"))
     moving_img.array = moving_img.array * 1.0 / moving_img.array.max() * fixed_img.array.max()
 
-    fixed_seg = Image.load_file(str(test_data_dir / "oasis_157_seg.nii.gz"), is_segmentation=True)
-    moving_seg = Image.load_file(str(test_data_dir / "oasis_157_seg_rotated.nii.gz"), is_segmentation=True)
+    fixed_seg = Image.load_file(str(test_data_dir / "oasis_157_seg.nii.gz"), is_segmentation=True, is_onehot=True, background_seg_label=0)
+    moving_seg = Image.load_file(str(test_data_dir / "oasis_157_seg_rotated.nii.gz"), is_segmentation=True, is_onehot=True, background_seg_label=0)
     
     # Create BatchedImages objects
     fixed_batch = BatchedImages([fixed_img])
@@ -175,8 +175,8 @@ def rigid_registration_results():
     moving_img = Image.load_file(str(test_data_dir / "oasis_157_image_affine.nii.gz"))
     moving_img.array = moving_img.array * 1.0 / moving_img.array.max() * fixed_img.array.max()
 
-    fixed_seg = Image.load_file(str(test_data_dir / "oasis_157_seg.nii.gz"), is_segmentation=True)
-    moving_seg = Image.load_file(str(test_data_dir / "oasis_157_seg_affine.nii.gz"), is_segmentation=True)
+    fixed_seg = Image.load_file(str(test_data_dir / "oasis_157_seg.nii.gz"), is_segmentation=True, is_onehot=True, background_seg_label=0)
+    moving_seg = Image.load_file(str(test_data_dir / "oasis_157_seg_affine.nii.gz"), is_segmentation=True, is_onehot=True, background_seg_label=0)
     
     # Create BatchedImages objects
     fixed_batch = BatchedImages([fixed_img])
@@ -328,8 +328,8 @@ def affine_registration_results():
     moving_img = Image.load_file(str(test_data_dir / "oasis_157_image_affine.nii.gz"))
     moving_img.array = moving_img.array * 1.0 / moving_img.array.max() * fixed_img.array.max()
 
-    fixed_seg = Image.load_file(str(test_data_dir / "oasis_157_seg.nii.gz"), is_segmentation=True)
-    moving_seg = Image.load_file(str(test_data_dir / "oasis_157_seg_affine.nii.gz"), is_segmentation=True)
+    fixed_seg = Image.load_file(str(test_data_dir / "oasis_157_seg.nii.gz"), is_segmentation=True, is_onehot=True, background_seg_label=0)
+    moving_seg = Image.load_file(str(test_data_dir / "oasis_157_seg_affine.nii.gz"), is_segmentation=True, is_onehot=True, background_seg_label=0)
     
     # Create BatchedImages objects
     fixed_batch = BatchedImages([fixed_img])

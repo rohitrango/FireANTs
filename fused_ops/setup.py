@@ -32,6 +32,7 @@ setup(
                 'src/src.cpp',
                 'src/CrossCorrelation.cu',  
                 'src/FusedGridSampler.cu',
+                'src/FusedGridSamplerGenericLabel.cu',
                 'src/FusedGridComposer.cu',
                 'src/FusedGenerateGrid.cu',
                 'src/AdamUtils.cu',

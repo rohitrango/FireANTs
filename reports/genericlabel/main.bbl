@@ -1,0 +1,28 @@
+\begin{thebibliography}{1}
+
+\bibitem{jena2024fireants}
+Rohit Jena, Pratik Chaudhari, and James~C. Gee.
+\newblock Adaptive riemannian optimization for multi-scale diffeomorphic
+  matching.
+\newblock {\em arXiv preprint arXiv:2404.01249}, 2024.
+
+\bibitem{jena2025deep}
+Rohit Jena, Pratik Chaudhari, and James~C. Gee.
+\newblock Deep implicit optimization enables robust learnable features for
+  deformable image registration.
+\newblock {\em Medical Image Analysis}, 2025.
+\newblock 103577.
+
+\bibitem{jena2024mirage}
+Rohit Jena, Deeksha Sethi, Pratik Chaudhari, and James~C. Gee.
+\newblock Deep learning in medical image registration: Magic or mirage?
+\newblock In {\em Advances in Neural Information Processing Systems},
+  volume~37, pages 108331--108353, 2024.
+
+\bibitem{schaerer2014generic}
+Jo{\"e}l Schaerer, Florent Roche, and Boubakeur Belaroussi.
+\newblock A generic interpolator for multi-label images.
+\newblock {\em The Insight Journal}, 2014.
+\newblock Submitted December 22, 2014.
+
+\end{thebibliography}

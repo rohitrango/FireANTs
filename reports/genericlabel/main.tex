@@ -1,0 +1,133 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{booktabs}
+\usepackage[margin=1in]{geometry}
+
+\title{Differentiable GenericLabel Interpolation in FireANTs\\
+\large A Fused CUDA Kernel for Constant-in-Label-Count Warping of Segmentation Maps}
+\author{Rohit Jena\thanks{Corresponding work.}}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Warping label maps in deformable image registration requires interpolation that is both differentiable (for gradient-based optimization of the warp) and scalable to many labels. Nearest-neighbor interpolation causes aliasing and yields poor gradient signal at boundaries; linear interpolation of full one-hot (probability) masks is correct in semantics but incurs memory and time cost linear in the number of labels $L$, which is prohibitive for fine-grained atlases. We describe a fused CUDA kernel that implements the generic interpolator idea: at each output voxel, bilinear or trilinear interpolation involves at most 4 (2D) or 8 (3D) input voxels, hence at most that many distinct label values. The kernel accumulates interpolation weights per distinct label and returns the label with maximum cumulative weight (and optionally that weight). Forward and backward cost and memory are constant in $L$, with full differentiability for the transformation (grid and affine). We integrate this into the FireANTs registration toolkit, validate correctness against the one-hot baseline, and report runtime and memory scaling versus $L$ and versus spatial size.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+Deformable image registration often requires warping segmentation or label maps---e.g., for Dice or label-consistency losses, or for visualization. To optimize the deformation with gradient-based methods, the resampling of integer-valued label maps must be differentiable with respect to the transformation parameters (affine, displacement grid). Three common approaches are:
+
+\begin{enumerate}
+\item \textbf{Nearest-neighbor interpolation}: Simple and differentiable in principle, but it introduces strong aliasing, step artifacts at boundaries, and often poor or zero gradient signal where the warp moves samples across label boundaries.
+\item \textbf{Linear interpolation of one-hot (probability) masks}: Convert the label map to a one-hot encoding with $L$ channels, apply bilinear or trilinear grid sampling to this $L$-channel volume, then take $\arg\max$ over channels. This matches the ``interpolate each label, return the label with highest interpolated value'' semantics of the generic interpolator \cite{schaerer2014generic}. However, memory and time scale as $O(L \cdot \text{volume})$, which is prohibitive when $L$ is large (e.g., fine-grained anatomical atlases).
+\item \textbf{Generic interpolator idea}: Interpolate ``each label'' only in the sense of the contributing neighbors; then return the label with highest interpolated value. The key observation is that for bilinear (2D) or trilinear (3D) interpolation, each output voxel depends on \emph{at most} 4 or 8 input voxels, so at most 4 or 8 \emph{distinct} label values contribute. One can therefore accumulate weights per distinct label in $O(1)$ space per voxel and take $\arg\max$ without ever materializing $L$ channels.
+\end{enumerate}
+
+We implement this third approach as a \emph{differentiable} fused CUDA kernel in the FireANTs toolkit \cite{jena2024fireants}. FireANTs performs multi-scale diffeomorphic registration on GPU with adaptive Riemannian optimization; our kernel allows segmentation images to be warped with \texttt{mode='genericlabel'} when fused ops are available, avoiding both nearest-neighbor artifacts and the $O(L)$ cost of one-hot interpolation \cite{jena2024fireants}. The contribution is: (1) a forward pass that computes warped labels and optional per-voxel winning weights in $O(\text{volume})$ time and memory, independent of $L$; (2) a backward pass that propagates gradients through the weight map to the grid and affine parameters (labels are integer and receive no gradient); (3) integration in FireANTs so that \texttt{Image(..., is\_segmentation=True, is\_onehot=False)} uses this path when the fused ops library is built.
+
+\section{Related Work}
+\label{sec:related}
+
+The generic interpolator for multi-label images was introduced in the Insight Journal by Schaerer et al. \cite{schaerer2014generic}. The idea is to interpolate each label with an ordinary image interpolator and return the label with the highest interpolated value; the ITK class \texttt{itk::LabelImageGaussianInterpolateImageFunction} implements this for Gaussian interpolation. The authors extend the idea to any image interpolator via generic programming and show that linear interpolation yields similar or better accuracy with much improved speed. That work is non-differentiable and CPU-oriented. We extend it to linear (bilinear/trilinear) interpolation in a differentiable, GPU-fused kernel with $O(1)$ cost in the number of labels.
+
+Differentiable registration and the role of label supervision are discussed in \cite{jena2024mirage,jena2025deep}. Label maps or anatomical landmarks are often used for training or evaluation; gradient-based optimization of the warp requires differentiable resampling of labels. Methods that use Dice or similar losses on warped segmentations typically assume either soft (probability) warped maps or one-hot expansion; our approach allows warping integer label maps directly with constant-in-$L$ cost while still backpropagating through the transformation via the optional weight output.
+
+\section{Method}
+\label{sec:method}
+
+\subsection{Setup}
+Input is a single-channel label image (integer labels stored as float) of shape $[B, 1, \ldots]$ in 2D or 3D. For equivalence with the one-hot baseline, the same grid can be applied to a one-hot tensor $[B, L, \ldots]$; the kernel then operates per channel. Output is warped labels of the same spatial shape and, optionally, a per-voxel ``winning'' weight map used for backpropagation.
+
+\subsection{Key Observation}
+For bilinear (2D) or trilinear (3D) interpolation, each output voxel depends on a fixed number of input voxels: 4 in 2D (corners of the cell) and 8 in 3D (corners of the voxel). Hence at most 4 or 8 \emph{distinct} label values contribute to that output. We need not materialize or sum over $L$ channels; we only need to (1) read the 4 or 8 neighbor values, (2) aggregate their interpolation weights by distinct label, and (3) return the label with maximum cumulative weight (and that weight).
+
+\subsection{Forward Pass}
+The forward kernel is implemented in \texttt{FusedGridSamplerGenericLabel.cu} (2D: lines 56--206; 3D: lines 413--601). For each output voxel we:
+\begin{enumerate}
+\item Compute the source location in input coordinates (using affine and/or grid, with displacement or absolute mode), and clamp to padding behavior (zeros, border, or reflection).
+\item Compute the integer corners and the bilinear or trilinear weights (e.g., in 2D: \texttt{nw}, \texttt{ne}, \texttt{sw}, \texttt{se}; in 3D: eight corner weights \texttt{tnw}, \texttt{tne}, \texttt{tsw}, \texttt{tse}, \texttt{bnw}, \texttt{bne}, \texttt{bsw}, \texttt{bse}).
+\item For each corner, read the label value; skip if below \texttt{background\_label} (or a configured dummy). For each \emph{distinct} label among these corners, accumulate the corresponding interpolation weight via an \texttt{add\_or\_accumulate} step: if the label is already in \texttt{val\_list}, add the weight to \texttt{weight\_list}; otherwise append to \texttt{val\_list} and \texttt{weight\_list} (up to 4 entries in 2D, 8 in 3D).
+\item Output the label with maximum accumulated weight; optionally output that weight.
+\end{enumerate}
+Duplicate labels at different corners are merged by summing their weights; the result is exactly the same as interpolating a one-hot encoding and taking $\arg\max$. The implementation uses small fixed-size arrays (\texttt{val\_list[4]} and \texttt{weight\_list[4]} in 2D; \texttt{val\_list[8]} and \texttt{weight\_list[8]} in 3D) per voxel, so memory and time per voxel are $O(1)$ in $L$.
+
+\subsection{Backward Pass}
+Label values are integer; no gradient flows to the input label map. Gradient flows only through the optional \emph{weight} output: if a loss is defined on the weights, the gradient with respect to the grid (and affine, if used) is computed by the same chain rule as in standard grid sampling (derivatives of the weight with respect to source indices and weights). The backward kernels (\texttt{fused\_grid\_sampler\_2d\_generic\_label\_backward\_kernel} and \texttt{fused\_grid\_sampler\_3d\_generic\_label\_backward\_kernel} in the same file) propagate \texttt{grad\_weight} to \texttt{grad\_grid} and \texttt{grad\_affine}; they do not write \texttt{grad\_input}. The Python \texttt{autograd.Function} in \texttt{fused\_grid\_sample\_genericlabel.py} saves the necessary tensors for backward and calls the fused backward entry points.
+
+\subsection{Complexity}
+Per output voxel: $O(1)$ distinct labels (at most 4 or 8), $O(1)$ memory. Thus forward and backward time and memory are $O(\text{volume})$, independent of $L$. In contrast, the one-hot baseline is $O(L \cdot \text{volume})$ in both time and memory.
+
+\begin{algorithm}[t]
+\caption{Per-output-voxel forward (3D).}
+\label{alg:forward}
+\begin{algorithmic}[1]
+\State Compute source coordinates $(x,y,z)$ from grid/affine
+\State Get 8 corner indices and trilinear weights $w_1,\ldots,w_8$
+\State \textbf{Initialize} $\texttt{val\_list}[1..8]$, $\texttt{weight\_list}[1..8]$, $\texttt{nvals} \gets 0$
+\For{each corner $i$ with value $v_i$ and weight $w_i$}
+  \If{$v_i$ is background} \textbf{continue} \EndIf
+  \If{$v_i \in \texttt{val\_list}[1..\texttt{nvals}]$}
+    \State Add $w_i$ to corresponding $\texttt{weight\_list}$ entry
+  \Else
+    \State $\texttt{nvals} \gets \texttt{nvals}+1$; $\texttt{val\_list}[\texttt{nvals}] \gets v_i$; $\texttt{weight\_list}[\texttt{nvals}] \gets w_i$
+  \EndIf
+\EndFor
+\State $\ell^* \gets \arg\max_{\texttt{val\_list}} \texttt{weight\_list}$
+\State \textbf{Output} label $\texttt{val\_list}[\ell^*]$, weight $\texttt{weight\_list}[\ell^*]$
+\end{algorithmic}
+\end{algorithm}
+
+\section{Implementation Notes}
+\label{sec:impl}
+
+The fused CUDA kernels live in \texttt{fused\_ops/src/FusedGridSamplerGenericLabel.cu}. Separate 2D and 3D forward and backward kernels are implemented. They support affine-only, grid-only, or composed transforms (including \texttt{grid\_affine} for pre-grid linear transform); displacement or absolute grid; padding modes (zeros, border, reflection); and an optional \texttt{background\_label}. Output tensors have the same batch and channel shape as the input (e.g., $[B, C, D, H, W]$ in 3D); for a single-channel label map $[B, 1, \ldots]$, the output labels and optional weights are $[B, 1, \ldots]$.
+
+The Python frontend in \texttt{fireants/interpolator/fused\_grid\_sample\_genericlabel.py} defines \texttt{FusedGridSampler2dGenericLabel} and \texttt{FusedGridSampler3dGenericLabel} as \texttt{torch.autograd.Function}s, and exposes \texttt{fused\_grid\_sampler\_2d\_generic\_label} and \texttt{fused\_grid\_sampler\_3d\_generic\_label} with arguments \texttt{input}, \texttt{affine}, \texttt{grid}, \texttt{grid\_affine}, \texttt{padding\_mode}, \texttt{align\_corners}, \texttt{out\_shape}, \texttt{is\_displacement}, \texttt{return\_probs}, and \texttt{background\_label}. The dispatcher in \texttt{fireants/interpolator/\_\_init\_\_.py} routes \texttt{mode='genericlabel'} to these when the fused ops library (\texttt{fireants\_fused\_ops}) is available. In \texttt{fireants/io/image.py}, segmentation images loaded with \texttt{Image(..., is\_segmentation=True, is\_onehot=False)} set \texttt{interpolation\_mode='genericlabel'} so that warping uses the fused kernel instead of one-hot expansion; if fused ops are not built, \texttt{is\_onehot} is forced to \texttt{True} and standard one-hot interpolation is used.
+
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Validation}
+We compare the fused generic-label sampler against the one-hot baseline (convert labels to one-hot, run bilinear/trilinear grid sample, then $\arg\max$ over channels) on synthetic and test data. The existing test suite in \texttt{tests/test\_fusedops\_gridsample\_genericlabel.py} covers 2D and 3D with affine/grid and displacement/absolute combinations. Forward outputs (labels and optional weights) match the baseline within numerical tolerance. Backward gradients to the grid and affine match a reference (numerical gradient or baseline backprop through weights). \textbf{Placeholder:} A scatter plot (fused vs.\ baseline labels) and gradient-error summary will be added when benchmark scripts are run.
+
+\subsection{Runtime and Memory vs.\ Number of Labels}
+We fix spatial size (e.g., 3D $64\times64\times64$ or $128\times128\times128$) and vary the number of labels $L \in \{10, 50, 100, 500, 1000, 5000\}$. For the one-hot baseline we build a synthetic label map, convert to one-hot $[1,L,D,H,W]$, run the standard fused grid sampler (bilinear/trilinear), then $\arg\max$; we measure wall-clock time (forward, backward, total) and peak GPU memory. For GenericLabel we use a single-channel label map $[1,1,D,H,W]$ and the fused generic-label sampler with the same grid. We expect one-hot time and memory to grow with $L$, and GenericLabel to remain roughly constant. \textbf{Placeholder:} Figure and table to be added when benchmarks are run.
+
+\subsection{Runtime and Memory vs.\ Spatial Size}
+We fix $L$ (e.g., 100 or 500) and vary volume size (e.g., $32^3$, $64^3$, $128^3$, $256^3$) to show that GenericLabel scales with volume only, while one-hot scales with both volume and $L$ and runs out of memory earlier for large $L$ and large volumes. \textbf{Placeholder:} Results to be added.
+
+\subsection{Optional: Registration Pipeline}
+A minimal deformable registration loop that uses a loss on warped labels verifies that gradients flow through the generic-label path: warp a moving label map with the fused generic-label sampler (learnable displacement grid), define a loss on the output weights, and backpropagate to update the grid; the loss should decrease over iterations. Full registration pipelines in FireANTs (e.g., \texttt{GreedyRegistration} with segmentation images loaded with \texttt{is\_onehot=False}) use the generic-label interpolator automatically when fused ops are available. \textbf{Placeholder:} Loss curve figure to be added when the experiment is run.
+
+\section{Results}
+\label{sec:results}
+
+\subsection{Correctness}
+The test suite in \texttt{tests/test\_fusedops\_gridsample\_genericlabel.py} validates forward (labels and optional weights match the one-hot baseline) and backward (gradients to grid and affine match the baseline). When run in an environment with a suitable GPU, all tests pass. \textbf{Placeholder:} A scatter plot of fused vs.\ baseline labels and gradient-error statistics will be included when benchmark figures are generated. Expected: forward label agreement $>99\%$, weight relative error below $5\times10^{-3}$, and backward gradient differences within numerical precision.
+
+\subsection{Scaling}
+\textbf{Placeholder:} Runtime and peak GPU memory vs.\ $L$ and vs.\ spatial size will be reported in a table and figure (e.g., \texttt{scaling\_vs\_L.pdf}) when benchmarks are run. Expected: GenericLabel time and memory roughly constant in $L$; one-hot scaling linearly in $L$ and running out of memory for large $L$ at high resolution.
+
+\subsection{Optional Registration}
+\textbf{Placeholder:} A minimal registration loss curve (loss over iterations) will be added when the optional experiment is run. Expected: loss decreases, confirming gradient flow through the generic-label path.
+
+\subsection{Reproducibility}
+From the repository root with the \texttt{fireants} conda environment activated and fused ops built: \texttt{pytest tests/test\_fusedops\_gridsample\_genericlabel.py -v} runs the correctness tests. Benchmark scripts (\texttt{scripts/benchmark\_genericlabel.py}, \texttt{scripts/benchmark\_genericlabel\_registration.py}) are placeholders for now; when implemented and run on a GPU-enabled machine, they will generate the figures and tables referenced above.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We implemented a differentiable GenericLabel-style interpolator as a fused CUDA kernel in FireANTs. It avoids nearest-neighbor aliasing and the $O(L)$ cost of one-hot interpolation by exploiting the fact that each interpolated voxel has at most 4 (2D) or 8 (3D) neighbors, so at most that many distinct labels contribute. We accumulate weights per distinct label and return the label with maximum cumulative weight (and optionally that weight), yielding the same semantics as ``interpolate then argmax'' with $O(1)$ time and memory in $L$. The backward pass propagates gradients through the weight map to the grid and affine, enabling scalable differentiable registration with many-label segmentations.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

@@ -43,7 +43,7 @@ class RigidRegistration(AbstractRegistration):
 
     This class implements rigid registration (rotation and translation) with optional anisotropic scaling.
     The transformation is parameterized using:
-        - Rotation: 2D uses a single angle; 3D uses a unit quaternion (w,x,y,z)
+        - Rotation: Uses Lie algebra so(n) for 2D/3D rotations
         - Translation: Direct parameterization in physical space
         - Scaling (optional): Log-scale parameters for each dimension
 
@@ -71,7 +71,7 @@ class RigidRegistration(AbstractRegistration):
         blur (bool, optional): Whether to apply Gaussian blur during downsampling. Default: True
 
     Attributes:
-        rotation (nn.Parameter): Rotation parameters (2D: angle; 3D: quaternion w,x,y,z)
+        rotation (nn.Parameter): Rotation parameters in so(n)
         transl (nn.Parameter): Translation parameters
         logscale (nn.Parameter): Log-scale parameters (if scaling=True)
         moment (torch.Tensor): Current rotation moment matrix
@@ -102,15 +102,8 @@ class RigidRegistration(AbstractRegistration):
         # initialize transform
         device = fixed_images.device
         self.dims = dims = self.moving_images.dims
-        # 2D: one angle; 3D: quaternion (w,x,y,z)
-        self.rotation_dims = rotation_dims = (1 if dims == 2 else 4)
-        if dims == 2:
-            self.rotation = nn.Parameter(torch.zeros((self.opt_size, 1), device=device, dtype=self.dtype))  # [N, 1] angle
-        else:
-            # identity quaternion (w,x,y,z) = (1,0,0,0)
-            quat_init = torch.zeros((self.opt_size, 4), device=device, dtype=self.dtype)
-            quat_init[:, 0] = 1.0
-            self.rotation = nn.Parameter(quat_init)  # [N, 4]
+        self.rotation_dims = rotation_dims = dims * (dims - 1) // 2
+        self.rotation = nn.Parameter(torch.zeros((self.opt_size, rotation_dims), device=device, dtype=self.dtype))  # [N, Rd]
         # set init moment
         if init_moment is not None:
             self.moment = init_moment.to(device)
@@ -156,10 +149,10 @@ class RigidRegistration(AbstractRegistration):
             raise ValueError(f"Optimizer {optimizer} not supported")
     
     def get_rotation_matrix(self):
-        """Compute the rotation matrix from rotation parameters.
+        """Compute the rotation matrix from so(n) parameters.
 
-        For 2D: Uses direct angle parameterization.
-        For 3D: Uses unit quaternion (w,x,y,z); parameters are normalized to unit length.
+        For 2D: Uses direct angle parameterization
+        For 3D: Uses Rodriguez formula to compute matrix exponential
 
         Returns:
             torch.Tensor: Batch of rotation matrices [N, dim+1, dim+1]
@@ -173,23 +166,17 @@ class RigidRegistration(AbstractRegistration):
             rotmat[:, 1, 0] = sin
             rotmat[:, 1, 1] = cos
         elif self.dims == 3:
-            # Quaternion (w,x,y,z) -> rotation matrix; normalize to unit quaternion
-            q = self.rotation  # [N, 4]
-            q_norm = torch.norm(q, dim=-1, keepdim=True).clamp(min=1e-8)
-            w, x, y, z = (q[:, 0] / q_norm.squeeze(-1),
-                          q[:, 1] / q_norm.squeeze(-1),
-                          q[:, 2] / q_norm.squeeze(-1),
-                          q[:, 3] / q_norm.squeeze(-1))
             rotmat = torch.zeros((self.opt_size, 4, 4), device=self.rotation.device, dtype=self.dtype)
-            rotmat[:, 0, 0] = 1 - 2 * (y * y + z * z)
-            rotmat[:, 0, 1] = 2 * (x * y - w * z)
-            rotmat[:, 0, 2] = 2 * (x * z + w * y)
-            rotmat[:, 1, 0] = 2 * (x * y + w * z)
-            rotmat[:, 1, 1] = 1 - 2 * (x * x + z * z)
-            rotmat[:, 1, 2] = 2 * (y * z - w * x)
-            rotmat[:, 2, 0] = 2 * (x * z - w * y)
-            rotmat[:, 2, 1] = 2 * (y * z + w * x)
-            rotmat[:, 2, 2] = 1 - 2 * (x * x + y * y)
+            skew = torch.zeros((self.opt_size, 3, 3), device=self.rotation.device, dtype=self.dtype)
+            norm = torch.norm(self.rotation, dim=-1)+1e-8  # [N, 1]
+            angle = norm[:, None, None]
+            skew[:, 0, 1] = -self.rotation[:, 2]/norm
+            skew[:, 0, 2] = self.rotation[:, 1]/norm
+            skew[:, 1, 0] = self.rotation[:, 2]/norm
+            skew[:, 1, 2] = -self.rotation[:, 0]/norm
+            skew[:, 2, 0] = -self.rotation[:, 1]/norm
+            skew[:, 2, 1] = self.rotation[:, 0]/norm
+            rotmat[:, :3, :3] = torch.eye(3, device=self.rotation.device, dtype=self.dtype)[None] + torch.sin(angle) * skew + torch.matmul(skew, skew) * (1 - torch.cos(angle))
             rotmat[:, 3, 3] = 1
         else:
             raise ValueError(f"Dimensions {self.dims} not supported")

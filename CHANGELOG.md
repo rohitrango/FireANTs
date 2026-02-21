@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+### 2026-02-21 - fireants 1.3.1, fireants_fused_ops 1.1.0 - changes
+
+- added quarterion-based rigid registration 
+- kept legacy rigid for "legacy reasons"
+
+
 ### 2026-02-20 - fireants 1.3.0, fireants_fused_ops 1.1.0 - changes
 
 - added new functionality (2d affine registration of binary shapes using subspace based contour matching: useful for stuff like histology to MRI pre-registration

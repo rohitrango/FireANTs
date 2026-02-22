@@ -32,6 +32,7 @@ class WarpSGD:
                  momentum=0, dampening=0, weight_decay=0, nesterov=False, scaledown=False, multiply_jacobian=False,
                  smoothing_gaussians=None, grad_gaussians=None,
                  freeform=False,
+                 restrict_deformations=None,
                  # distributed params
                  rank: int = 0, 
                  dim_to_shard: int = 0,
@@ -85,6 +86,12 @@ class WarpSGD:
             self.padding_smoothing = 0
         # get wrapper around smoothing for distributed / not distributed
         self.smoothing_wrapper = _get_smoothing_wrapper(self)
+        # gradient restriction (e.g. to restrict deformations along certain dimensions)
+        if restrict_deformations is None:
+            self.gradient_restriction = lambda x: x
+        else:
+            self._restrict_deformations = torch.as_tensor(restrict_deformations)
+            self.gradient_restriction = lambda x: x * self._restrict_deformations.to(x.device).to(x.dtype)
     
     def cleanup(self):
         # manually clean up
@@ -151,6 +158,9 @@ class WarpSGD:
             else:
                 # grad = buf
                 grad.copy_(buf)
+        # apply gradient restriction (e.g. restrict deformations along certain dims)
+        grad = self.gradient_restriction(grad)
+
         ## renormalize and update warp (per pixel)
         gradmax = self.eps + grad.norm(p=2, dim=-1, keepdim=True)
         # gradmean = gradmax.flatten(1).mean(1)  # [B,]

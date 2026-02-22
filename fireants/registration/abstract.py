@@ -331,7 +331,7 @@ class AbstractRegistration(ABC):
         moved_images_save.write_image(filenames)
 
 
-    def evaluate_inverse(self, fixed_images: Union[BatchedImages, torch.Tensor], moving_images: Union[BatchedImages, torch.Tensor], shape=None, **kwargs):
+    def evaluate_inverse(self, fixed_images: Union[BatchedImages, torch.Tensor], moving_images: Union[BatchedImages, torch.Tensor], shape=None, fixed_moved_coords=None, **kwargs):
         ''' Apply the inverse of the learned transformation to new images.
 
         This method is useful to analyse the effect of how the moving coordinates (fixed images) are transformed
@@ -342,12 +342,13 @@ class AbstractRegistration(ABC):
             moving_images = FakeBatchedImages(moving_images, self.moving_images)
 
         fixed_arrays = moving_images()
-        fixed_moved_coords = self.get_inverse_warp_parameters(fixed_images, moving_images, shape=shape, **kwargs)
+        if fixed_moved_coords is None:
+            fixed_moved_coords = self.get_inverse_warp_parameters(fixed_images, moving_images, shape=shape, **kwargs)
         fixed_moved_image = fireants_interpolator(fixed_arrays, **fixed_moved_coords, mode='bilinear', align_corners=True)  # [N, C, H, W, [D]]
         return fixed_moved_image
 
 
-    def evaluate(self, fixed_images: Union[BatchedImages, torch.Tensor], moving_images: Union[BatchedImages, torch.Tensor], shape=None):
+    def evaluate(self, fixed_images: Union[BatchedImages, torch.Tensor], moving_images: Union[BatchedImages, torch.Tensor], shape=None, moved_coords=None):
         '''Apply the learned transformation to new images.
 
         This method applies the registration transformation learned during optimization
@@ -364,6 +365,7 @@ class AbstractRegistration(ABC):
             moving_images (BatchedImages): Moving images to be transformed
             shape (Optional[Tuple[int, ...]]): Optional output shape for the transformed image.
                 If None, uses the shape of the fixed image.
+            moved_coords (Optional[Dict]): Optional dictionary of moved coordinates. If None, the coordinates are computed using the `get_warp_parameters` method.
 
         Returns:
             torch.Tensor: The transformed moving image in the space of the fixed image.
@@ -382,7 +384,8 @@ class AbstractRegistration(ABC):
             moving_images = FakeBatchedImages(moving_images, self.moving_images)
 
         moving_arrays = moving_images()
-        moved_coords = self.get_warp_parameters(fixed_images, moving_images, shape=shape)
+        if moved_coords is None:
+            moved_coords = self.get_warp_parameters(fixed_images, moving_images, shape=shape)
         interpolate_mode = moving_images.get_interpolator_type()
         moved_image = fireants_interpolator(moving_arrays, **moved_coords, mode=interpolate_mode, align_corners=True)  # [N, C, H, W, [D]]
         return moved_image

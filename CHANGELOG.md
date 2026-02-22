@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+### 2026-02-21 - fireants 1.3.2, fireants_fused_ops 1.1.0 - changes
+
+- add masked_fusedcc to test
+
+
 ### 2026-02-21 - fireants 1.3.1, fireants_fused_ops 1.1.0 - changes
 
 - added quarterion-based rigid registration 

@@ -91,7 +91,7 @@ def _dice_score_over_mask(a_bin: torch.Tensor, b_bin: torch.Tensor, mask_bin: to
     return float((1 - dice_loss(a_m, b_m)).item())
 
 
-@pytest.mark.parametrize("loss_type", ["masked_cc", "masked_mse"])
+@pytest.mark.parametrize("loss_type", ["masked_cc", "masked_mse", "masked_fusedcc"])
 def test_greedy_masked_fidelity_3d(loss_type: str):
     fixed_batch, moving_batch = _make_synthetic_masked_pair_3d()
 

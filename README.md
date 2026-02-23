@@ -101,11 +101,12 @@ If you use FireANTs in your research, please cite the following papers:
   year={2024}
 }
 
-@article{jena2025scalable,
-  title={A Scalable Distributed Framework for Multimodal GigaVoxel Image Registration},
+@inproceedings{jena2025scalable,
+  title={A Scalable Distributed Framework for Multimodal {GigaVoxel} Image Registration},
   author={Jena, Rohit and Zope, Vedant and Chaudhari, Pratik and Gee, James C},
-  journal={arXiv preprint arXiv:2509.25044},
-  year={2025}
+  booktitle={The Fourteenth International Conference on Learning Representations},
+  year={2026},
+  url={https://openreview.net/forum?id=8dLexnao2h}
 }
 ```
 

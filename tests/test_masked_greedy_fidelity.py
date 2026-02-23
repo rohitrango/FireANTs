@@ -65,7 +65,7 @@ def _dice_score_over_mask(a_bin: torch.Tensor, b_bin: torch.Tensor, mask_bin: to
     return float((1 - dice_loss(a_m, b_m)).item())
 
 
-@pytest.mark.parametrize("loss_type", ["masked_cc", "masked_mse"])
+@pytest.mark.parametrize("loss_type", ["masked_cc", "masked_mse", "masked_fusedcc"])
 def test_greedy_masked_fidelity(loss_type: str):
     fixed_batch, moving_batch = _make_synthetic_masked_pair()
 
@@ -117,5 +117,5 @@ def test_greedy_masked_fidelity(loss_type: str):
     assert dice_in_mask_after > dice_in_mask_before + gap
 
     # Outside the mask, moved should stay closer to moving than fixed is to moving.
-    assert dice_neg_moved_moving > dice_neg_moving_fixed 
+    assert dice_neg_moved_moving > dice_neg_moving_fixed
 

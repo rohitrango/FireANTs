@@ -331,7 +331,7 @@ def fused_grid_sampler_2d_generic_label(
             _, _, H, W = input.shape
             out_shape = (H, W)
             logger.warning("out_shape not provided, using input spatial shape")
-        out_H, out_W = out_shape
+        out_H, out_W = out_shape[-2:]
     else:
         out_H, out_W = grid.shape[1:-1]
 
@@ -412,7 +412,7 @@ def fused_grid_sampler_3d_generic_label(
             _, _, D, H, W = input.shape
             out_shape = (D, H, W)
             logger.warning("out_shape not provided, using input spatial shape")
-        out_D, out_H, out_W = out_shape
+        out_D, out_H, out_W = out_shape[-3:]
     else:
         out_D, out_H, out_W = grid.shape[1:-1]
 

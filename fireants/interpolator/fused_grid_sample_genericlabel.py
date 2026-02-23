@@ -288,7 +288,6 @@ class FusedGridSampler3dGenericLabel(torch.autograd.Function):
             None,
         )
 
-
 def fused_grid_sampler_2d_generic_label(
     input: torch.Tensor,
     affine: Optional[torch.Tensor] = None,
@@ -302,6 +301,7 @@ def fused_grid_sampler_2d_generic_label(
     is_displacement: bool = True,
     return_probs: bool = False,
     background_label: Optional[float] = None,
+    mode: str = "genericlabel",  # ignored
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, Optional[torch.Tensor]]]:
     """
     2D fused generic-label grid sampler.
@@ -383,6 +383,7 @@ def fused_grid_sampler_3d_generic_label(
     is_displacement: bool = True,
     return_probs: bool = False,
     background_label: Optional[float] = None,
+    mode: str = "genericlabel",  # ignored
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, Optional[torch.Tensor]]]:
     """
     3D fused generic-label grid sampler.

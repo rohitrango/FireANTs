@@ -17,6 +17,8 @@ import logging
 
 from fireants.interpolator.fused_grid_sample import fused_grid_sampler_3d, fused_grid_sampler_2d
 from fireants.utils.imageutils import integer_to_onehot
+from fireants.io.image import Image, BatchedImages
+from fireants.registration.greedy import GreedyRegistration
 
 # Skip entire module if fused_ops was not built with generic label support
 from fireants.interpolator.fused_grid_sample_genericlabel import (
@@ -298,6 +300,49 @@ def test_fused_generic_label_3d_from_data_dir():
     assert rel_affine < 1e-4
     assert rel_grid < 1e-4
 
+
+def test_fused_generic_label_3d_on_deformable_segs():
+    """3D forward on real segmentations using a learned displacement field."""
+    test_data_dir = os.path.join(TESTS_DIR, "test_data")
+    fixed_image_path = os.path.join(test_data_dir, "deformable_image_1.nii.gz")
+    moving_image_path = os.path.join(test_data_dir, "deformable_image_2.nii.gz")
+    moving_seg_path = os.path.join(test_data_dir, "deformable_seg_2.nii.gz")
+
+    if not (os.path.exists(fixed_image_path) and os.path.exists(moving_image_path) and os.path.exists(moving_seg_path)):
+        pytest.skip("deformable test data not found")
+
+    fixed_image = Image.load_file(fixed_image_path)
+    moving_image = Image.load_file(moving_image_path)
+    # Important: is_onehot=False makes interpolation mode 'genericlabel' when fused ops are present
+    moving_seg = Image.load_file(moving_seg_path, is_segmentation=True, is_onehot=False, background_seg_label=0)
+    assert moving_seg.interpolation_mode == "genericlabel"
+    moving_seg_onehot = Image.load_file(moving_seg_path, is_segmentation=True, is_onehot=True, background_seg_label=-1)
+
+    fixed_batch = BatchedImages([fixed_image])
+    moving_batch = BatchedImages([moving_image])
+    moving_seg_batch = BatchedImages([moving_seg])
+    moving_seg_onehot_batch = BatchedImages([moving_seg_onehot])
+
+    reg = GreedyRegistration(
+        scales=[4, 2, 1],
+        iterations=[20, 10, 5],
+        fixed_images=fixed_batch,
+        moving_images=moving_batch,
+        loss_type="cc",
+        optimizer="Adam",
+        optimizer_lr=0.2,
+        smooth_warp_sigma=0.25,
+        smooth_grad_sigma=0.5,
+    )
+    reg.optimize()
+
+    moved_seg = reg.evaluate(fixed_batch, moving_seg_batch).detach()
+    moved_seg_onehot = reg.evaluate(fixed_batch, moving_seg_onehot_batch).detach()
+    moved_seg_onehot_max = moved_seg_onehot.max(dim=1, keepdim=True).indices
+    # get label ratio
+    label_agree_ratio = (moved_seg_onehot_max.long() == moved_seg.long()).float().mean().item()
+    assert label_agree_ratio > 0.99, f"Label agreement too low: {label_agree_ratio}"
+    logger.info(f"moved_seg.shape={moved_seg.shape}, moved_seg.max={moved_seg.max()}, moved_seg.min={moved_seg.min()}")
 
 # --------------- 2D tests ---------------
 

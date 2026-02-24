@@ -192,7 +192,7 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             ).permute(*self.fwd_warp.permute_imgtov)
 
         # compute inverse of rev_warp with the size of `fixed_images`
-        rev_inv_warp_field = compositive_warp_inverse(fixed_images, self.rev_warp.get_warp(), displacement=True)
+        rev_inv_warp_field = compositive_warp_inverse(fixed_images, self.rev_warp.get_warp(), displacement=True, scales=self.scales, iterations=self.iterations)
         if tuple(rev_inv_warp_field.shape[1:-1]) != tuple(shape[2:]):
             rev_inv_warp_field = F.interpolate(
                 self.rev_warp.get_warp().permute(*self.rev_warp.permute_vtoimg),

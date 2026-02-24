@@ -235,7 +235,6 @@ def distributed_grid_sampler_3d_bwd(grad_output, grad_image, grad_affine, grad_g
     # Compute gradients for our rank's portion
     grad_affine_buf = zeros_like_or_none(grad_affine)
 
-    # breakpoint()
     fused_grid_sampler_3d_backward(
         grad_output, 
         grad_image, grad_affine_buf, grad_grid,

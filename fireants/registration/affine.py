@@ -20,7 +20,7 @@ from torch import nn
 from fireants.io.image import BatchedImages, FakeBatchedImages
 from torch.optim import SGD, Adam
 from torch.nn import functional as F
-from fireants.utils.globals import MIN_IMG_SIZE
+from fireants.registration.helpers import downsample_size
 from tqdm import tqdm
 import numpy as np
 from fireants.losses.cc import gaussian_1d, separable_filtering
@@ -239,8 +239,8 @@ class AffineRegistration(AbstractRegistration):
             if hasattr(self.loss_fn, 'set_current_scale_and_iterations'):
                 self.loss_fn.set_current_scale_and_iterations(scale, iters)
             # downsample fixed array and retrieve coords
-            size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in fixed_size]
-            mov_size_down = [max(int(s / scale), MIN_IMG_SIZE) for s in moving_arrays.shape[2:]]
+            size_down = downsample_size(fixed_size, scale)
+            mov_size_down = downsample_size(list(moving_arrays.shape[2:]), scale)
             # downsample
             if self.blur and scale > 1:
                 sigmas = 0.5 * torch.tensor(

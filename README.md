@@ -8,7 +8,7 @@ The FireANTs library is a lightweight, general-purpose registration package for 
 The salient features of the library include:
 
 - **Powerful optimization algorithms** ⚡️🧠: FireANTs utilizes a novel Riemmanian Adaptive optimization algorithm to perform gradient descent on the space of diffeomorphisms. Diffeomorphisms are a deformable transforms that do not lie on a Euclidean manifold, and hence require specialized optimization algorithms.
-- **Blazing fast inference** 🚀: FireANTs is much faster at inference than most other registration libraries, including deep learning methods. 
+- **Blazing fast inference** 🚀: FireANTs is much faster at inference than most other registration libraries, including deep learning methods.
 - **Lightweight** 🧩: FireANTs consumes about 10x less memory than state-of-the-art deep learning methods, scaling easily to high resolution images.
 - **Batched Registration** 📚: Simultaneously register multiple image pairs with ease, which reduces runtime per image pair to upto 250ms per image pair on a single GPU.
 
@@ -22,8 +22,8 @@ The salient features of the library include:
 
 *FireANTs achieves up to 10x speedup compared to traditional registration methods and deep learning approaches while improving accuracy and runtime.*
 
-## Installation 
-To use the FireANTs package, you can either 
+## Installation
+To use the FireANTs package, you can either
 
 - Use Docker (see [docker/README.md](docker/README.md), _highly recommended_)
 - Clone the repository and install the package locally
@@ -42,7 +42,7 @@ pip install .
 cd fused_ops && python setup.py build_ext && python setup.py install && cd ..
 ```
 
-By default, doing `pip install .` will **NOT** include the fused CUDA operations. 
+By default, doing `pip install .` will **NOT** include the fused CUDA operations.
 I highly recommend installing the fused CUDA operations using the command above.
 
 Or install from PyPI (does not install fused ops):
@@ -70,7 +70,7 @@ mkdocs serve -f docs/mkdocs.yml
 ```
 
 ## 📊 Datasets
-In the paper, we use the datasets as following: 
+In the paper, we use the datasets as following:
 * Klein's evaluation of 14 non-linear registration algorithms: [here](https://www.synapse.org/#!Synapse:syn3251018)
 * EMPIRE10 lung registration challenge: [here](https://empire10.grand-challenge.org/)
 * Expansion Microscopy dataset: [here](https://rnr-exm.grand-challenge.org/)
@@ -97,7 +97,7 @@ If you use FireANTs in your research, please cite the following papers:
 @article{jena2024fireants,
   title={FireANTs: Adaptive Riemannian Optimization for Multi-Scale Diffeomorphic Registration},
   author={Jena, Rohit and Chaudhari, Pratik and Gee, James C},
-  journal={arXiv preprint arXiv:2404.01249},
+  journal={Nature Communications},
   year={2024}
 }
 
@@ -110,6 +110,7 @@ If you use FireANTs in your research, please cite the following papers:
 }
 ```
 
+
 If you use FireANTs-as-a-layer ([Deep Implicit Optimization](https://www.sciencedirect.com/science/article/pii/S1361841525001240?via%3Dihub), [code](https://github.com/rohitrango/DIO)), cite the following paper:
 ```
 @article{jena2025deep,
@@ -120,5 +121,27 @@ If you use FireANTs-as-a-layer ([Deep Implicit Optimization](https://www.science
   pages={103577},
   year={2025},
   publisher={Elsevier}
+}
+```
+
+The following evaluation studies validate FireANTs against other state-of-the-art methods:
+
+```
+@inproceedings{jena2026the,
+  title={The LU-Mirage - An independent evaluation of the zero-shot claims in the {LUMIR} challenge},
+  author={Jena, Rohit and Chaudhari, Pratik and Gee, James},
+  booktitle={Medical Imaging with Deep Learning - Validation Papers},
+  year={2026},
+  url={https://openreview.net/forum?id=a46yLtToIK}
+}
+
+@inproceedings{jena2024deep,
+  title={Deep Learning in Medical Image Registration: Magic or Mirage?},
+  author={Jena, Rohit and Sethi, Deeksha and Chaudhari, Pratik and Gee, James C.},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={37},
+  pages={108331--108353},
+  year={2024},
+  url={https://proceedings.neurips.cc/paper_files/paper/2024/file/c3fe2a07ec47b89c50e89706d2e23358-Paper-Conference.pdf}
 }
 ```

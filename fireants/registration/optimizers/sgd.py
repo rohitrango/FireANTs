@@ -21,6 +21,7 @@ from fireants.interpolator import fireants_interpolator
 from fireants.registration.optimizers.adam import _get_smoothing_wrapper
 import logging
 logger = logging.getLogger(__name__)
+from typing import Optional
 
 class WarpSGD:
     ''' at the moment we only support a single warp function 
@@ -129,7 +130,7 @@ class WarpSGD:
                 ujac = torch.einsum('bxhwdp,bhwdp->bhwdx', jac, u)
             return ujac
 
-    def step(self):
+    def step(self, loss: Optional[torch.Tensor] = None):
         ''' check for momentum, and other things '''
         grad = self.warp.grad.data.detach()
         if self.multiply_jacobian:

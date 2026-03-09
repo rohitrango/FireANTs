@@ -37,3 +37,4 @@ tests/test_results/
 fireants/scripts/template/configs/test*.yaml
 fireants/**/*debug/
 **/.DS_Store
+technicalreports/

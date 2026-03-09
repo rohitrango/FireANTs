@@ -74,11 +74,11 @@ class WarpLevenbergMarquardt:
     ''' 
     shape of warp = [B, H, W, [D], dims]
     '''
-    def __init__(self, warp, lr, 
+    def __init__(self, warp, lr,
                  # parameters for lambda
-                 lambda_init=1e-1,
-                 lambda_increase_factor=5.0,
-                 lambda_decrease_factor=0.7,
+                 lambda_init=1e-2,
+                 lambda_increase_factor=1.5,
+                 lambda_decrease_factor=0.975,
                  tile_size=1,
                  # other parameters
                  weight_decay=0, eps=1e-8,

@@ -78,6 +78,7 @@ class WarpAdam:
                  freeform=False,
                  offload=False,   # try offloading to CPU
                  reset=False,
+                 reset_step=True,
                  # distributed params
                  rank: int = 0, 
                  dim_to_shard: int = 0,
@@ -105,6 +106,7 @@ class WarpAdam:
         self.weight_decay = weight_decay
         self.multiply_jacobian = multiply_jacobian
         self.reset = reset
+        self.reset_step = reset_step
         self.scaledown = scaledown   # if true, the scale the gradient even if norm is below 1
         # offload params
         self.device = warp.device
@@ -174,6 +176,8 @@ class WarpAdam:
                 self.exp_avg_sq = self.exp_avg_sq.to('cpu')
 
         self.half_resolution = 1.0/(max(warp.shape[1:-1]) - 1)
+        if self.reset_step:
+            self.step_t = 0
         self.initialize_grid(size, grid_copy=grid_copy)
         # print(self.warp.shape, warpinv)
     

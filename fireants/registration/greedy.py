@@ -168,7 +168,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
             shape = [moving_arrays.shape[0], 1] + list(shape) if use_moving_shape else [fixed_arrays.shape[0], 1] + list(shape)
 
         warp = self.warp.get_warp().detach().clone()
-        warp_inv = compositive_warp_inverse(moving_images if use_moving_shape else fixed_images, warp, displacement=True)
+        warp_inv = compositive_warp_inverse(moving_images if use_moving_shape else fixed_images, warp, scales=self.scales, iterations=self.iterations, displacement=True)
         # resample if needed
         mode = "bilinear" if self.dims == 2 else "trilinear"
         if tuple(warp_inv.shape[1:-1]) != tuple(shape[2:]):
@@ -347,7 +347,7 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                 if self.progress_bar:
                     pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))
                 # optimize the velocity field
-                self.warp.step()
+                self.warp.step(loss)
                 # check for convergence
                 if self.convergence_monitor.converged(loss.item()):
                     break

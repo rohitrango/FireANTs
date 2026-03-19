@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+### 2026-03-19 - fireants 1.5.0, fireants_fused_ops 1.2.0 - changes
+
+- Added Levenberg-Marquardt algorithm for FireANTs
+
+
 ### 2026-02-23 - fireants 1.4.0, fireants_fused_ops 1.2.0 - changes
 
 - added genericlabel support!!! 

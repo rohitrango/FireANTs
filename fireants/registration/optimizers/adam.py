@@ -192,6 +192,10 @@ class WarpAdam:
             else:
                 self.grid = grid_copy 
 
+    @property
+    def requires_closure(self):
+        return False
+
     def zero_grad(self):
         ''' set the gradient to none '''
         self.warp.grad = None
@@ -211,7 +215,7 @@ class WarpAdam:
             return ujac
     
     def step(self, loss: Optional[torch.Tensor] = None):
-        ''' check for momentum, and other things '''
+        ''' check for momentum, and other things. Returns loss. '''
         grad = self.warp.grad.data
         if self.multiply_jacobian:
             grad = self.augment_jacobian(grad)
@@ -284,3 +288,4 @@ class WarpAdam:
             if self.smoothing_gaussians is not None:
                 grad = self.smoothing_wrapper(grad, self.smoothing_gaussians, self.padding_smoothing)
             self.warp.data.copy_(grad)
+        return loss

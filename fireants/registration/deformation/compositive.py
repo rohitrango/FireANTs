@@ -110,8 +110,8 @@ class CompositiveWarp(nn.Module, AbstractDeformation):
         ''' set the gradient to zero (or None) '''
         self.optimizer.zero_grad()
     
-    def step(self, loss: Optional[torch.Tensor] = None):
-        self.optimizer.step(loss)
+    def step(self, loss_or_closure=None):
+        return self.optimizer.step(loss_or_closure)
 
     def get_warp(self):
         ''' return warp function '''

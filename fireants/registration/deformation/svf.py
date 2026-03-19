@@ -87,7 +87,7 @@ class StationaryVelocity(nn.Module, AbstractDeformation):
     def set_zero_grad(self):
         self.optimizer.zero_grad()
     
-    def step(self):
+    def step(self, loss_or_closure=None):
         self.optimizer.step()
 
     def get_warp(self):

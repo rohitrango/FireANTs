@@ -112,6 +112,10 @@ class WarpSGD:
             else:
                 self.grid = grid_copy 
 
+    @property
+    def requires_closure(self):
+        return False
+
     def zero_grad(self):
         ''' set the gradient to none '''
         self.warp.grad = None
@@ -178,4 +182,4 @@ class WarpSGD:
         if self.smoothing_gaussians is not None:
             grad = self.smoothing_wrapper(grad, self.smoothing_gaussians, self.padding_smoothing)
         self.warp.data.copy_(grad)
-        pass
+        return loss

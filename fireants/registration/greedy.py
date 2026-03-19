@@ -328,26 +328,31 @@ class GreedyRegistration(AbstractRegistration, DeformableMixin):
                 scale_factor = np.prod(fixed_image_down.shape)
 
             for i in pbar:
-                self.warp.set_zero_grad()
-                warp_field = self.warp.get_warp()  # [N, HWD, 3]
-                # smooth out the warp field if asked to
-                if self.smooth_warp_sigma > 0:
-                    warp_field = separable_filtering(warp_field.permute(*self.warp.permute_vtoimg), warp_gaussian).permute(*self.warp.permute_imgtov)
-                # move the image
-                moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=warp_field, mode='bilinear', align_corners=True, is_displacement=True)
-                loss = self.loss_fn(moved_image, fixed_image_down)
-                # apply regularization on the warp field
-                if self.displacement_reg is not None:
-                    loss = loss + self.displacement_reg(warp_field)
-                if self.warp_reg is not None:
-                    # internally should use the fireants interpolator to avoid additional memory allocation
-                    moved_coords = self.get_warped_coordinates(self.fixed_images, self.moving_images)
-                    loss = loss + self.warp_reg(moved_coords)
-                loss.backward()
+                def closure_fn():
+                    self.warp.set_zero_grad()
+                    warp_field = self.warp.get_warp()  # [N, HWD, 3]
+                    # smooth out the warp field if asked to
+                    if self.smooth_warp_sigma > 0:
+                        warp_field = separable_filtering(warp_field.permute(*self.warp.permute_vtoimg), warp_gaussian).permute(*self.warp.permute_imgtov)
+                    # move the image
+                    moved_image = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=warp_field, mode='bilinear', align_corners=True, is_displacement=True)
+                    loss = self.loss_fn(moved_image, fixed_image_down)
+                    # apply regularization on the warp field
+                    if self.displacement_reg is not None:
+                        loss = loss + self.displacement_reg(warp_field)
+                    if self.warp_reg is not None:
+                        # internally should use the fireants interpolator to avoid additional memory allocation
+                        moved_coords = self.get_warped_coordinates(self.fixed_images, self.moving_images)
+                        loss = loss + self.warp_reg(moved_coords)
+                    loss.backward()
+                    return loss
+                if getattr(self.warp.optimizer, 'requires_closure', False):
+                    loss = self.warp.step(closure_fn)
+                else:
+                    loss = closure_fn()
+                    self.warp.step(loss)
                 if self.progress_bar:
                     pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))
-                # optimize the velocity field
-                self.warp.step(loss)
                 # check for convergence
                 if self.convergence_monitor.converged(loss.item()):
                     break

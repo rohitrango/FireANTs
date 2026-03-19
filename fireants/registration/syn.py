@@ -292,38 +292,39 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             else:
                 scale_factor = np.prod(fixed_image_down.shape)
             for i in pbar:
-                # set zero grads
-                self.fwd_warp.set_zero_grad()
-                self.rev_warp.set_zero_grad()
-                # get warp fields and smooth them
-                fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
-                rev_warp_field = self.rev_warp.get_warp()
-                # smooth if required
-                if self.smooth_warp_sigma > 0:
-                    fwd_warp_field = separable_filtering(fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg), warp_gaussian).permute(*self.fwd_warp.permute_imgtov)
-                    rev_warp_field = separable_filtering(rev_warp_field.permute(*self.rev_warp.permute_vtoimg), warp_gaussian).permute(*self.rev_warp.permute_imgtov)
-                # moved and fixed coords
-                # warp the "moving image" to moved_image_warp and fixed to "fixed image warp"
-                moved_image_warp = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=fwd_warp_field.contiguous(), mode='bilinear', align_corners=True, is_displacement=True)
-                # reverse warp
-                fixed_image_warp = fireants_interpolator(fixed_image_down, affine=None, grid=rev_warp_field.contiguous(), mode='bilinear', align_corners=True, is_displacement=True)
-                # compute loss
-                loss = self.loss_fn(moved_image_warp, fixed_image_warp) 
-                # add regularization
-                if self.warp_reg is not None:
-                    # TODO: have to get the moved and fixed coords
-                    moved_coords = fwd_warp_field + F.affine_grid(affine_map_init, fixed_image_down.shape, align_corners=True)
-                    fixed_coords = rev_warp_field + F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)
-                    loss = loss + self.warp_reg(moved_coords) + self.warp_reg(fixed_coords)
-                if self.displacement_reg is not None:
-                    loss = loss + self.displacement_reg(fwd_warp_field) + self.displacement_reg(rev_warp_field)
-                # backward
-                loss.backward()
-                if self.progress_bar:
-                    pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))
-                # optimize the deformations
+                def closure_fn():
+                    # set zero grads
+                    self.fwd_warp.set_zero_grad()
+                    self.rev_warp.set_zero_grad()
+                    # get warp fields and smooth them
+                    fwd_warp_field = self.fwd_warp.get_warp()  # [N, HWD, 3]
+                    rev_warp_field = self.rev_warp.get_warp()
+                    # smooth if required
+                    if self.smooth_warp_sigma > 0:
+                        fwd_warp_field = separable_filtering(fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg), warp_gaussian).permute(*self.fwd_warp.permute_imgtov)
+                        rev_warp_field = separable_filtering(rev_warp_field.permute(*self.rev_warp.permute_vtoimg), warp_gaussian).permute(*self.rev_warp.permute_imgtov)
+                    # warp the "moving image" to moved_image_warp and fixed to "fixed image warp"
+                    moved_image_warp = fireants_interpolator(moving_image_blur, affine=affine_map_init, grid=fwd_warp_field.contiguous(), mode='bilinear', align_corners=True, is_displacement=True)
+                    # reverse warp
+                    fixed_image_warp = fireants_interpolator(fixed_image_down, affine=None, grid=rev_warp_field.contiguous(), mode='bilinear', align_corners=True, is_displacement=True)
+                    # compute loss
+                    loss = self.loss_fn(moved_image_warp, fixed_image_warp)
+                    # add regularization
+                    if self.warp_reg is not None:
+                        moved_coords = fwd_warp_field + F.affine_grid(affine_map_init, fixed_image_down.shape, align_corners=True)
+                        fixed_coords = rev_warp_field + F.affine_grid(init_grid, fixed_image_down.shape, align_corners=True)
+                        loss = loss + self.warp_reg(moved_coords) + self.warp_reg(fixed_coords)
+                    if self.displacement_reg is not None:
+                        loss = loss + self.displacement_reg(fwd_warp_field) + self.displacement_reg(rev_warp_field)
+                    loss.backward()
+                    return loss
+                if getattr(self.fwd_warp.optimizer, 'requires_closure', False):
+                    raise NotImplementedError("requires_closure is not supported for SyNRegistration")
+                loss = closure_fn()
                 self.fwd_warp.step(loss)
                 self.rev_warp.step(loss)
+                if self.progress_bar:
+                    pbar.set_description("scale: {}, iter: {}/{}, loss: {:4f}".format(scale, i, iters, loss.item()/scale_factor))
                 if self.convergence_monitor.converged(loss.item()):
                     break
 

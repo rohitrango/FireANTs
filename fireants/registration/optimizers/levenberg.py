@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Rohit Jena. All rights reserved.
-# 
+#
 # This file is part of FireANTs, distributed under the terms of
 # the FireANTs License version 1.0. A copy of the license can be found
 # in the LICENSE file at the root of this repository.
@@ -7,10 +7,10 @@
 # IMPORTANT: This code is part of FireANTs and its use, reproduction, or
 # distribution must comply with the full license terms, including:
 # - Maintaining all copyright notices and bibliography references
-# - Using only approved (re)-distribution channels 
+# - Using only approved (re)-distribution channels
 # - Proper attribution in derivative works
 #
-# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE
 
 ''' class for Levenberg-Marquardt for compositive warps '''
 import torch
@@ -36,7 +36,7 @@ USE_NO_GP = bool(int(os.environ.get('USE_NO_GP', '0').lower()))
 @torch.no_grad()
 def tile_size_one_torch_update(grad: torch.Tensor, lmbda: float) -> torch.Tensor:
     ''' update the gradient for a tile size of 1 '''
-    scaling = grad.norm(p=2, dim=-1, keepdim=True).pow_(2).add_(lmbda)   # grad**2 + lmbda 
+    scaling = grad.norm(p=2, dim=-1, keepdim=True).pow_(2).add_(lmbda)   # grad**2 + lmbda
     grad.div_(scaling)
     return grad
 
@@ -65,13 +65,13 @@ def tile_size_n_torch_update(grad: torch.Tensor, lmbda: float, tile_sizes: tuple
         raise ValueError(f"Invalid dimension: {dims}")
     # add identity matrix
     jac.add_(torch.eye(dims, device=grad.device).mul_(lmbda))
-    # invert 
-    jac = torch.linalg.inv(jac) 
+    # invert
+    jac = torch.linalg.inv(jac)
     grad = torch.einsum('...ij,...j->...i', jac, grad)
     return grad
 
 class WarpLevenbergMarquardt:
-    ''' 
+    '''
     shape of warp = [B, H, W, [D], dims]
     '''
     def __init__(self, warp, lr,
@@ -83,13 +83,17 @@ class WarpLevenbergMarquardt:
                  # other parameters
                  weight_decay=0, eps=1e-8,
                  scaledown=False, multiply_jacobian=False,
-                 smoothing_gaussians=None, 
+                 smoothing_gaussians=None,
                  grad_gaussians=None,
                  freeform=False,
                  offload=False,   # try offloading to CPU
                  reset=False,
+                 # rejection parameters
+                 rejection: bool = False,
+                 loss_tolerance_ratio: float = 1.0,
+                 lambda_max: Optional[float] = 1.0,
                 # distributed params
-                rank: int = 0, 
+                rank: int = 0,
                 dim_to_shard: int = 0,
                 dtype: torch.dtype = torch.float32):
         # init
@@ -128,10 +132,15 @@ class WarpLevenbergMarquardt:
         self.grad_gaussians = grad_gaussians            # unused
         # Levenberg-Marquardt parameters
         self.lambda_init = lambda_init
-        # last loss to change lambda if needed
-        self.last_loss = None
+        # loss history for lambda adjustment and rejection
+        self.prev_loss = None
+        self.prev_prev_loss = None
         self.lambda_increase_factor = lambda_increase_factor
         self.lambda_decrease_factor = lambda_decrease_factor
+        # rejection parameters
+        self.rejection = rejection
+        self.loss_tolerance_ratio = loss_tolerance_ratio
+        self.lambda_max = lambda_max
         self.tile_size = tile_size if isinstance(tile_size, (float, tuple)) else [tile_size] * self.n_dims
         assert len(self.tile_size) == self.n_dims, "tile_size must be a tuple of length n_dims"
 
@@ -158,11 +167,11 @@ class WarpLevenbergMarquardt:
             self.update_fn = tile_size_one_torch_update
         else:
             self.update_fn = partial(tile_size_n_torch_update, tile_sizes=self.tile_size)
-    
+
     def cleanup(self):
         # manually clean up
         del self.grid
-    
+
     def set_data_and_size(self, warp, size, grid_copy=None):
         ''' change the optimization variables sizes '''
         self.warp = warp
@@ -174,9 +183,10 @@ class WarpLevenbergMarquardt:
         # set new half resolution
         self.half_resolution = 1.0/(max(warp.shape[1:-1]) - 1)
         self.initialize_grid(size, grid_copy=grid_copy)
-        # reset last loss for new scale
-        self.last_loss = None
-    
+        # reset loss history for new scale
+        self.prev_loss = None
+        self.prev_prev_loss = None
+
     def initialize_grid(self, size, grid_copy=None):
         ''' initialize the grid (so that we can use it independent of the grid elsewhere) '''
         if fireants_interpolator.use_ffo:
@@ -185,12 +195,16 @@ class WarpLevenbergMarquardt:
             if grid_copy is None:
                 self.grid = F.affine_grid(self.affine_init, [self.batch_size, 1, *size], align_corners=True).detach()
             else:
-                self.grid = grid_copy 
+                self.grid = grid_copy
+
+    @property
+    def requires_closure(self):
+        return self.rejection
 
     def zero_grad(self):
         ''' set the gradient to none '''
         self.warp.grad = None
-    
+
     def augment_jacobian(self, u):
         # Multiply u (which represents dL/dphi most likely) with Jacobian indexed by J[..., xyz, ..., phi]
         if fireants_interpolator.use_ffo:
@@ -204,29 +218,20 @@ class WarpLevenbergMarquardt:
             else:
                 ujac = torch.einsum('bxhwdp,bhwdp->bhwdx', jac, u)
             return ujac
-    
+
     def compute_lambda_init_if_auto(self, grad):
         ''' compute the lambda_init if it is auto '''
         if isinstance(self.lambda_init, (int, float)):
             return
         algo = str(self.lambda_init).lower()
         if algo == 'auto':
-            self.lambda_init = (torch.linalg.norm(grad, ord=2, dim=-1, keepdim=False).pow_(2).mean()).item() 
+            self.lambda_init = (torch.linalg.norm(grad, ord=2, dim=-1, keepdim=False).pow_(2).mean()).item()
         else:
             raise ValueError(f"lambda_init must be a float or 'auto', got {algo}")
         logger.info(f"Computed lambda_init as {self.lambda_init} using algorithm '{algo}'")
 
-    def step(self, loss: Optional[torch.Tensor] = None):
-        ''' check for momentum, and other things '''
-        # update the lambda
-        if self.last_loss is not None:
-            if loss.item() > self.last_loss:   # loss increased, increase lambda
-                self.lambda_init *= self.lambda_increase_factor
-            else:
-                self.lambda_init *= self.lambda_decrease_factor
-        self.last_loss = loss.item()
-
-        # get the gradient
+    def _apply_grad_update(self):
+        ''' Apply the gradient from self.warp.grad to self.warp.data using current lambda. '''
         grad = self.warp.grad.data
         if self.multiply_jacobian:
             grad = self.augment_jacobian(grad)
@@ -270,7 +275,7 @@ class WarpLevenbergMarquardt:
             # print(grad.abs().max().item(), self.half_resolution, self.warp.shape)
             # compositional update
             # w = grad + F.grid_sample(self.warp.data.permute(*self.permute_vtoimg), self.grid + grad, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)
-            # w = grad + 
+            # w = grad +
             ## grad = grad + warp * (x + grad)   # this is the compositional update
             grad.add_(fireants_interpolator.warp_composer(self.warp.data, affine=self.affine_init, v=grad, grid=self.grid, align_corners=True))
             ### WRONG Code below - do not uncomment (think why)
@@ -280,3 +285,67 @@ class WarpLevenbergMarquardt:
             if self.smoothing_gaussians is not None:
                 grad = self.smoothing_wrapper(grad, self.smoothing_gaussians, self.padding_smoothing)
             self.warp.data.copy_(grad)
+
+    def _evaluate_with_rejection(self, closure, depth: int = 0, max_depth: int = 10):
+        '''Evaluate closure, apply update, check post-update loss, and reject+reset if too bad.
+
+        Steps:
+          1. Call closure() to compute pre-update loss and gradients.
+          2. Save current warp state.
+          3. Apply gradient update via _apply_grad_update().
+          4. Call closure() to measure post-update loss.
+          5. Rejection condition: (post_loss - prev_loss) > loss_tolerance_ratio * |prev_prev_loss - prev_loss|
+             If rejected: restore warp, decrease lambda, retry (up to max_depth times).
+          6. On acceptance: update prev_loss/prev_prev_loss and return post-update loss.
+        '''
+        # step 1: compute gradients for the current warp
+        closure()
+        # step 2: save warp before update
+        warp_saved = self.warp.data.clone()
+        # step 3: apply the gradient update
+        self._apply_grad_update()
+        # step 4: evaluate post-update loss
+        loss_after = closure()
+        current_loss = loss_after.item()
+
+        # step 5: check rejection criterion
+        if (self.prev_loss is not None and self.prev_prev_loss is not None
+                and depth < max_depth):
+            delta = current_loss - self.prev_loss
+            threshold = self.loss_tolerance_ratio * abs(self.prev_prev_loss - self.prev_loss)
+            if delta > threshold:
+                # reject: restore warp, increase lambda (more damping), cap, and retry
+                self.warp.data.copy_(warp_saved)
+                self.lambda_init *= self.lambda_increase_factor
+                if self.lambda_max is not None:
+                    self.lambda_init = min(self.lambda_init, self.lambda_max)
+                return self._evaluate_with_rejection(closure, depth + 1, max_depth)
+
+        # step 6: accepted — reward with smaller lambda, update loss history
+        self.lambda_init *= self.lambda_decrease_factor
+        self.prev_prev_loss = self.prev_loss
+        self.prev_loss = current_loss
+        return loss_after
+
+    def step(self, loss_or_closure=None):
+        ''' Perform a Levenberg-Marquardt update step.
+
+        Accepts either a loss tensor (non-closure mode) or a callable closure.
+        When rejection=True and a closure is provided, uses the rejection criterion:
+        the update is applied, post-update loss is evaluated, and the warp is reset
+        if the loss degraded beyond the tolerance.
+        '''
+        if self.rejection and callable(loss_or_closure):
+            # _evaluate_with_rejection handles closure calls, update, and warp restore
+            return self._evaluate_with_rejection(loss_or_closure)
+
+        # non-rejection mode: standard lambda adjustment then apply update
+        loss = loss_or_closure
+        if self.prev_loss is not None:
+            if loss.item() > self.prev_loss:   # loss increased, increase lambda
+                self.lambda_init *= self.lambda_increase_factor
+            else:
+                self.lambda_init *= self.lambda_decrease_factor
+        self.prev_loss = loss.item()
+        self._apply_grad_update()
+        return loss

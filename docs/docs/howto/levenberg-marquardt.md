@@ -144,8 +144,8 @@ from fireants.registration.greedy import GreedyRegistration
 # helpers
 # ---------------------------------------------------------------------------
 
-def load_batch(path: str) -> BatchedImages:
-    return BatchedImages([Image.load_file(path)])
+def load_batch(path: str, is_segmentation: bool = False) -> BatchedImages:
+    return BatchedImages([Image.load_file(path, is_segmentation=is_segmentation)])
 
 
 def dice_scores(
@@ -223,8 +223,8 @@ def main(args: argparse.Namespace) -> None:
 
         fixed_img  = load_batch(fixed_path)
         moving_img = load_batch(moving_path)
-        fixed_seg  = load_batch(fixed_seg_path)
-        moving_seg = load_batch(moving_seg_path)
+        fixed_seg  = load_batch(fixed_seg_path,  is_segmentation=True)
+        moving_seg = load_batch(moving_seg_path, is_segmentation=True)
 
         # initial (pre-registration) Dice
         init_moved     = moving_seg().detach()

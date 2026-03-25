@@ -20,8 +20,11 @@ import os
 
 include_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'include')
 
+cuda_short = os.environ.get('CUDA_VERSION', '')
+package_name = f'fireants-fused-ops-cu{cuda_short}' if cuda_short else 'fireants-fused-ops'
+
 setup(
-    name='fireants_fused_ops',
+    name=package_name,
     version='1.0.0',
     description='Fused CUDA operations for FireANTs',
     author='Rohit Jena',

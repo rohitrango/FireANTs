@@ -75,7 +75,7 @@ jobs:
         if: steps.cache-wheel.outputs.cache-hit != 'true'
         run: |
           apt-get update -q
-          apt-get install -y --no-install-recommends software-properties-common
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends software-properties-common tzdata
           if [ "${{ matrix.python }}" = "3.12" ]; then
             add-apt-repository -y ppa:deadsnakes/ppa
             apt-get update -q

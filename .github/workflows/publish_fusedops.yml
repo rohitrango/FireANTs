@@ -83,7 +83,6 @@ jobs:
           apt-get install -y --no-install-recommends \
             python${{ matrix.python }} \
             python${{ matrix.python }}-dev \
-            python3-pip \
             curl \
             git
           update-alternatives --install /usr/bin/python python \

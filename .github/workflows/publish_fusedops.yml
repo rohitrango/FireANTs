@@ -95,13 +95,13 @@ jobs:
       - name: Install PyTorch
         if: steps.cache-wheel.outputs.cache-hit != 'true'
         run: |
-          pip install --no-cache-dir \
+          python -m pip install --no-cache-dir \
             torch==${{ matrix.torch }} \
             --index-url https://download.pytorch.org/whl/cu${{ matrix.cuda_short }}
 
       - name: Install build tools
         if: steps.cache-wheel.outputs.cache-hit != 'true'
-        run: pip install --no-cache-dir wheel setuptools ninja
+        run: python -m pip install --no-cache-dir wheel setuptools ninja
 
       - name: Build wheel
         if: steps.cache-wheel.outputs.cache-hit != 'true'
@@ -110,7 +110,7 @@ jobs:
           CUDA_VERSION: ${{ matrix.cuda_short }}
           TORCH_CUDA_ARCH_LIST: "7.0;7.5;8.0;8.6;8.9;9.0"
           FORCE_CUDA: "1"
-        run: pip wheel . --no-deps --no-build-isolation -w dist
+        run: python -m pip wheel . --no-deps --no-build-isolation -w dist
 
       - name: Retag wheel as manylinux
         if: steps.cache-wheel.outputs.cache-hit != 'true'

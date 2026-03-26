@@ -25,9 +25,11 @@ package_name = f'fireants-fused-ops-cu{cuda_short}' if cuda_short else 'fireants
 
 setup(
     name=package_name,
-    version='1.0.0',
+    version='1.2.0',
     description='Fused CUDA operations for FireANTs',
     author='Rohit Jena',
+    url='https://github.com/rohitrango/FireANTs',
+    python_requires='>=3.8',
     ext_modules=[
         cpp_extension.CUDAExtension(
             name='fireants_fused_ops',

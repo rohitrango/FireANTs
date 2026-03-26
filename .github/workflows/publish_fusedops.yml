@@ -60,6 +60,10 @@ jobs:
     container:
       image: nvidia/cuda:${{ matrix.cuda }}-devel-ubuntu22.04
 
+    defaults:
+      run:
+        shell: bash -euo pipefail {0}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -75,7 +79,7 @@ jobs:
         if: steps.cache-wheel.outputs.cache-hit != 'true'
         run: |
           apt-get update -q
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends software-properties-common tzdata
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends software-properties-common tzdata ca-certificates
           if [ "${{ matrix.python }}" = "3.12" ]; then
             add-apt-repository -y ppa:deadsnakes/ppa
             apt-get update -q
@@ -114,7 +118,6 @@ jobs:
       - name: Retag wheel as manylinux
         if: steps.cache-wheel.outputs.cache-hit != 'true'
         working-directory: fused_ops/dist
-        shell: bash
         run: |
           for f in *.whl; do
             mv "$f" "${f/linux_x86_64/manylinux2014_x86_64}"
@@ -147,5 +150,6 @@ jobs:
           TWINE_PASSWORD: ${{ github.event.inputs.use_testpypi == 'true' && secrets.TEST_PYPI_API_TOKEN || secrets.PYPI_API_TOKEN }}
           TWINE_REPOSITORY_URL: ${{ github.event.inputs.use_testpypi == 'true' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
         run: |
+          set -euo pipefail
           pip install twine
           twine upload --verbose --skip-existing all_wheels/*.whl

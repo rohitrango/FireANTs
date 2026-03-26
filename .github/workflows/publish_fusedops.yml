@@ -148,4 +148,4 @@ jobs:
           TWINE_REPOSITORY_URL: ${{ github.event.inputs.use_testpypi == 'true' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
         run: |
           pip install twine
-          twine upload --skip-existing all_wheels/*.whl
+          twine upload --verbose --skip-existing all_wheels/*.whl

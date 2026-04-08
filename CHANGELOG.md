@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+### 2026-04-08 - fireants 1.5.1, fireants_fused_ops 1.2.0 - changes
+
+added `compose_n` option to adam and sgd with reasonable defaults (n=1 for adam, n=10 for sgd)
+
+
 ### 2026-03-19 - fireants 1.5.0, fireants_fused_ops 1.2.0 - changes
 
 - Added Levenberg-Marquardt algorithm for FireANTs

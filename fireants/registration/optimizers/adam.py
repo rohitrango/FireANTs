@@ -31,6 +31,44 @@ import logging
 logger = logging.getLogger(__name__)
 USE_NO_GP = bool(int(os.environ.get('USE_NO_GP', '0').lower()))
 
+def _compose_displacement_fields(u, v, affine_init, grid):
+    """Displacement of (Id + u) ∘ (Id + v): apply v first, then u.
+
+    Result at x: v(x) + u(x + v(x))
+    """
+    return v + fireants_interpolator.warp_composer(u, affine=affine_init, v=v, grid=grid, align_corners=True)
+
+
+def compose_n_warps(u, n, affine_init, grid):
+    """Compute displacement of (Id + u)^n via binary scaling-and-squaring.
+
+    For n = 13 = 8 + 4 + 1:
+        result = (Id + u)^8 ∘ (Id + u)^4 ∘ (Id + u)^1
+
+    Powers of 2 are built by repeated squaring; only the powers whose
+    bit is set in n are composed (from lowest to highest exponent so that
+    the highest-exponent term is applied outermost, matching the notation
+    above).
+    """
+    if n <= 1:
+        return u
+
+    result = None
+    power = u.clone()   # displacement of (Id + u)^(2^k), starting at k=0
+
+    while n > 0:
+        if n & 1:
+            if result is None:
+                result = power.clone()
+            else:
+                # higher-exponent power is applied after accumulated result
+                result = _compose_displacement_fields(power, result, affine_init, grid)
+        power = _compose_displacement_fields(power, power, affine_init, grid)
+        n >>= 1
+
+    return result
+
+
 def adam_update_fused_baseline(grad, exp_avg, exp_avg_sq, beta1, beta2, eps):
     grad.copy_(exp_avg / (beta1) / (exp_avg_sq / (beta2)).sqrt().add_(eps))
 
@@ -71,15 +109,16 @@ class WarpAdam:
     also supports multi-scale (by simply interpolating to the target size)
     shape of warp = [B, H, W, [D], dims]
     '''
-    def __init__(self, warp, lr, 
+    def __init__(self, warp, lr,
                  beta1=0.9, beta2=0.99, weight_decay=0, eps=1e-8,
                  scaledown=False, multiply_jacobian=False,
-                 smoothing_gaussians=None, 
+                 smoothing_gaussians=None,
                  grad_gaussians=None,
                  freeform=False,
                  offload=False,   # try offloading to CPU
                  reset=False,
                  reset_step=True,
+                 compose_n=1,     # apply (Id + update)^n before composing with existing warp
                  # distributed params
                  rank: int = 0, 
                  dim_to_shard: int = 0,
@@ -108,6 +147,7 @@ class WarpAdam:
         self.multiply_jacobian = multiply_jacobian
         self.reset = reset
         self.reset_step = reset_step
+        self.compose_n = compose_n
         self.scaledown = scaledown   # if true, the scale the gradient even if norm is below 1
         # offload params
         self.device = warp.device
@@ -255,6 +295,8 @@ class WarpAdam:
         # renormalize and update warp
         if self.freeform:
             grad.mul_(-self.lr)
+            if self.compose_n > 1:
+                grad = compose_n_warps(grad, self.compose_n, self.affine_init, self.grid)
             # self.warp.data.copy_(grad + self.warp.data)
             self.warp.data.add_(grad)
             if self.smoothing_gaussians is not None:
@@ -271,6 +313,8 @@ class WarpAdam:
             grad.div_(gradmax).mul_(self.half_resolution)
             # multiply by learning rate
             grad.mul_(-self.lr)
+            if self.compose_n > 1:
+                grad = compose_n_warps(grad, self.compose_n, self.affine_init, self.grid)
             # print(grad.abs().max().item(), self.half_resolution, self.warp.shape)
             # compositional update
             # w = grad + F.grid_sample(self.warp.data.permute(*self.permute_vtoimg), self.grid + grad, mode='bilinear', align_corners=True).permute(*self.permute_imgtov)

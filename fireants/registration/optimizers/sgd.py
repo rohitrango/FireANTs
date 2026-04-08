@@ -18,7 +18,7 @@ import torch
 from torch.nn import functional as F
 from fireants.utils.imageutils import jacobian as jacobian_fn
 from fireants.interpolator import fireants_interpolator
-from fireants.registration.optimizers.adam import _get_smoothing_wrapper
+from fireants.registration.optimizers.adam import _get_smoothing_wrapper, compose_n_warps
 import logging
 logger = logging.getLogger(__name__)
 from typing import Optional
@@ -29,12 +29,13 @@ class WarpSGD:
     
     shape of warp = [B, H, W, [D], dims]
     '''
-    def __init__(self, warp, lr, 
+    def __init__(self, warp, lr,
                  momentum=0, dampening=0, weight_decay=0, nesterov=False, scaledown=False, multiply_jacobian=False,
                  smoothing_gaussians=None, grad_gaussians=None,
                  freeform=False,
+                 compose_n=1,     # apply (Id + update)^n before composing with existing warp
                  # distributed params
-                 rank: int = 0, 
+                 rank: int = 0,
                  dim_to_shard: int = 0,
                  dtype: torch.dtype = torch.float32):
         # init
@@ -62,6 +63,7 @@ class WarpSGD:
         self.weight_decay = weight_decay
         self.nesterov = nesterov
         self.multiply_jacobian = multiply_jacobian
+        self.compose_n = compose_n
         self.scaledown = scaledown   # if true, the scale the gradient even if norm is below 1
         self.velocity = torch.zeros_like(warp, dtype=dtype) if momentum > 0 else None
         self.permute_imgtov = (0, *range(2, self.n_dims+2), 1)  # [N, HWD, dims] -> [N, HWD, dims] -> [N, dims, HWD]
@@ -169,6 +171,8 @@ class WarpSGD:
         grad.div_(gradmax).mul_(self.half_resolution)
         # multiply by learning rate
         grad.mul_(-self.lr)
+        if self.compose_n > 1:
+            grad = compose_n_warps(grad, self.compose_n, self.affine_init, self.grid)
         # compositional update
         if self.freeform:
             grad.add_(self.warp.data)

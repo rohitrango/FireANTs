@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Rohit Jena. All rights reserved.
-# 
+#
 # This file is part of FireANTs, distributed under the terms of
 # the FireANTs License version 1.0. A copy of the license can be found
 # in the LICENSE file at the root of this repository.
@@ -7,10 +7,10 @@
 # IMPORTANT: This code is part of FireANTs and its use, reproduction, or
 # distribution must comply with the full license terms, including:
 # - Maintaining all copyright notices and bibliography references
-# - Using only approved (re)-distribution channels 
+# - Using only approved (re)-distribution channels
 # - Proper attribution in derivative works
 #
-# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE 
+# For full license details, see: https://github.com/rohitrango/FireANTs/blob/main/LICENSE
 
 
 ''' class for SGD for compositive warps '''
@@ -24,16 +24,16 @@ logger = logging.getLogger(__name__)
 from typing import Optional
 
 class WarpSGD:
-    ''' at the moment we only support a single warp function 
+    ''' at the moment we only support a single warp function
     also supports multi-scale (by simply interpolating to the target size)
-    
+
     shape of warp = [B, H, W, [D], dims]
     '''
     def __init__(self, warp, lr,
                  momentum=0, dampening=0, weight_decay=0, nesterov=False, scaledown=False, multiply_jacobian=False,
                  smoothing_gaussians=None, grad_gaussians=None,
                  freeform=False,
-                 compose_n=1,     # apply (Id + update)^n before composing with existing warp
+                 compose_n=10,     # apply (Id + update)^n before composing with existing warp
                  # distributed params
                  rank: int = 0,
                  dim_to_shard: int = 0,
@@ -88,7 +88,7 @@ class WarpSGD:
             self.padding_smoothing = 0
         # get wrapper around smoothing for distributed / not distributed
         self.smoothing_wrapper = _get_smoothing_wrapper(self)
-    
+
     def cleanup(self):
         # manually clean up
         del self.velocity
@@ -99,11 +99,11 @@ class WarpSGD:
         self.warp = warp
         mode = 'bilinear' if self.n_dims == 2 else 'trilinear'
         if self.velocity is not None:
-            self.velocity = F.interpolate(self.velocity.detach().permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True, 
+            self.velocity = F.interpolate(self.velocity.detach().permute(*self.permute_vtoimg), size=size, mode=mode, align_corners=True,
                                 ).permute(*self.permute_imgtov)
         self.half_resolution = 1.0/(max(warp.shape[1:-1]) - 1)
         self.initialize_grid(size, grid_copy=grid_copy)
-    
+
     def initialize_grid(self, size, grid_copy=None):
         ''' initialize the grid (so that we can use it independent of the grid elsewhere) '''
         if fireants_interpolator.use_ffo:
@@ -112,12 +112,12 @@ class WarpSGD:
             if grid_copy is None:
                 self.grid = F.affine_grid(self.affine_init, [self.batch_size, 1, *size], align_corners=True).detach()
             else:
-                self.grid = grid_copy 
+                self.grid = grid_copy
 
     def zero_grad(self):
         ''' set the gradient to none '''
         self.warp.grad = None
-    
+
     def augment_jacobian(self, u):
         # Multiply u (which represents dL/dphi most likely) with Jacobian indexed by J[..., xyz, ..., phi]
         if fireants_interpolator.use_ffo:
@@ -165,7 +165,7 @@ class WarpSGD:
         # gradmax = gradmax.reshape(-1, *([1])*(self.n_dims+1))
         # if scaledown is "True", then we scale down even if the norm is below 1, otherwise we only divide the ones where the norm
         # is greater than 1
-        if not self.scaledown:  
+        if not self.scaledown:
             gradmax = torch.clamp(gradmax, min=1)
         # grad = grad / gradmax * self.half_resolution   # norm is now 0.5r
         grad.div_(gradmax).mul_(self.half_resolution)

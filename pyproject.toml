@@ -8,10 +8,10 @@ authors = [
 ]
 description = "FireANTs: Adaptive Riemannian Optimization for Multi-Scale Diffeomorphic Registration"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 dependencies = [
     "torch>=2.3.0",
-    "SimpleITK==2.2.1", 
+    "SimpleITK>=2.2.1", 
     "nibabel",
     "numpy", "scipy", "scikit-image", "matplotlib",
     "typing", "tqdm", "pandas", "hydra-core",

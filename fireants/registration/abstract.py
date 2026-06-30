@@ -156,6 +156,15 @@ class AbstractRegistration(ABC):
                 logger.warning("fireants_fused_ops not available, falling back to non-fused LocalNormalizedCrossCorrelationLoss")
                 self.loss_fn = LocalNormalizedCrossCorrelationLoss(kernel_type=cc_kernel_type, spatial_dims=self.dims,
                                                                    kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
+        elif loss_type == 'lite_lncc':
+            try:
+                from fireants.losses.lite_lncc_backend import LiteLNCCLoss
+                self.loss_fn = LiteLNCCLoss(spatial_dims=self.dims,
+                                            kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
+            except ImportError:
+                logger.warning("lite_lncc not available, falling back to non-fused LocalNormalizedCrossCorrelationLoss")
+                self.loss_fn = LocalNormalizedCrossCorrelationLoss(kernel_type=cc_kernel_type, spatial_dims=self.dims,
+                                                                   kernel_size=cc_kernel_size, reduction=reduction, **loss_params)
         elif loss_type == 'fusedmi':
             try:
                 from fireants.losses.fusedmi import FusedGlobalMutualInformationLoss

@@ -18,6 +18,10 @@ dependencies = [
     "pytest"
 ]
 
+[project.optional-dependencies]
+# Fast standalone rectangular-LNCC backend; enable with loss_type='lite_lncc'.
+lite_lncc = ["fused_lncc"]
+
 [build-system]
 requires = ["hatchling>=1.21.0"]
 build-backend = "hatchling.build"

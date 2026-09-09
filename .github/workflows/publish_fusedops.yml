@@ -5,6 +5,13 @@ on:
     types:
       - published
   workflow_dispatch:
+    inputs:
+      use_testpypi:
+        description: 'Upload to TestPyPI instead of PyPI'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
 
 jobs:
   build:
@@ -37,22 +44,49 @@ jobs:
             cuda_short: "124"
             torch: "2.5.0"
             python: "3.11"
+          - cuda: "11.8.0"
+            cuda_short: "118"
+            torch: "2.2.0"
+            python: "3.12"
+          - cuda: "12.1.0"
+            cuda_short: "121"
+            torch: "2.3.0"
+            python: "3.12"
+          - cuda: "12.4.0"
+            cuda_short: "124"
+            torch: "2.5.0"
+            python: "3.12"
 
     container:
       image: nvidia/cuda:${{ matrix.cuda }}-devel-ubuntu22.04
+
+    defaults:
+      run:
+        shell: bash -euo pipefail {0}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Restore wheel cache
+        id: cache-wheel
+        uses: actions/cache@v4
+        with:
+          path: fused_ops/dist
+          key: wheel-cu${{ matrix.cuda_short }}-torch${{ matrix.torch }}-py${{ matrix.python }}-${{ hashFiles('fused_ops/src/**', 'fused_ops/include/**', 'fused_ops/setup.py', 'fused_ops/pyproject.toml') }}
+
       - name: Install system deps
+        if: steps.cache-wheel.outputs.cache-hit != 'true'
         run: |
           apt-get update -q
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends software-properties-common tzdata ca-certificates
+          if [ "${{ matrix.python }}" = "3.12" ]; then
+            add-apt-repository -y ppa:deadsnakes/ppa
+            apt-get update -q
+          fi
           apt-get install -y --no-install-recommends \
             python${{ matrix.python }} \
             python${{ matrix.python }}-dev \
-            python${{ matrix.python }}-distutils \
-            python3-pip \
             curl \
             git
           update-alternatives --install /usr/bin/python python \
@@ -62,21 +96,32 @@ jobs:
           curl -sS https://bootstrap.pypa.io/get-pip.py | python
 
       - name: Install PyTorch
+        if: steps.cache-wheel.outputs.cache-hit != 'true'
         run: |
-          pip install --no-cache-dir \
+          python -m pip install --no-cache-dir \
             torch==${{ matrix.torch }} \
             --index-url https://download.pytorch.org/whl/cu${{ matrix.cuda_short }}
 
       - name: Install build tools
-        run: pip install --no-cache-dir wheel setuptools ninja
+        if: steps.cache-wheel.outputs.cache-hit != 'true'
+        run: python -m pip install --no-cache-dir wheel setuptools ninja
 
       - name: Build wheel
+        if: steps.cache-wheel.outputs.cache-hit != 'true'
         working-directory: fused_ops
         env:
           CUDA_VERSION: ${{ matrix.cuda_short }}
           TORCH_CUDA_ARCH_LIST: "7.0;7.5;8.0;8.6;8.9;9.0"
           FORCE_CUDA: "1"
-        run: python setup.py bdist_wheel
+        run: python -m pip wheel . --no-deps --no-build-isolation -w dist
+
+      - name: Retag wheel as manylinux
+        if: steps.cache-wheel.outputs.cache-hit != 'true'
+        working-directory: fused_ops/dist
+        run: |
+          for f in *.whl; do
+            mv "$f" "${f/linux_x86_64/manylinux2014_x86_64}"
+          done
 
       - name: Upload wheel as artifact
         uses: actions/upload-artifact@v4
@@ -87,7 +132,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Download all wheels
@@ -99,12 +144,12 @@ jobs:
       - name: List wheels
         run: find all_wheels/ -name "*.whl" | sort
 
-      - name: Publish to PyPI
+      - name: Publish to PyPI / TestPyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ github.event.inputs.use_testpypi == 'true' && secrets.TEST_PYPI_API_TOKEN || secrets.PYPI_API_TOKEN }}
+          TWINE_REPOSITORY_URL: ${{ github.event.inputs.use_testpypi == 'true' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
         run: |
+          set -euo pipefail
           pip install twine
-          # twine will route each wheel to the correct PyPI project based on
-          # the package name baked into the wheel by setup.py (fireants-fused-ops-cu118 etc.)
-          # All projects must be pre-created on pypi.org under your account.
-          twine upload all_wheels/*.whl \
-            --username __token__ \
-            --password ${{ secrets.PYPI_API_TOKEN }}
+          twine upload --verbose --skip-existing all_wheels/*.whl

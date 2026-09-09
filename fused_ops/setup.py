@@ -20,11 +20,16 @@ import os
 
 include_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'include')
 
+cuda_short = os.environ.get('CUDA_VERSION', '')
+package_name = f'fireants-fused-ops-cu{cuda_short}' if cuda_short else 'fireants-fused-ops'
+
 setup(
-    name='fireants_fused_ops',
-    version='1.0.0',
+    name=package_name,
+    version='1.2.0',
     description='Fused CUDA operations for FireANTs',
     author='Rohit Jena',
+    url='https://github.com/rohitrango/FireANTs',
+    python_requires='>=3.8',
     ext_modules=[
         cpp_extension.CUDAExtension(
             name='fireants_fused_ops',
@@ -51,5 +56,5 @@ setup(
         )
     ],
     cmdclass={'build_ext': cpp_extension.BuildExtension},
-    install_requires=['torch>=2.3.0'],
+    install_requires=['torch>=2.1.0'],
 )

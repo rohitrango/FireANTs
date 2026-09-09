@@ -81,26 +81,32 @@ except ImportError:
 
 ## Function for smoothing
 def _get_smoothing_wrapper(optimizer):
-    ''' 
+    '''
     Get wrapper for smoothing
+
+    Binds the permutations by value: callers store this wrapper on the optimizer itself, so closing
+    over `optimizer` makes it reference itself and leaks every warp. Set in __init__, never reassigned.
     '''
     gp_group = parallel_state.get_parallel_state().get_current_gp_group() if parallel_state.is_initialized() else [0]
     gp_size = len(gp_group)
+    permute_vtoimg = optimizer.permute_vtoimg
+    permute_imgtov = optimizer.permute_imgtov
 
     if gp_size <= 1:
         def smoothing_wrapper_nodist(tensor, kernels, padding=0):
             # tensor is a warp field
-            tensor = separable_filtering(tensor.permute(*optimizer.permute_vtoimg).contiguous(), kernels).permute(*optimizer.permute_imgtov).contiguous()
+            tensor = separable_filtering(tensor.permute(*permute_vtoimg).contiguous(), kernels).permute(*permute_imgtov).contiguous()
             return tensor
         return smoothing_wrapper_nodist
     else:
         # write a distributed version
+        dim_to_shard = optimizer.dim_to_shard
         def smoothing_wrapper_dist(tensor, kernels, padding=0):
             if padding > 0:
-                tensor = add_distributed_padding(tensor, padding, optimizer.dim_to_shard-1) # 2 will be added to dim_to_shard anyway
-            tensor = separable_filtering(tensor.permute(*optimizer.permute_vtoimg).contiguous(), kernels).permute(*optimizer.permute_imgtov).contiguous()
+                tensor = add_distributed_padding(tensor, padding, dim_to_shard-1) # 2 will be added to dim_to_shard anyway
+            tensor = separable_filtering(tensor.permute(*permute_vtoimg).contiguous(), kernels).permute(*permute_imgtov).contiguous()
             if padding > 0:
-                tensor = crop_distributed_padding(tensor, padding, optimizer.dim_to_shard-1)
+                tensor = crop_distributed_padding(tensor, padding, dim_to_shard-1)
             return tensor
         return smoothing_wrapper_dist
 

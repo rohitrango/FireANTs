@@ -20,7 +20,7 @@ from functools import partial
 import torch
 from torch import nn
 from torch.nn import functional as F
-from typing import Union
+from typing import Optional, Union
 from fireants.registration.deformation.abstract import AbstractDeformation
 from fireants.io.image import Image, BatchedImages
 from fireants.utils.imageutils import scaling_and_squaring, _find_integrator_n
@@ -87,7 +87,8 @@ class StationaryVelocity(nn.Module, AbstractDeformation):
     def set_zero_grad(self):
         self.optimizer.zero_grad()
     
-    def step(self):
+    def step(self, loss: Optional[torch.Tensor] = None):
+        ''' `loss` is unused; it is accepted for API parity with CompositiveWarp (torch.optim would treat it as a closure) '''
         self.optimizer.step()
 
     def get_warp(self):

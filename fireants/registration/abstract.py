@@ -18,7 +18,7 @@ from typing import List
 import torch
 from torch import nn
 from fireants.utils.util import _assert_check_scales_decreasing
-from fireants.losses import GlobalMutualInformationLoss, LocalNormalizedCrossCorrelationLoss, NoOp, MeanSquaredError
+from fireants.losses import GlobalMutualInformationLoss, LocalNormalizedCrossCorrelationLoss, NoOp, MeanSquaredError, MINDSSCLoss
 from torch.optim import SGD, Adam
 from fireants.io.image import BatchedImages, FakeBatchedImages
 from typing import Optional, Union
@@ -64,6 +64,9 @@ class AbstractRegistration(ABC):
             - 'mse': Mean squared error
                 Mean squared error is implemented using the `MeanSquaredError` class.
                 This is the fastest similarity metric, but it is not robust to outliers, multi-modal images, or even intensity inhomogeneities within the same modality. Good for testing registration pipelines.
+            - 'mind': MIND-SSC descriptor distance
+                Modality independent neighbourhood descriptor with self-similarity context (Heinrich et al., 2012, 2013), for multi-modal deformable registration.
+                MIND-SSC is implemented using the `MINDSSCLoss` class; set `radius`, `dilation` and `distance` through `loss_params`.
             - 'custom': Custom loss function (see `custom_loss` for more details)
             - 'noop': No similarity metric  (this is useful for testing regularizations)
         mi_kernel_type (str, optional): Kernel type for mutual information loss. Default: 'gaussian'
@@ -172,6 +175,8 @@ class AbstractRegistration(ABC):
             except ImportError:
                 logger.warning("fireants_fused_ops not available, falling back to non-fused GlobalMutualInformationLoss")
                 self.loss_fn = GlobalMutualInformationLoss(kernel_type=mi_kernel_type, reduction=reduction, **loss_params)
+        elif loss_type == 'mind':
+            self.loss_fn = MINDSSCLoss(spatial_dims=self.dims, reduction=reduction, **loss_params)
         elif loss_type == 'custom':
             self.loss_fn = custom_loss
         elif loss_type == 'noop':

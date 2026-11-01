@@ -13,6 +13,7 @@ nav:
   - How To:
     - Evaluate keypoint distances: howto/keypoint-fidelity.md
     - Use masked losses: howto/masked-losses.md
+    - Register multimodal images (MIND-SSC): howto/multimodal-registration.md
     - Use moments matching with scaling: howto/moments-scaling.md
     - 2D Affine transforms for shapes: howto/subspace2d-affine.md
     - Use Levenberg-Marquardt optimizer: howto/levenberg-marquardt.md

@@ -67,5 +67,9 @@ ENV VIRTUAL_ENV=/opt/venv
 
 WORKDIR /app
 
+# Expose CLI tools and scripts (template builder, configs, etc.) under /app
+COPY --from=base /build/cli /app/cli
+COPY --from=base /build/fireants/scripts /app/scripts
+
 # Default: print versions (override with your own CMD/ENTRYPOINT)
 ENTRYPOINT ["/bin/bash"]

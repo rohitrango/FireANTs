@@ -207,7 +207,11 @@ class SyNRegistration(AbstractRegistration, DeformableMixin):
             fwd_warp_field = separable_filtering(fwd_warp_field.permute(*self.fwd_warp.permute_vtoimg), warp_gaussian).permute(*self.fwd_warp.permute_imgtov)
             rev_inv_warp_field = separable_filtering(rev_inv_warp_field.permute(*self.rev_warp.permute_vtoimg), warp_gaussian).permute(*self.rev_warp.permute_imgtov)
         # # compose the two warp fields
+        # The midpoint y + v(y) is in the fixed image's coordinates, and the affine takes it to the moving image's:
+        # A(y + v) + u(y + v) = Ay + A_lin v + u(y + v). compose_warp adds v itself, so the difference is added here.
         composed_warp = compose_warp(fwd_warp_field, rev_inv_warp_field)
+        linear = affine_map_init[:, :, :-1] - torch.eye(self.dims, device=affine_map_init.device, dtype=self.dtype)
+        composed_warp = composed_warp + torch.einsum("n...j,nij->n...i", rev_inv_warp_field, linear)
         return {
             'affine': affine_map_init,
             'grid': composed_warp,

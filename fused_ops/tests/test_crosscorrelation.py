@@ -18,7 +18,7 @@ import pytest
 from time import time
 from fireants.losses.cc import LocalNormalizedCrossCorrelationLoss
 from fireants.tests.cc_mem_test import fast_lncc
-from fireants.losses.fusedcc import FusedLocalNormalizedCrossCorrelationLoss
+from fireants.losses.fusedcc import FusedLocalNormalizedCrossCorrelationLoss, FusedNCC2d, FusedNCC2dGaussian, FusedNCC3d, FusedNCC3dGaussian
 seed = 4531
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)   
@@ -61,7 +61,7 @@ def test_fused_cc_correctness():
         
         # Backward pass
         out.backward()
-        grad_ours = img2.grad / N**3
+        grad_ours = img2.grad
         
         img2.grad = None
         out_baseline.backward()
@@ -80,6 +80,32 @@ def test_fused_cc_correctness():
         print(rel_grad_1, rel_grad_2)
         assert rel_grad_1 < rtol or rel_grad_2 < rtol, f"Gradients don't match baseline for dtype {dtype}"
         
+
+
+@pytest.mark.parametrize("reduction", ["mean", "sum"])
+@pytest.mark.parametrize("variant", ["3d", "2d", "3d_gaussian", "2d_gaussian"])
+def test_fused_cc_gradient_is_the_gradient_of_the_loss(variant, reduction):
+    """The exact backward against finite differences of the forward it belongs to, in double precision."""
+    torch.manual_seed(seed)
+    shape = (2, 2, 9, 10, 11) if variant.startswith("3d") else (2, 2, 15, 17)  # two of each: a mean is over all of them
+    img1 = (torch.rand(shape, dtype=torch.float64) * 4 + 1).cuda()
+    img2 = (torch.rand(shape, dtype=torch.float64) * 4 + 1).cuda().requires_grad_(True)
+    kernel_size, nr, dr = 3, 1e-5, 1e-5
+    function, extra = {
+        "3d": (FusedNCC3d, ()),
+        "2d": (FusedNCC2d, ()),
+        "3d_gaussian": (FusedNCC3dGaussian, (1.0,)),
+        "2d_gaussian": (FusedNCC2dGaussian, (1.0,)),
+    }[variant]
+    loss = lambda x: function.apply(x, img1, kernel_size, *extra, nr, dr, reduction, False, True)
+    # The backward rewrites its saved intermediates in place, so it runs once: its gradient is checked along random
+    # directions against the derivative of the forward there, by central differences.
+    (grad,) = torch.autograd.grad(loss(img2), img2)
+    for _ in range(3):
+        direction = torch.randn_like(img2)
+        h = 1e-6
+        numeric = (loss(img2.detach() + h * direction) - loss(img2.detach() - h * direction)) / (2 * h)
+        assert torch.allclose((grad * direction).sum(), numeric, rtol=1e-5, atol=0), f"{(grad * direction).sum()} vs {numeric}"
 
 
 def test_fused_cc_memory_forward():
@@ -162,7 +188,7 @@ def test_fused_cc_memory_backward():
         t2 = time()
         fwd_time_ours = t1 - t0
         bwd_time_ours = t2 - t1
-        grad_ours = img2.grad / N**3
+        grad_ours = img2.grad
         fused_memory = (torch.cuda.max_memory_allocated() / 1024**2) - input_memory
         
         # Reset memory stats

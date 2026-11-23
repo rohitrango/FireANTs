@@ -103,9 +103,9 @@ class FusedNCC3d(torch.autograd.Function):
         kernel_size, nr, dr, reduction, use_ants_gradient, use_separable = ctx.kernel_size, ctx.nr, ctx.dr, ctx.reduction, ctx.use_ants_gradient, ctx.use_separable
         B, C, H, W, D = input_img.shape
 
-        # add reduction
-        # if reduction == ffo.Reduction.MEAN:
-        #     grad_output /= (H * W * D)
+        # The gradient of the loss returned: times the window volume, which the forward's window sums carry, and
+        # divided by the voxels a mean is over.
+        grad_output = grad_output * kernel_size**3 / (B * C * H * W * D if reduction == ffo.Reduction.MEAN else 1)
 
         input_too_large = interm.numel() >= MAX_INT32_NUMEL
         inp_size = 5*C if not input_too_large else 1
@@ -250,8 +250,9 @@ class FusedNCC3dGaussian(torch.autograd.Function):
 
         gauss_filt = gaussian_1d(torch.tensor(sigma, device=input_img.device, dtype=input_img.dtype), truncated=truncated, approx="sampled")  # kernel size
 
-        if reduction == ffo.Reduction.MEAN:
-            grad_output = grad_output / (B * C * H * W * D)
+        # The gradient of the loss returned: times the window volume, which the forward's window sums carry, and
+        # divided by the voxels a mean is over.
+        grad_output = grad_output * kernel_vol / (B * C * H * W * D if reduction == ffo.Reduction.MEAN else 1)
 
         # initialize filters
         if use_separable:
@@ -388,6 +389,9 @@ class FusedNCC2d(torch.autograd.Function):
         interm, input_img, target_img, out = ctx.saved_tensors
         kernel_size, nr, dr, reduction, use_ants_gradient, use_separable = ctx.kernel_size, ctx.nr, ctx.dr, ctx.reduction, ctx.use_ants_gradient, ctx.use_separable
         B, C, H, W = input_img.shape
+        # The gradient of the loss returned: times the window volume, which the forward's window sums carry, and
+        # divided by the voxels a mean is over.
+        grad_output = grad_output * kernel_size**2 / (B * C * H * W if reduction == ffo.Reduction.MEAN else 1)
 
         # Convert to 5D for ffo operations
         input_img_5d = input_img[..., None]  # [B, C, H, W, 1]
@@ -557,9 +561,9 @@ class FusedNCC2dGaussian(torch.autograd.Function):
         B, C, H, W = input_img.shape
         kernel_vol = kernel_size ** 2
 
-        # Normalize grad_output for MEAN reduction (same as 3D Gaussian version)
-        if reduction == ffo.Reduction.MEAN:
-            grad_output = grad_output / (B * C * H * W)
+        # The gradient of the loss returned: times the window volume, which the forward's window sums carry, and
+        # divided by the voxels a mean is over.
+        grad_output = grad_output * kernel_vol / (B * C * H * W if reduction == ffo.Reduction.MEAN else 1)
 
         # Convert to 5D for ffo operations
         input_img_5d = input_img[..., None]  # [B, C, H, W, 1]
